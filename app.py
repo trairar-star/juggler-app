@@ -69,11 +69,13 @@ def render_summary_page(df, df_raw, shop_col):
 def render_shop_detail_page(df, df_raw, shop_col):
     st.header("🏪 店舗別 詳細データ")
     
-    # 店舗選択 (サイドバー)
+    # 店舗・機種選択 (メイン画面上部)
+    col_filter1, col_filter2 = st.columns(2)
+    
     selected_shop = '全て'
     if shop_col in df.columns:
         shops = ['全て'] + list(df[shop_col].unique())
-        selected_shop = st.sidebar.selectbox("店舗名を選択", shops)
+        selected_shop = col_filter1.selectbox("店舗名を選択", shops)
         
         if selected_shop != '全て':
             df = df[df[shop_col] == selected_shop]
@@ -89,10 +91,10 @@ def render_shop_detail_page(df, df_raw, shop_col):
         st.info("表示するデータがありません。")
         return
 
-    # 機種名フィルター (サイドバー)
+    # 機種名フィルター
     if '機種名' in df.columns:
         machines = ['全て'] + list(df['機種名'].unique())
-        selected_machine = st.sidebar.selectbox("機種名を選択", machines)
+        selected_machine = col_filter2.selectbox("機種名を選択", machines)
         if selected_machine != '全て':
             df = df[df['機種名'] == selected_machine]
 
