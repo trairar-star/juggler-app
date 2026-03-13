@@ -1,0 +1,8 @@
+streamlit
+pandas
+numpy
+lightgbm
+matplotlib
+altair
+gspread
+google-auth
