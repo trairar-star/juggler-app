@@ -911,6 +911,23 @@ def render_my_balance_page(df_raw):
 # メイン処理
 # ---------------------------------------------------------
 def main():
+    # --- パスワード認証（ログイン機能） ---
+    if "logged_in" not in st.session_state:
+        st.session_state["logged_in"] = False
+
+    if not st.session_state["logged_in"]:
+        st.title("🔒 ログイン")
+        password = st.text_input("パスワードを入力してください", type="password")
+        if st.button("ログイン"):
+            # Secretsからパスワードを取得（設定されていない場合は '1234' とする）
+            correct_password = st.secrets.get("app_password", "1234")
+            if password == correct_password:
+                st.session_state["logged_in"] = True
+                st.rerun()
+            else:
+                st.error("パスワードが違います。")
+        return
+
     # タイトルや設定は共通
     st.title("🎰 明日のスロット予測")
     
