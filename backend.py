@@ -314,12 +314,18 @@ def run_analysis(df, df_events=None, hyperparams=None):
     if hyperparams is None:
         hyperparams = {'n_estimators': 100, 'learning_rate': 0.1, 'num_leaves': 31, 'max_depth': -1}
 
-    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **hyperparams)
+    # LightGBMの初期化エラーを防ぐため、パラメータを明示的に渡す
+    n_est = hyperparams.get('n_estimators', 100)
+    lr = hyperparams.get('learning_rate', 0.1)
+    nl = hyperparams.get('num_leaves', 31)
+    md = hyperparams.get('max_depth', -1)
+
+    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     model.fit(X, y, sample_weight=sample_weights)
     
     predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
     
-    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **hyperparams)
+    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
     predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
 
