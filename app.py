@@ -647,6 +647,56 @@ def render_feature_analysis_page(df_train):
         )
         st.altair_chart(chart_d, use_container_width=True)
 
+    # --- 4. イベントランク別の設定投入傾向 ---
+    st.divider()
+    st.subheader("🎉 イベントランク別の設定投入傾向")
+    st.caption(f"指定した回転数（{min_g}G）以上回っている台のうち、「REG確率が1/300より良い台（高設定挙動）」の割合をイベントの強さごとに比較します。")
+    
+    if 'イベントランク' in reg_df.columns:
+        event_df = reg_df.copy()
+        # NaNや空文字を「通常日」として扱う
+        event_df['イベントランク'] = event_df['イベントランク'].fillna('通常日').replace('', '通常日')
+        
+        # REG分母が300以下の台を高設定挙動とみなす
+        event_df['高設定挙動'] = (event_df['REG分母'] <= 300).astype(int)
+        
+        event_stats = event_df.groupby('イベントランク').agg(
+            高設定投入率=('高設定挙動', 'mean'),
+            平均差枚=('差枚', 'mean'),
+            サンプル数=('台番号', 'count')
+        ).reset_index()
+        
+        # 並び替え順の指定 (S -> A -> B -> C -> 通常日)
+        rank_order = {'S': 1, 'A': 2, 'B': 3, 'C': 4, '通常日': 5}
+        event_stats['sort'] = event_stats['イベントランク'].map(rank_order).fillna(99)
+        event_stats = event_stats.sort_values('sort').drop(columns=['sort'])
+        
+        if len(event_stats['イベントランク'].unique()) > 1 or '通常日' not in event_stats['イベントランク'].values:
+            col_e1, col_e2 = st.columns(2)
+            with col_e1:
+                chart_e = alt.Chart(event_stats).mark_bar(color='#AB47BC', opacity=0.8).encode(
+                    x=alt.X('イベントランク', sort=[k for k in rank_order.keys()], title='イベントの強さ'),
+                    y=alt.Y('高設定投入率', axis=alt.Axis(format='%', title='REG 1/300以上の割合')),
+                    tooltip=['イベントランク', alt.Tooltip('高設定投入率', format='.1%'), 'サンプル数']
+                ).interactive()
+                st.altair_chart(chart_e, use_container_width=True)
+            
+            with col_e2:
+                st.dataframe(
+                    event_stats,
+                    column_config={
+                        "高設定投入率": st.column_config.ProgressColumn("高設定割合", format="%.1f%%", min_value=0, max_value=1),
+                        "平均差枚": st.column_config.NumberColumn("台平均差枚", format="%+d 枚"),
+                        "サンプル数": st.column_config.NumberColumn("集計台数", format="%d 台")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+        else:
+            st.info("イベントランクが登録されたデータがまだありません。サイドバーからイベントを登録すると傾向が表示されます。")
+    else:
+        st.info("イベントデータが結合されていません。")
+
 # --- ページ描画関数: イベント管理 ---
 def render_event_management_page():
     st.header("📝 イベント管理")
