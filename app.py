@@ -994,10 +994,10 @@ def main():
 
     # --- ハイパーパラメータ調整 (サイドバー) ---
     with st.sidebar.expander("⚙️ AIモデル設定 (調整)", expanded=False):
-        hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, 100, step=50, help="値を大きくすると学習量が増えますが、時間がかかり過学習のリスクもあります。")
-        hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.1, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
-        hp_num_leaves = st.slider("葉の数 (num_leaves)", 15, 127, 31, step=1, help="モデルの複雑さ。大きいほど複雑なパターンを捉えます。")
-        hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, -1, step=1, help="木の深さの上限。-1は無制限。")
+        hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, 200, step=50, help="値を大きくすると学習量が増えますが、時間がかかり過学習のリスクもあります。")
+        hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.05, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
+        hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, 20, step=1, help="モデルの複雑さ。スロットのようなノイズが多いデータは小さめ(15〜20)がおすすめです。")
+        hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, 5, step=1, help="木の深さの上限。ノイズ対策として3〜7程度に制限するのがおすすめです。-1は無制限。")
         
         hyperparams = {
             'n_estimators': hp_n_estimators,
