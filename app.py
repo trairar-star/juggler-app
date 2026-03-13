@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # --- ページ描画関数: 全店分析サマリー ---
-def render_summary_page(df, df_raw, shop_col):
+def render_summary_page(df, df_raw, shop_col, df_events=None):
     st.header("📊 全店分析サマリー")
     
     if shop_col in df.columns:
@@ -64,9 +64,88 @@ def render_summary_page(df, df_raw, shop_col):
                 color="#FF4B4B" # Red color for bubbles
             )
         st.divider()
+        
+        # --- 月間トレンド分析 (全店比較) ---
+        if not df_raw.empty and '対象日付' in df_raw.columns:
+            st.subheader("📈 店舗別の強さ推移 (月間トレンド)")
+            st.caption("各店舗の「高設定挙動台（REG確率 1/300以上）」の投入割合が、月ごとにどう変化しているかを分析します。最近勢いのある店舗を見つけるのに役立ちます。")
+
+            trend_df = df_raw.copy()
+            
+            # --- 絞り込みフィルターUI ---
+            f_col1, f_col2 = st.columns(2)
+            filter_type = f_col1.selectbox("集計対象の絞り込み", ["すべて", "曜日で絞る", "イベント日で絞る"])
+            
+            if filter_type == "曜日で絞る":
+                day_options = ["平日 (月〜金)", "週末 (土・日)", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]
+                selected_day = f_col2.selectbox("曜日を選択", day_options)
+                trend_df['weekday'] = trend_df['対象日付'].dt.dayofweek
+                if selected_day == "平日 (月〜金)": trend_df = trend_df[trend_df['weekday'] < 5]
+                elif selected_day == "週末 (土・日)": trend_df = trend_df[trend_df['weekday'] >= 5]
+                else:
+                    day_idx = ["月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"].index(selected_day)
+                    trend_df = trend_df[trend_df['weekday'] == day_idx]
+                    
+            elif filter_type == "イベント日で絞る":
+                if df_events is not None and not df_events.empty:
+                    rank_options = ["すべてのイベント"] + [r for r in ["S", "A", "B", "C"] if r in df_events['イベントランク'].values]
+                    selected_rank = f_col2.selectbox("イベントランク", rank_options)
+                    events_subset = df_events.drop_duplicates(subset=['店名', 'イベント日付']).copy()
+                    if selected_rank != "すべてのイベント":
+                        events_subset = events_subset[events_subset['イベントランク'] == selected_rank]
+                    trend_df = pd.merge(trend_df, events_subset[['店名', 'イベント日付']], left_on=[shop_col, '対象日付'], right_on=['店名', 'イベント日付'], how='inner')
+                else:
+                    f_col2.info("登録されたイベントがありません")
+                    trend_df = pd.DataFrame()
+
+            if trend_df.empty:
+                st.warning("指定した条件に一致するデータがありません。")
+            else:
+                trend_df['年月'] = trend_df['対象日付'].dt.strftime('%Y-%m')
+                # REG確率が1/300 (約0.00333) 以上を高設定挙動と定義
+                trend_df['高設定'] = (trend_df['REG確率'] >= (1/300)).astype(int)
+
+                trend_stats = trend_df.groupby(['年月', shop_col]).agg(
+                    高設定投入率=('高設定', 'mean'),
+                    平均差枚=('差枚', 'mean'),
+                    集計台数=('台番号', 'count')
+                ).reset_index()
+
+                trend_chart = alt.Chart(trend_stats).mark_line(point=True, strokeWidth=3).encode(
+                    x=alt.X('年月', title='年月'),
+                    y=alt.Y('高設定投入率', title='高設定投入率 (REG 1/300以上)', axis=alt.Axis(format='%')),
+                    color=alt.Color(f'{shop_col}:N', title='店舗名'),
+                    tooltip=['年月', shop_col, alt.Tooltip('高設定投入率', format='.1%'), alt.Tooltip('平均差枚', format='+.0f'), '集計台数']
+                ).interactive()
+
+                st.altair_chart(trend_chart, use_container_width=True)
+                
+                # --- 最新月の店舗別成績一覧 ---
+                st.divider()
+                latest_month = trend_df['年月'].max()
+                st.markdown(f"**🏅 {latest_month} の店舗別成績 (絞り込み適用)**")
+                
+                latest_month_df = trend_df[trend_df['年月'] == latest_month]
+                latest_stats = latest_month_df.groupby(shop_col).agg(
+                    平均差枚=('差枚', 'mean'),
+                    勝率=('差枚', lambda x: (x > 0).mean()),
+                    集計台数=('台番号', 'count')
+                ).reset_index().sort_values('平均差枚', ascending=False)
+                
+                st.dataframe(
+                    latest_stats,
+                    column_config={
+                        shop_col: st.column_config.TextColumn("店舗名"),
+                        "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
+                        "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "集計台数": st.column_config.NumberColumn("集計台数", format="%d 台")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
 
 # --- ページ描画関数: 店舗別詳細データ ---
-def render_shop_detail_page(df, df_raw, shop_col):
+def render_shop_detail_page(df, df_raw, shop_col, df_events=None):
     st.header("🏪 店舗別 詳細データ")
     
     # 店舗・機種選択 (メイン画面上部)
@@ -263,24 +342,36 @@ def render_shop_detail_page(df, df_raw, shop_col):
                 history_df = df_raw[
                     (df_raw[shop_col] == shop_name) & 
                     (df_raw['台番号'] == machine_no)
-                ].sort_values('対象日付').tail(7)
+                ].sort_values('対象日付').tail(7).copy()
                 
                 if not history_df.empty:
                     history_df['DisplayDate'] = history_df['対象日付'].dt.strftime('%m-%d')
                     
-                    chart = alt.Chart(history_df).mark_line(point=True).encode(
+                    # イベント情報を結合
+                    if df_events is not None and not df_events.empty:
+                        shop_events = df_events[df_events['店名'] == shop_name].drop_duplicates(subset=['イベント日付'])
+                        history_df = pd.merge(history_df, shop_events[['イベント日付', 'イベント名', 'イベントランク']], left_on='対象日付', right_on='イベント日付', how='left')
+                        history_df['イベント情報'] = history_df.apply(lambda r: f"{r['イベント名']} ({r.get('イベントランク', '-')})" if pd.notna(r['イベント名']) and str(r['イベント名']).strip() != '' else "なし", axis=1)
+                    else:
+                        history_df['イベント情報'] = "なし"
+                    
+                    base = alt.Chart(history_df).encode(
                         x=alt.X('DisplayDate', title='日付', sort=None),
                         y=alt.Y('差枚', title='差枚数'),
                         tooltip=[
                             alt.Tooltip('DisplayDate', title='日付'),
                             alt.Tooltip('差枚', title='差枚'),
+                            alt.Tooltip('イベント情報', title='イベント'),
                             alt.Tooltip('BIG', title='BIG回数'),
                             alt.Tooltip('REG', title='REG回数'),
                             alt.Tooltip('累計ゲーム', title='総回転数')
                         ]
-                    ).interactive()
+                    )
                     
-                    st.altair_chart(chart, use_container_width=True)
+                    line_chart = base.mark_line(point=True)
+                    event_points = base.transform_filter(alt.datum.イベント情報 != 'なし').mark_point(color='#FF4B4B', size=150, filled=True)
+                    
+                    st.altair_chart((line_chart + event_points).interactive(), use_container_width=True)
                 else:
                     st.caption("過去データが見つかりませんでした。")
 
@@ -730,6 +821,37 @@ def render_event_management_page():
     )
     
     st.divider()
+    st.subheader("✏️ イベント編集")
+    
+    edit_target_uid = st.selectbox("編集するイベントを選択", df_display['uid'].unique(), key="edit_target")
+    if edit_target_uid:
+        target_row = df_display[df_display['uid'] == edit_target_uid].iloc[0]
+        
+        with st.form("edit_event_form"):
+            e_col1, e_col2 = st.columns(2)
+            with e_col1:
+                edit_shop = st.text_input("店舗名", value=target_row['店名'])
+                try:
+                    default_date = pd.to_datetime(target_row['イベント日付']).date()
+                except:
+                    default_date = pd.Timestamp.now().date()
+                edit_date = st.date_input("イベント日付", value=default_date, key="edit_date")
+            with e_col2:
+                edit_name = st.text_input("イベント名", value=target_row['イベント名'])
+                rank_options = ["S", "A", "B", "C"]
+                current_rank = target_row.get('イベントランク', 'A')
+                idx = rank_options.index(current_rank) if current_rank in rank_options else 1
+                edit_rank = st.selectbox("イベントの強さ", rank_options, index=idx)
+                
+            if st.form_submit_button("更新を保存", type="primary"):
+                if backend.update_shop_event(target_row['店名'], default_date, target_row['イベント名'], edit_shop, edit_date, edit_name, edit_rank):
+                    st.success("イベントを更新しました！")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error("イベントの更新に失敗しました。")
+
+    st.divider()
     st.subheader("🗑 イベント削除")
     
     # 削除フォーム
@@ -881,6 +1003,46 @@ def render_my_balance_page(df_raw):
             hide_index=True
         )
 
+    # --- 曜日別 成績 ---
+    st.divider()
+    st.subheader("📅 曜日別 成績")
+    
+    # 曜日カラムの作成
+    weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
+    df_balance['曜日_num'] = df_balance['日付'].dt.dayofweek
+    df_balance['曜日'] = df_balance['曜日_num'].map(weekdays_map)
+    
+    # 集計
+    weekday_rank = df_balance.groupby(['曜日_num', '曜日']).agg(
+        総収支=('収支', 'sum'),
+        勝率=('収支', lambda x: (x > 0).mean()),
+        稼働数=('収支', 'count')
+    ).reset_index().sort_values('曜日_num')
+    
+    col_w1, col_w2 = st.columns(2)
+    
+    with col_w1:
+        weekday_chart = alt.Chart(weekday_rank).mark_bar().encode(
+            x=alt.X('曜日', sort=[weekdays_map[i] for i in range(7)], title='曜日'),
+            y=alt.Y('総収支', title='総収支 (円)'),
+            color=alt.condition(alt.datum.総収支 > 0, alt.value("#ef5350"), alt.value("#42a5f5")),
+            tooltip=['曜日', alt.Tooltip('総収支', format='+d'), alt.Tooltip('勝率', format='.1%')]
+        ).interactive()
+        st.altair_chart(weekday_chart, use_container_width=True)
+        
+    with col_w2:
+        st.dataframe(
+            weekday_rank[['曜日', '総収支', '勝率', '稼働数']],
+            column_config={
+                "曜日": st.column_config.TextColumn("曜日"),
+                "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
+                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                "稼働数": st.column_config.NumberColumn("回数"),
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+
     # グラフ (日別収支と累積収支)
     st.subheader("📈 資産推移")
     chart_data = df_balance.sort_values('日付').copy()
@@ -915,6 +1077,48 @@ def render_my_balance_page(df_raw):
         use_container_width=True,
         hide_index=True
     )
+
+    # --- 3. 収支データの編集・削除 ---
+    if '登録日時' in df_balance.columns:
+        st.divider()
+        st.subheader("✏️ 収支データの編集・削除")
+        
+        # セレクトボックス用に表示名を作成
+        def format_balance_label(uid):
+            row = df_balance[df_balance['登録日時'] == uid].iloc[0]
+            d_str = row['日付'].strftime('%Y-%m-%d') if pd.notna(row['日付']) else "不明"
+            return f"{d_str} | {row['店名']} | {row['機種名']} ({row['収支']}円)"
+
+        target_uid = st.selectbox("編集・削除するデータを選択", df_balance['登録日時'].unique(), format_func=format_balance_label, key="edit_balance_target")
+        
+        if target_uid:
+            target_row = df_balance[df_balance['登録日時'] == target_uid].iloc[0]
+            
+            with st.form("edit_balance_form"):
+                e_col1, e_col2 = st.columns(2)
+                with e_col1:
+                    try: default_date = pd.to_datetime(target_row['日付']).date()
+                    except: default_date = pd.Timestamp.now().date()
+                    edit_date = st.date_input("稼働日", value=default_date, key="eb_date")
+                    edit_shop = st.text_input("店舗名", value=target_row['店名'], key="eb_shop")
+                    edit_number = st.text_input("台番号", value=str(target_row['台番号']), key="eb_num")
+                with e_col2:
+                    edit_machine = st.text_input("機種名", value=target_row['機種名'], key="eb_mac")
+                    edit_invest = st.number_input("投資金額 (円)", value=int(target_row['投資']), min_value=0, step=1000, key="eb_inv")
+                    edit_recovery = st.number_input("回収金額 (円)", value=int(target_row['回収']), min_value=0, step=1000, key="eb_rec")
+                edit_memo = st.text_area("メモ", value=str(target_row.get('メモ', '')), height=80, key="eb_memo")
+                if st.form_submit_button("更新を保存", type="primary"):
+                    if backend.update_my_balance(target_uid, edit_date, edit_shop, edit_machine, edit_number, edit_invest, edit_recovery, edit_memo):
+                        st.success("収支データを更新しました！")
+                        st.cache_data.clear(); st.rerun()
+                    else: st.error("更新に失敗しました。")
+            
+            with st.form("delete_balance_form"):
+                st.caption("※この操作は取り消せません")
+                if st.form_submit_button("このデータを削除", type="primary"):
+                    if backend.delete_my_balance(target_uid):
+                        st.success("削除しました！"); st.cache_data.clear(); st.rerun()
+                    else: st.error("削除に失敗しました。")
 
 # ---------------------------------------------------------
 # メイン処理
@@ -1043,7 +1247,7 @@ def main():
         st.session_state['save_requested'] = False
 
     if page == "全店分析サマリー":
-        render_summary_page(df, df_raw, shop_col)
+        render_summary_page(df, df_raw, shop_col, df_events)
     elif page == "精度検証 (答え合わせ)":
         # 予測ログをロードして渡す
         df_log = backend.load_prediction_log()
@@ -1055,7 +1259,7 @@ def main():
     elif page == "💰 マイ収支管理":
         render_my_balance_page(df_raw)
     else:
-        render_shop_detail_page(df, df_raw, shop_col)
+        render_shop_detail_page(df, df_raw, shop_col, df_events)
 
 if __name__ == "__main__":
     main()

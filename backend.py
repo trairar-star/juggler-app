@@ -150,6 +150,47 @@ def save_shop_event(shop_name, event_date, event_name, event_rank):
         st.error(f"イベント保存エラー: {e}")
         return False
 
+def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_name, new_event_date, new_event_name, new_event_rank):
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('shop_events')
+        all_values = worksheet.get_all_values()
+        if not all_values: return False
+        header = all_values[0]
+        try:
+            idx_reg = header.index('登録日時')
+            idx_shop = header.index('店名')
+            idx_date = header.index('イベント日付')
+            idx_name = header.index('イベント名')
+            idx_rank = header.index('イベントランク') if 'イベントランク' in header else -1
+        except: return False
+        
+        target_date_str = old_event_date.strftime('%Y-%m-%d')
+        new_date_str = new_event_date.strftime('%Y-%m-%d')
+        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        for i, row in enumerate(all_values[1:], start=2):
+            if len(row) <= max(idx_shop, idx_date, idx_name): continue
+            r_date = row[idx_date]
+            is_date_match = (r_date == target_date_str)
+            if not is_date_match:
+                try: 
+                    if pd.to_datetime(r_date).strftime('%Y-%m-%d') == target_date_str: is_date_match = True
+                except: pass
+            if row[idx_shop] == old_shop_name and row[idx_name] == old_event_name and is_date_match:
+                worksheet.update_cell(i, idx_reg + 1, timestamp)
+                worksheet.update_cell(i, idx_shop + 1, new_shop_name)
+                worksheet.update_cell(i, idx_date + 1, new_date_str)
+                worksheet.update_cell(i, idx_name + 1, new_event_name)
+                if idx_rank != -1:
+                    worksheet.update_cell(i, idx_rank + 1, new_event_rank)
+                return True
+        return False
+    except Exception as e:
+        st.error(f"更新エラー: {e}")
+        return False
+
 def delete_shop_event(shop_name, event_date, event_name):
     try:
         gc = _get_gspread_client()
@@ -213,6 +254,62 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
         return True
     except Exception as e:
         st.error(f"収支保存エラー: {e}")
+        return False
+
+def update_my_balance(old_timestamp, date_obj, shop, machine, number, invest, recovery, memo):
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('my_balance')
+        all_values = worksheet.get_all_values()
+        if not all_values: return False
+        
+        header = all_values[0]
+        try:
+            idx_reg = header.index('登録日時')
+            idx_date = header.index('日付')
+            idx_shop = header.index('店名')
+            idx_num = header.index('台番号')
+            idx_mac = header.index('機種名')
+            idx_inv = header.index('投資')
+            idx_rec = header.index('回収')
+            idx_bal = header.index('収支')
+            idx_memo = header.index('メモ')
+        except: return False
+        
+        date_str = date_obj.strftime('%Y-%m-%d')
+        balance = int(recovery) - int(invest)
+        
+        for i, row in enumerate(all_values[1:], start=2):
+            if len(row) <= idx_reg: continue
+            if row[idx_reg] == str(old_timestamp):
+                worksheet.update_cell(i, idx_date + 1, date_str)
+                worksheet.update_cell(i, idx_shop + 1, shop)
+                worksheet.update_cell(i, idx_num + 1, number)
+                worksheet.update_cell(i, idx_mac + 1, machine)
+                worksheet.update_cell(i, idx_inv + 1, invest)
+                worksheet.update_cell(i, idx_rec + 1, recovery)
+                worksheet.update_cell(i, idx_bal + 1, balance)
+                worksheet.update_cell(i, idx_memo + 1, memo)
+                return True
+        return False
+    except Exception as e:
+        st.error(f"収支更新エラー: {e}")
+        return False
+
+def delete_my_balance(target_timestamp):
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('my_balance')
+        
+        cell = worksheet.find(str(target_timestamp), in_column=1)
+        if cell:
+            worksheet.delete_rows(cell.row)
+            return True
+        return False
+    except Exception as e:
+        st.error(f"収支削除エラー: {e}")
         return False
 
 # ---------------------------------------------------------
