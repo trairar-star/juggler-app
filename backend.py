@@ -312,13 +312,13 @@ def run_analysis(df, df_events=None, hyperparams=None):
         sample_weights = 0.995 ** days_diff
     
     if hyperparams is None:
-        hyperparams = {'n_estimators': 100, 'learning_rate': 0.1, 'num_leaves': 31, 'max_depth': -1}
+        hyperparams = {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5}
 
     # LightGBMの初期化エラーを防ぐため、パラメータを明示的に渡す
-    n_est = hyperparams.get('n_estimators', 100)
-    lr = hyperparams.get('learning_rate', 0.1)
-    nl = hyperparams.get('num_leaves', 31)
-    md = hyperparams.get('max_depth', -1)
+    n_est = hyperparams.get('n_estimators', 200)
+    lr = hyperparams.get('learning_rate', 0.05)
+    nl = hyperparams.get('num_leaves', 20)
+    md = hyperparams.get('max_depth', 5)
 
     model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     model.fit(X, y, sample_weight=sample_weights)

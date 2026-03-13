@@ -938,6 +938,13 @@ def main():
     # タイトルや設定は共通
     st.title("🎰 明日のスロット予測")
     
+    # --- ページ切り替えメニュー (サイドバーの一番上) ---
+    page = st.sidebar.radio(
+        "メニュー", 
+        ["店舗別詳細データ", "全店分析サマリー", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "イベント管理", "💰 マイ収支管理"]
+    )
+    st.sidebar.divider()
+
     # データ更新ボタン (サイドバー)
     if st.sidebar.button("🔄 データ更新 (再読み込み)"):
         st.cache_data.clear()
@@ -1032,9 +1039,6 @@ def main():
     if st.session_state.get('save_requested'):
         backend.save_prediction_log(df)
         st.session_state['save_requested'] = False
-
-    # --- ページ切り替え ---
-    page = st.sidebar.radio("メニュー", ["全店分析サマリー", "店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "イベント管理", "💰 マイ収支管理"])
 
     if page == "全店分析サマリー":
         render_summary_page(df, df_raw, shop_col)
