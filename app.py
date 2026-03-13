@@ -574,34 +574,42 @@ def render_feature_analysis_page(df_train):
     
     # --- 1. REG確率別の勝率 (最重要) ---
     st.subheader("📊 REG確率と勝率の関係")
-    st.caption("「REG確率が良い台は本当に翌日勝てるのか？」を検証します。")
+    st.caption("「REG確率が良い台は本当に翌日勝てるのか？」を検証します。回転数が少ないと確率がブレてノイズになるため、最低回転数で絞り込めます。")
     
-    # REG分母をビン分割
-    bins = [0, 200, 240, 280, 320, 360, 400, 500, 10000]
-    labels = ['~1/200 (極良)', '1/200~240 (高)', '1/240~280 (良)', '1/280~320 (中)', '1/320~360 (低)', '1/360~400 (悪)', '1/400~500 (極悪)', '1/500~ (論外)']
+    # ノイズ除去用のゲーム数フィルター
+    min_g = st.slider("集計対象の最低回転数", min_value=0, max_value=8000, value=3000, step=500, help="指定した回転数以上回っている台のみを集計します。")
     
-    analysis_df['REG区間'] = pd.cut(analysis_df['REG分母'], bins=bins, labels=labels)
+    reg_df = analysis_df[analysis_df['累計ゲーム'] >= min_g].copy()
     
-    reg_stats = analysis_df.groupby('REG区間', observed=True).agg(
-        勝率=('target', 'mean'),
-        平均翌日差枚=('next_diff', 'mean'),
-        サンプル数=('target', 'count')
-    ).reset_index()
-    
-    # 複合グラフ: 棒グラフ(勝率) + 折れ線(差枚)
-    base = alt.Chart(reg_stats).encode(x=alt.X('REG区間', title='前日のREG確率区分'))
-    
-    bar = base.mark_bar(color='#66BB6A', opacity=0.7).encode(
-        y=alt.Y('勝率', axis=alt.Axis(format='%', title='勝率')),
-        tooltip=['REG区間', alt.Tooltip('勝率', format='.1%'), 'サンプル数']
-    )
-    
-    line = base.mark_line(color='#FF7043', point=True).encode(
-        y=alt.Y('平均翌日差枚', axis=alt.Axis(title='平均翌日差枚 (枚)')),
-        tooltip=['REG区間', alt.Tooltip('平均翌日差枚', format='+.0f')]
-    )
-    
-    st.altair_chart(alt.layer(bar, line).resolve_scale(y='independent'), use_container_width=True)
+    if reg_df.empty:
+        st.warning("条件に一致するデータがありません。最低回転数を下げてください。")
+    else:
+        # REG分母をビン分割
+        bins = [0, 200, 240, 280, 320, 360, 400, 500, 10000]
+        labels = ['~1/200 (極良)', '1/200~240 (高)', '1/240~280 (良)', '1/280~320 (中)', '1/320~360 (低)', '1/360~400 (悪)', '1/400~500 (極悪)', '1/500~ (論外)']
+        
+        reg_df['REG区間'] = pd.cut(reg_df['REG分母'], bins=bins, labels=labels)
+        
+        reg_stats = reg_df.groupby('REG区間', observed=True).agg(
+            勝率=('target', 'mean'),
+            平均翌日差枚=('next_diff', 'mean'),
+            サンプル数=('target', 'count')
+        ).reset_index()
+        
+        # 複合グラフ: 棒グラフ(勝率) + 折れ線(差枚)
+        base = alt.Chart(reg_stats).encode(x=alt.X('REG区間', title='前日のREG確率区分'))
+        
+        bar = base.mark_bar(color='#66BB6A', opacity=0.7).encode(
+            y=alt.Y('勝率', axis=alt.Axis(format='%', title='勝率')),
+            tooltip=['REG区間', alt.Tooltip('勝率', format='.1%'), 'サンプル数']
+        )
+        
+        line = base.mark_line(color='#FF7043', point=True).encode(
+            y=alt.Y('平均翌日差枚', axis=alt.Axis(title='平均翌日差枚 (枚)')),
+            tooltip=['REG区間', alt.Tooltip('平均翌日差枚', format='+.0f')]
+        )
+        
+        st.altair_chart(alt.layer(bar, line).resolve_scale(y='independent'), use_container_width=True)
     
     col1, col2 = st.columns(2)
     
