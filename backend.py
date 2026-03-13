@@ -222,6 +222,46 @@ def delete_shop_event(shop_name, event_date, event_name):
         st.error(f"削除エラー: {e}")
         return False
 
+# --- 島マスター管理機能 ---
+@st.cache_data(ttl=600)
+def load_island_master():
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('island_master')
+        return pd.DataFrame(worksheet.get_all_records())
+    except: return pd.DataFrame()
+
+def save_island_master(shop, island_name, start_num, end_num):
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        sheet_name = 'island_master'
+        try: worksheet = sh.worksheet(sheet_name)
+        except: 
+            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="5")
+            worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号'])
+        
+        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        worksheet.append_row([timestamp, shop, island_name, start_num, end_num])
+        return True
+    except Exception as e:
+        st.error(f"島マスター保存エラー: {e}")
+        return False
+
+def delete_island_master(target_timestamp):
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('island_master')
+        cell = worksheet.find(str(target_timestamp), in_column=1)
+        if cell:
+            worksheet.delete_rows(cell.row)
+            return True
+        return False
+    except Exception:
+        return False
+
 # --- マイ収支管理機能 ---
 @st.cache_data(ttl=600)
 def load_my_balance():
@@ -316,7 +356,7 @@ def delete_my_balance(target_timestamp):
 # 分析・予測ロジック
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def run_analysis(df, df_events=None, hyperparams=None):
+def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     if df.empty: return df, pd.DataFrame()
 
     shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
@@ -345,6 +385,32 @@ def run_analysis(df, df_events=None, hyperparams=None):
     if shop_col and '機種名' in df.columns and '台番号' in df.columns:
         grp = df.groupby([shop_col, '機種名'])['台番号']
         df['is_corner'] = ((df['台番号'] == grp.transform('min')) | (df['台番号'] == grp.transform('max'))).astype(int)
+        df['island_id'] = "Unknown"
+
+        # 島マスターの適用
+        if df_island is not None and not df_island.empty:
+            unique_machines = df[[shop_col, '台番号']].drop_duplicates()
+            island_mapping = []
+            for _, row in unique_machines.iterrows():
+                s_name = row[shop_col]
+                m_num = row['台番号']
+                s_islands = df_island[df_island['店名'] == s_name]
+                i_id = "Unknown"
+                is_cor = 0
+                for _, i_row in s_islands.iterrows():
+                    try:
+                        s_num = int(i_row['開始台番号'])
+                        e_num = int(i_row['終了台番号'])
+                        if s_num <= m_num <= e_num:
+                            i_id = f"{s_name}_{i_row['島名']}"
+                            if m_num == s_num or m_num == e_num: is_cor = 1
+                            break
+                    except: pass
+                island_mapping.append({shop_col: s_name, '台番号': m_num, 'master_island_id': i_id, 'master_is_corner': is_cor})
+            mapping_df = pd.DataFrame(island_mapping)
+            df = pd.merge(df, mapping_df, on=[shop_col, '台番号'], how='left')
+            df.loc[df['master_island_id'] != "Unknown", 'island_id'] = df['master_island_id']
+            df.loc[df['master_island_id'] != "Unknown", 'is_corner'] = df['master_is_corner']
 
     if shop_col and '台番号' in df.columns and '対象日付' in df.columns:
         df = df.sort_values([shop_col, '対象日付', '台番号'])
@@ -357,8 +423,14 @@ def run_analysis(df, df_events=None, hyperparams=None):
         next_no = df['台番号'].shift(-1)
         next_diff = df['差枚'].shift(-1)
         
-        is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no) == 1)
-        is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']) == 1)
+        if 'island_id' in df.columns:
+            prev_island = df['island_id'].shift(1)
+            next_island = df['island_id'].shift(-1)
+            is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no) == 1) & (df['island_id'] == prev_island)
+            is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']) == 1) & (df['island_id'] == next_island)
+        else:
+            is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no) == 1)
+            is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']) == 1)
         
         p_val = np.where(is_prev, prev_diff, np.nan)
         n_val = np.where(is_next, next_diff, np.nan)
@@ -382,9 +454,16 @@ def run_analysis(df, df_events=None, hyperparams=None):
 
     df = df.sort_values(sort_keys)
     df['mean_7days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
+    df['mean_14days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=14, min_periods=1).mean()).fillna(0)
+    df['mean_30days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム']:
+    if shop_col:
+        df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
+    if 'island_id' in df.columns:
+        df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
+
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
 
     train_df = df.dropna(subset=['next_diff'])
@@ -467,9 +546,11 @@ def run_analysis(df, df_events=None, hyperparams=None):
             wd_name = ['月', '火', '水', '木', '金', '土', '日'][int(row['weekday'])] if 0 <= row['weekday'] <= 6 else ''
             reasons.append(f"{wd_name}曜日はこの店の得意日(平均+{int(w_avg)}枚)です。")
 
-        if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）の期待大です。")
+        if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
         n_avg = row.get('neighbor_avg_diff', 0)
         if n_avg > 300: reasons.append(f"両隣が好調(平均+{int(n_avg)}枚)で、並びや全台系の可能性があります。")
+        i_avg = row.get('island_avg_diff', 0)
+        if i_avg > 400: reasons.append(f"所属する島全体が好調(平均+{int(i_avg)}枚)で、塊対象の可能性があります。")
         
         if reasons: comments.append(" ".join(reasons))
         else:

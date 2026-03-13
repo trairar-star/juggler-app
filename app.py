@@ -868,6 +868,53 @@ def render_event_management_page():
             else:
                 st.error("削除に失敗しました。")
 
+# --- ページ描画関数: 島マスター管理 ---
+def render_island_master_page(df_raw):
+    st.header("🗺️ 島マスター管理 (角・並び設定)")
+    st.caption("台が属する「島（列）」を登録することで、AIが正確な『角台』や『通路を跨がない隣台（並び）』を認識できるようになり、精度が劇的に向上します。")
+    
+    df_island = backend.load_island_master()
+    
+    with st.expander("📝 新しい島（列）を登録", expanded=True):
+        st.info("💡 **登録のコツ**: 1台ずつではなく「島の開始台と終了台」を登録するだけで、AIが自動で両端を角台と認識します！")
+        with st.form("island_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                shops = []
+                if not df_raw.empty:
+                    shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
+                    if shop_col in df_raw.columns:
+                        shops = list(df_raw[shop_col].unique())
+                input_shop = st.selectbox("店舗名", shops)
+                input_island = st.text_input("島名 (例: マイジャグA列)", placeholder="マイジャグA列")
+            with col2:
+                input_start = st.number_input("開始台番号", min_value=1, step=1)
+                input_end = st.number_input("終了台番号", min_value=1, step=1)
+            
+            submitted = st.form_submit_button("島を登録", type="primary")
+            if submitted:
+                if not input_island:
+                    st.error("島名を入力してください。")
+                elif input_start > input_end:
+                    st.error("開始台番号は終了台番号より小さくしてください。")
+                else:
+                    if backend.save_island_master(input_shop, input_island, input_start, input_end):
+                        st.success(f"{input_shop}の島マスターを登録しました！")
+                        st.cache_data.clear()
+                        st.rerun()
+
+    if not df_island.empty:
+        st.subheader("📋 登録済みの島一覧")
+        df_island['uid_label'] = df_island['店名'] + " | " + df_island['島名'] + " (" + df_island['開始台番号'].astype(str) + "〜" + df_island['終了台番号'].astype(str) + ")"
+        st.dataframe(df_island[['店名', '島名', '開始台番号', '終了台番号']], use_container_width=True, hide_index=True)
+        with st.form("delete_island_form"):
+            target = st.selectbox("削除する島を選択", df_island['登録日時'].unique(), format_func=lambda x: df_island[df_island['登録日時']==x].iloc[0]['uid_label'])
+            if st.form_submit_button("削除"):
+                if backend.delete_island_master(target):
+                    st.success("削除しました。")
+                    st.cache_data.clear()
+                    st.rerun()
+
 # --- ページ描画関数: マイ収支管理 ---
 def render_my_balance_page(df_raw):
     st.header("💰 マイ収支管理")
@@ -1147,7 +1194,7 @@ def main():
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
         "メニュー", 
-        ["店舗別詳細データ", "全店分析サマリー", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "イベント管理", "💰 マイ収支管理"]
+        ["店舗別詳細データ", "全店分析サマリー", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
     )
     st.sidebar.divider()
 
@@ -1171,6 +1218,7 @@ def main():
 
     # イベントデータのロード
     df_events = backend.load_shop_events()
+    df_island = backend.load_island_master()
 
     # --- 学習データの統計情報を表示 (追加) ---
     if '対象日付' in df_raw.columns and not df_raw.empty:
@@ -1222,7 +1270,7 @@ def main():
     # 分析実行
     with st.spinner("AIがデータを分析し、予測を生成しています..."):
         # キャッシュキーとしてデータの長さを利用（簡易的）
-        df, df_verify = backend.run_analysis(df_raw, df_events, hyperparams)
+        df, df_verify = backend.run_analysis(df_raw, df_events, df_island, hyperparams)
     
     if df.empty:
         st.warning("分析対象のデータがありません。")
@@ -1254,6 +1302,8 @@ def main():
         render_verification_page(df_log, df_raw)
     elif page == "AI傾向分析 (勝利の法則)":
         render_feature_analysis_page(df_verify)
+    elif page == "島マスター管理":
+        render_island_master_page(df_raw)
     elif page == "イベント管理":
         render_event_management_page()
     elif page == "💰 マイ収支管理":
