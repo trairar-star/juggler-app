@@ -423,14 +423,21 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         next_no = df['台番号'].shift(-1)
         next_diff = df['差枚'].shift(-1)
         
+        # 飛び番対応: 島が同じなら無条件で隣とする。島が不明な場合は差が3以内(4,9欠番などを考慮)なら隣とする。
         if 'island_id' in df.columns:
             prev_island = df['island_id'].shift(1)
             next_island = df['island_id'].shift(-1)
-            is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no) == 1) & (df['island_id'] == prev_island)
-            is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']) == 1) & (df['island_id'] == next_island)
+            is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & (
+                ((df['island_id'] != "Unknown") & (df['island_id'] == prev_island)) |
+                ((df['island_id'] == "Unknown") & ((df['台番号'] - prev_no).between(1, 3)))
+            )
+            is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & (
+                ((df['island_id'] != "Unknown") & (df['island_id'] == next_island)) |
+                ((df['island_id'] == "Unknown") & ((next_no - df['台番号']).between(1, 3)))
+            )
         else:
-            is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no) == 1)
-            is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']) == 1)
+            is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no).between(1, 3))
+            is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']).between(1, 3))
         
         p_val = np.where(is_prev, prev_diff, np.nan)
         n_val = np.where(is_next, next_diff, np.nan)
