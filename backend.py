@@ -529,6 +529,11 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     df['mean_14days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=14, min_periods=1).mean()).fillna(0)
     df['mean_30days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
 
+    # --- 勝率安定度（一撃ノイズ排除用） ---
+    df['is_win'] = (df['差枚'] > 0).astype(int)
+    df['win_rate_7days'] = df.groupby(group_keys)['is_win'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
+    df = df.drop(columns=['is_win'])
+
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
     if 'island_id' in df.columns:
@@ -543,7 +548,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_negative'].cumsum()
     df = df.drop(columns=['temp_reset_group', 'is_positive', 'is_negative'])
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', '連続マイナス日数']
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', 'win_rate_7days', '連続マイナス日数']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
 
@@ -607,12 +612,16 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         if score > 0.8: comments.append("【激アツ】AIの自信度が非常に高いです。")
         
         mean_7d = row.get('mean_7days_diff', 0)
+        win_rate_7d = row.get('win_rate_7days', 0)
         diff = row.get('差枚', 0)
         if mean_7d < -300:
             if diff < -1000: reasons.append(f"直近1週間(平均{int(mean_7d)}枚)と前日が大きく凹んでおり、**「不調台の反発」**の可能性が高いです。")
             else: reasons.append(f"週間成績は不調(平均{int(mean_7d)}枚)ですが、AIは**「底打ち上昇」**を予測しています。")
         elif mean_7d > 500:
-            reasons.append(f"直近1週間(平均+{int(mean_7d)}枚)と好調を維持しており、**「据え置き」**が期待できます。")
+            if win_rate_7d >= 0.5:
+                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 勝率{win_rate_7d*100:.0f}%)と安定して好調で、**「高設定の据え置き」**が期待できます。")
+            elif diff >= 2000:
+                reasons.append(f"週間平均はプラスですが、直近の一撃(+{int(diff)}枚)による影響が大きいです。一撃後の回収に警戒が必要です。")
         
         # --- 特殊パターンの検証結果を根拠に反映 ---
         prev2_diff = row.get('prev_差枚')

@@ -894,11 +894,6 @@ def render_feature_analysis_page(df_train, df_importance=None):
     st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、スロット特有のパターンの翌日の成績を調査します。")
 
     if not reg_df.empty:
-        tab1, tab2, tab3, tab4 = st.tabs(["① REG先行 (BIG欠損)", "② 大凹み vs 大勝", "③ 2日間のトレンド", "④ 上げリセット傾向(連続凹み)"])
-
-        with tab1:
-            st.markdown("**🔍 REG先行 (BIG欠損) 台の翌日成績**")
-            st.caption("BIGが引けなかったがREGは付いてきている台が、翌日「高設定の不発」として出る(底上げされる)のか検証します。")
             
             if 'BIG' in reg_df.columns and 'REG' in reg_df.columns:
                 reg_lead_df = reg_df.copy()
@@ -1176,6 +1171,86 @@ def render_feature_analysis_page(df_train, df_importance=None):
             else:
                 st.info("連続マイナス日数のデータがありません。")
 
+        with tab5:
+            st.markdown("**🔍 「安定台」vs「一撃荒波台」の翌日成績**")
+            st.caption("週間平均差枚がプラスの好調台について、「毎日コツコツ勝っている台（安定台）」と「まぐれで一撃出ただけの台（一撃台）」で翌日の勝率に差があるか検証します。")
+            
+            if 'mean_7days_diff' in reg_df.columns and 'win_rate_7days' in reg_df.columns:
+                stab_df = reg_df.copy()
+                
+                def classify_stability(row):
+                    mean_7d = row['mean_7days_diff']
+                    wr = row['win_rate_7days']
+                    
+                    if mean_7d >= 500:
+                        if wr >= 0.5:
+                            return "① 安定・優秀台 (週間+500枚以上 & 勝率50%以上)"
+                        else:
+                            return "② 一撃・荒波台 (週間+500枚以上 & 勝率50%未満)"
+                    elif mean_7d >= 0:
+                        return "③ チョイ浮き台 (週間0〜+499枚)"
+                    elif mean_7d >= -500:
+                        return "④ チョイ沈み台 (週間-1〜-500枚)"
+                    else:
+                        return "⑤ 不調台 (週間-500枚以下)"
+                        
+                stab_df['安定度分類'] = stab_df.apply(classify_stability, axis=1)
+                
+                stab_stats = stab_df.groupby('安定度分類').agg(
+                    翌日勝率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('安定度分類')
+                
+                col_s1, col_s2 = st.columns([1, 1.2])
+                with col_s1:
+                    st.dataframe(
+                        stab_stats,
+                        column_config={
+                            "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_s2:
+                    chart_stab = alt.Chart(stab_stats).mark_bar().encode(
+                        x=alt.X('安定度分類', title='台の性質'),
+                        y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
+                        color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        tooltip=['安定度分類', alt.Tooltip('翌日勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数']
+                    ).interactive()
+                    st.altair_chart(chart_stab, use_container_width=True)
+
+                if shop_col:
+                    st.divider()
+                    st.markdown("**🏬 店舗別: 「一撃・荒波台」の翌日成績（据え置きか回収か）**")
+                    st.caption("一撃で出た台をそのまま据え置く店か、しっかり回収する店かを比較します。")
+                    
+                    target_stab_df = stab_df[stab_df['安定度分類'] == "② 一撃・荒波台 (週間+500枚以上 & 勝率50%未満)"]
+                    if not target_stab_df.empty:
+                        shop_stab_stats = target_stab_df.groupby(shop_col).agg(
+                            翌日勝率=('target', 'mean'),
+                            平均翌日差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index().sort_values('翌日勝率', ascending=False)
+                        
+                        st.dataframe(
+                            shop_stab_stats,
+                            column_config={
+                                shop_col: st.column_config.TextColumn("店舗名"),
+                                "翌日勝率": st.column_config.ProgressColumn("据え置き(勝ち)期待度", format="%.1f%%", min_value=0, max_value=1),
+                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("該当するデータがありません。")
+            else:
+                st.info("週間勝率や平均差枚のデータがありません。")
+
     # --- 6. 特徴量重要度 (Feature Importance) ---
     if df_importance is not None and not df_importance.empty:
         st.divider()
@@ -1193,6 +1268,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
             'mean_7days_diff': '台: 直近7日平均差枚',
             'mean_14days_diff': '台: 直近14日平均差枚',
             'mean_30days_diff': '台: 直近30日平均差枚',
+            'win_rate_7days': '台: 直近7日間勝率 (一撃排除用)',
             '連続マイナス日数': '台: 連続マイナス日数',
             'machine_code': '機種',
             'shop_code': '店舗',
