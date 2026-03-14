@@ -145,7 +145,7 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
                 )
 
 # --- ページ描画関数: 店舗別詳細データ ---
-def render_shop_detail_page(df, df_raw, shop_col, df_events=None):
+def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None):
     st.header("🏪 店舗別 詳細データ")
     
     # 店舗・機種選択 (メイン画面上部)
@@ -177,6 +177,84 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None):
         if selected_machine != '全て':
             df = df[df['機種名'] == selected_machine]
 
+    # --- 店癖トップ5の抽出と明日の候補台へのマッピング ---
+    top_trends_df = None
+    base_win_rate = 0
+    if df_train is not None and not df_train.empty and selected_shop != '全て':
+        train_shop = df_train[df_train[shop_col] == selected_shop]
+        if len(train_shop) > 0:
+            base_win_rate = train_shop['target'].mean()
+            trends = []
+            
+            if 'is_corner' in train_shop.columns:
+                subset = train_shop[train_shop['is_corner'] == 1]
+                if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+            if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'REG確率' in train_shop.columns:
+                subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['REG確率'] >= (1/300))]
+                if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行 (高設定不発狙い)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+            if '連続マイナス日数' in train_shop.columns:
+                subset = train_shop[train_shop['連続マイナス日数'] >= 3]
+                if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+            if '差枚' in train_shop.columns:
+                subset = train_shop[train_shop['差枚'] <= -1000]
+                if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                subset = train_shop[train_shop['差枚'] >= 1000]
+                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+            if '対象日付' in train_shop.columns:
+                target_dates = train_shop['対象日付'] + pd.Timedelta(days=1)
+                for d in [0, 5, 7]:
+                    subset = train_shop[target_dates.dt.day % 10 == d]
+                    if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日 (予測日)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+            if '末尾番号' in train_shop.columns:
+                best_m, best_wr, best_count = -1, 0, 0
+                for m in range(10):
+                    subset = train_shop[train_shop['末尾番号'] == m]
+                    if len(subset) >= 10:
+                        wr = subset['target'].mean()
+                        if wr > best_wr: best_m, best_wr, best_count = m, wr, len(subset)
+                if best_m != -1: trends.append({"id": f"end_{int(best_m)}", "条件": f"末尾【{int(best_m)}】", "勝率": best_wr, "サンプル": best_count})
+
+            df['店癖マッチ'] = ""
+            if trends:
+                top_trends_df = pd.DataFrame(trends).sort_values('勝率', ascending=False).head(5)
+                top_trends_df['通常時との差'] = (top_trends_df['勝率'] - base_win_rate) * 100
+                top_ids = top_trends_df['id'].tolist()
+                
+                def get_matched_trends(row):
+                    matched = []
+                    if "corner" in top_ids and row.get('is_corner') == 1: matched.append("角")
+                    if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0) and row.get('REG確率', 0) >= (1/300): matched.append("REG先行")
+                    if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched.append("連凹")
+                    if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched.append("負反発")
+                    if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched.append("勝据え")
+                    for tid in top_ids:
+                        if tid.startswith("day_") and pd.notna(row.get('対象日付')):
+                            if (row['対象日付'] + pd.Timedelta(days=1)).day % 10 == int(tid.split("_")[1]): matched.append(f"{int(tid.split('_')[1])}のつく日")
+                        elif tid.startswith("end_") and row.get('末尾番号') == int(tid.split("_")[1]): matched.append(f"末尾{int(tid.split('_')[1])}")
+                    return "🔥" + " ".join(matched) if matched else ""
+                df['店癖マッチ'] = df.apply(get_matched_trends, axis=1)
+
+                # --- 激アツ条件によるスコア加算 (店癖ボーナス) ---
+                def apply_bonus(row):
+                    score = row.get('prediction_score', 0)
+                    match_str = row.get('店癖マッチ', '')
+                    if match_str.startswith('🔥'):
+                        # マッチした条件1つにつき +0.05 (5%) のボーナスを加算
+                        bonus = 0.05 * len(match_str.replace('🔥', '').strip().split())
+                        score = min(1.0, score + bonus) # 上限は1.0 (100%)
+                    return score
+                
+                if 'prediction_score' in df.columns:
+                    df['prediction_score'] = df.apply(apply_bonus, axis=1)
+                    # ボーナス加算後のスコアで「おすすめ度」を再評価
+                    def update_rating(score):
+                        if score >= 0.8: return 'A'
+                        elif score >= 0.6: return 'B'
+                        elif score >= 0.4: return 'C'
+                        elif score >= 0.2: return 'D'
+                        else: return 'E'
+                    df['おすすめ度'] = df['prediction_score'].apply(update_rating)
+
     # --- メインコンテンツ: ランキング表示 (上部に配置) ---
     st.subheader("🏆 予測期待度ランキング (Top 10)")
 
@@ -196,7 +274,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None):
     df_top10 = df_sorted.head(10)
 
     # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
-    base_cols = ['台番号', '機種名', 'おすすめ度', '予測差枚数']
+    base_cols = ['台番号', '機種名', '店癖マッチ', 'おすすめ度', '予測差枚数']
     if selected_shop == '全て' and shop_col in df.columns:
         base_cols.insert(0, shop_col)
         
@@ -209,6 +287,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None):
             shop_col: st.column_config.TextColumn("店舗", width="small"),
             "台番号": st.column_config.TextColumn("No.", width="small"),
             "機種名": st.column_config.TextColumn("機種", width="small"),
+            "店癖マッチ": st.column_config.TextColumn("激アツ条件", width="medium"),
             "おすすめ度": st.column_config.TextColumn("評価", width="small"),
             "予測差枚数": st.column_config.NumberColumn("予想差枚", format="%d", width="small"),
         },
@@ -380,6 +459,24 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None):
         st.divider()
         st.subheader(f"📅 {selected_shop} の傾向分析")
         st.caption("過去データに基づく、この店舗のイベント日や曜日ごとの平均差枚数です。")
+        
+        # --- 🤖 AIが発見した店癖トップ5 ---
+        if top_trends_df is not None and not top_trends_df.empty:
+            st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖 トップ5**")
+            st.caption("AIが過去データから見つけた、この店舗で特に勝率が高い特定の条件（店癖）です。ランキングの「🔥」マークはこの条件に合致しています。")
+            
+            st.dataframe(
+                top_trends_df,
+                        column_config={
+                            "条件": st.column_config.TextColumn("激アツ条件 (店癖)"),
+                            "勝率": st.column_config.ProgressColumn("条件合致時の勝率", format="%.2f", min_value=0, max_value=1),
+                            "通常時との差": st.column_config.NumberColumn("通常時との差", format="%+.1f pt"),
+                            "サンプル": st.column_config.NumberColumn("サンプル", format="%d 台")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+            st.caption(f"※この店舗の通常時の平均勝率は **{base_win_rate:.1%}** です。")
         
         # スマホ対応: 縦に並べる
         if '日付要素' in df_raw_shop.columns and not df_raw_shop['日付要素'].isnull().all():
@@ -652,7 +749,7 @@ def render_verification_page(df_log, df_raw):
     )
 
 # --- ページ描画関数: AI学習データ分析 (勝利の法則) ---
-def render_feature_analysis_page(df_train):
+def render_feature_analysis_page(df_train, df_importance=None):
     st.header("🔬 AI学習データ分析 (勝利の法則)")
     st.caption("過去の全データから、「勝った台（翌日プラス差枚）」と「負けた台」の傾向を分析し、勝ちやすい台の特徴を可視化します。")
 
@@ -662,6 +759,7 @@ def render_feature_analysis_page(df_train):
     
     # データ準備
     analysis_df = df_train.copy()
+    shop_col = '店名' if '店名' in analysis_df.columns else ('店舗名' if '店舗名' in analysis_df.columns else None)
     # REG確率分母を計算 (0除算回避)
     analysis_df['REG分母'] = analysis_df['REG確率'].apply(lambda x: int(1/x) if x > 0 else 9999)
     
@@ -789,6 +887,339 @@ def render_feature_analysis_page(df_train):
             st.info("イベントランクが登録されたデータがまだありません。サイドバーからイベントを登録すると傾向が表示されます。")
     else:
         st.info("イベントデータが結合されていません。")
+
+    # --- 5. 特殊パターンの検証 (REG先行・大凹み・大勝) ---
+    st.divider()
+    st.subheader("🕵️‍♂️ 特殊パターンの検証 (REG先行・凹み反発・大勝のその後)")
+    st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、スロット特有のパターンの翌日の成績を調査します。")
+
+    if not reg_df.empty:
+        tab1, tab2, tab3, tab4 = st.tabs(["① REG先行 (BIG欠損)", "② 大凹み vs 大勝", "③ 2日間のトレンド", "④ 上げリセット傾向(連続凹み)"])
+
+        with tab1:
+            st.markdown("**🔍 REG先行 (BIG欠損) 台の翌日成績**")
+            st.caption("BIGが引けなかったがREGは付いてきている台が、翌日「高設定の不発」として出る(底上げされる)のか検証します。")
+            
+            if 'BIG' in reg_df.columns and 'REG' in reg_df.columns:
+                reg_lead_df = reg_df.copy()
+                def classify_reg_lead(row):
+                    if row['REG'] > row['BIG']:
+                        if row.get('REG分母', 9999) <= 300:
+                            return "REG先行 & REG確率1/300以上 (高設定不発候補)"
+                        else:
+                            return "REG先行 & REG確率1/300未満"
+                    else:
+                        return "BIG先行 または 同数"
+                
+                reg_lead_df['REG先行分類'] = reg_lead_df.apply(classify_reg_lead, axis=1)
+                
+                rl_stats = reg_lead_df.groupby('REG先行分類').agg(
+                    翌日勝率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index()
+
+                st.dataframe(
+                    rl_stats,
+                    column_config={
+                        "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+
+                if shop_col:
+                    st.divider()
+                    st.markdown("**🏬 店舗別: 高設定不発候補 (REG先行&1/300以上) の翌日成績**")
+                    st.caption("このパターンが発生したとき、どの店舗が一番底上げ（上げ狙い成功）しやすいかを比較します。")
+                    target_reg_df = reg_lead_df[reg_lead_df['REG先行分類'] == "REG先行 & REG確率1/300以上 (高設定不発候補)"]
+                    if not target_reg_df.empty:
+                        shop_reg_stats = target_reg_df.groupby(shop_col).agg(
+                            翌日勝率=('target', 'mean'),
+                            平均翌日差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index().sort_values('平均翌日差枚', ascending=False)
+                        
+                        st.dataframe(
+                            shop_reg_stats,
+                            column_config={
+                                shop_col: st.column_config.TextColumn("店舗名"),
+                                "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+            else:
+                st.info("BIG/REG回数のデータがありません。")
+
+        with tab2:
+            st.markdown("**🔍 前日大凹み台の反発(底上げ) / 大勝台のその後**")
+            st.caption("大きく負けた台は翌日反発するのか？ 逆に出すぎた台は回収されるのか？ を検証します。")
+            
+            diff_pat_df = reg_df.copy()
+            def classify_diff_pat(d):
+                if d <= -2000: return "① 大凹み (-2000枚以下)"
+                elif d <= -1000: return "② 凹み (-1000〜-1999枚)"
+                elif d <= 0: return "③ チョイ負け (-1〜-999枚)"
+                elif d <= 1000: return "④ チョイ勝ち (+0〜+999枚)"
+                elif d <= 2000: return "⑤ 勝ち (+1000〜+1999枚)"
+                else: return "⑥ 大勝 (+2000枚以上)"
+                
+            diff_pat_df['前日結果'] = diff_pat_df['差枚'].apply(classify_diff_pat)
+            
+            dp_stats = diff_pat_df.groupby('前日結果').agg(
+                翌日勝率=('target', 'mean'),
+                平均翌日差枚=('next_diff', 'mean'),
+                サンプル数=('target', 'count')
+            ).reset_index().sort_values('前日結果')
+
+            col_dp1, col_dp2 = st.columns([1, 1.2])
+            with col_dp1:
+                st.dataframe(
+                    dp_stats,
+                    column_config={
+                        "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+            with col_dp2:
+                chart_dp = alt.Chart(dp_stats).mark_bar().encode(
+                    x=alt.X('前日結果', title='前日差枚'),
+                    y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
+                    color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                    tooltip=['前日結果', alt.Tooltip('翌日勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数']
+                ).interactive()
+                st.altair_chart(chart_dp, use_container_width=True)
+
+            if shop_col:
+                st.divider()
+                st.markdown("**🏬 店舗別: パターン別翌日成績の比較**")
+                
+                patterns = sorted(diff_pat_df['前日結果'].unique())
+                selected_pattern = st.selectbox(
+                    "比較する前日パターンを選択して、店舗ごとの扱いを確認",
+                    patterns,
+                    index=0
+                )
+                
+                target_dp_df = diff_pat_df[diff_pat_df['前日結果'] == selected_pattern]
+                if not target_dp_df.empty:
+                    shop_dp_stats = target_dp_df.groupby(shop_col).agg(
+                        翌日勝率=('target', 'mean'),
+                        平均翌日差枚=('next_diff', 'mean'),
+                        サンプル数=('target', 'count')
+                    ).reset_index().sort_values('平均翌日差枚', ascending=False)
+                    
+                    st.dataframe(
+                        shop_dp_stats,
+                        column_config={
+                            shop_col: st.column_config.TextColumn("店舗名"),
+                            "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                            "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+
+        with tab3:
+            st.markdown("**🔍 2日間の差枚トレンド (連勝・連敗・V字回復)**")
+            st.caption("前々日と前日の差枚パターンから、翌日の勝率（反発しやすいか、据え置かれやすいか）を検証します。")
+            
+            if 'prev_差枚' in reg_df.columns and '差枚' in reg_df.columns:
+                trend2d_df = reg_df.dropna(subset=['prev_差枚']).copy()
+                
+                def classify_2days_trend(row):
+                    prev2 = row['prev_差枚']
+                    prev1 = row['差枚']
+                    
+                    if prev2 <= -1000 and prev1 <= -1000:
+                        return "① 連続大負け (-1000枚以下が2日連続)"
+                    elif prev2 < 0 and prev1 < 0:
+                        return "② 連敗 (2日連続マイナス)"
+                    elif prev2 < 0 and prev1 >= 0:
+                        return "③ V字反発 (前々日負け → 前日勝ち)"
+                    elif prev2 >= 1000 and prev1 >= 1000:
+                        return "④ 連続大勝 (+1000枚以上が2日連続)"
+                    elif prev2 >= 0 and prev1 >= 0:
+                        return "⑤ 連勝 (2日連続プラス)"
+                    elif prev2 >= 0 and prev1 < 0:
+                        return "⑥ 下落傾向 (前々日勝ち → 前日負け)"
+                    else:
+                        return "その他"
+                        
+                trend2d_df['2日間トレンド'] = trend2d_df.apply(classify_2days_trend, axis=1)
+                
+                t2_stats = trend2d_df.groupby('2日間トレンド').agg(
+                    翌日勝率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('2日間トレンド')
+                
+                col_t1, col_t2 = st.columns([1, 1.2])
+                with col_t1:
+                    st.dataframe(
+                        t2_stats,
+                        column_config={
+                            "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_t2:
+                    chart_t2 = alt.Chart(t2_stats).mark_bar().encode(
+                        x=alt.X('2日間トレンド', title='2日間の成績パターン'),
+                        y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
+                        color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        tooltip=['2日間トレンド', alt.Tooltip('翌日勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数']
+                    ).interactive()
+                    st.altair_chart(chart_t2, use_container_width=True)
+
+                if shop_col:
+                    st.divider()
+                    st.markdown("**🏬 店舗別: 2日間トレンド別翌日成績の比較**")
+                    
+                    t2_patterns = sorted(trend2d_df['2日間トレンド'].unique())
+                    selected_t2_pattern = st.selectbox(
+                        "比較する2日間のパターンを選択",
+                        t2_patterns,
+                        index=0,
+                        key="select_t2_pattern"
+                    )
+                    
+                    target_t2_df = trend2d_df[trend2d_df['2日間トレンド'] == selected_t2_pattern]
+                    if not target_t2_df.empty:
+                        shop_t2_stats = target_t2_df.groupby(shop_col).agg(
+                            翌日勝率=('target', 'mean'),
+                            平均翌日差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index().sort_values('平均翌日差枚', ascending=False)
+                        
+                        st.dataframe(
+                            shop_t2_stats,
+                            column_config={
+                                shop_col: st.column_config.TextColumn("店舗名"),
+                                "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+            else:
+                st.info("前々日の差枚データが不足しています。")
+
+        with tab4:
+            st.markdown("**🔍 連続マイナス台の「上げリセット」検証**")
+            st.caption("何日間マイナスが続くと「上げリセット（設定変更）」されやすくなるのか、店舗ごとの見切りラインを検証します。")
+            
+            if '連続マイナス日数' in reg_df.columns:
+                reset_df = reg_df.copy()
+                
+                def classify_cons_minus(d):
+                    d = int(d)
+                    if d == 0: return "① 0日 (前日プラス)"
+                    elif d == 1: return "② 1日マイナス"
+                    elif d == 2: return "③ 2日連続マイナス"
+                    elif d == 3: return "④ 3日連続マイナス"
+                    elif d >= 4: return "⑤ 4日以上連続マイナス"
+                    return "不明"
+                    
+                reset_df['マイナス継続状況'] = reset_df['連続マイナス日数'].apply(classify_cons_minus)
+                
+                r_stats = reset_df.groupby('マイナス継続状況').agg(
+                    翌日勝率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('マイナス継続状況')
+                
+                st.dataframe(
+                    r_stats,
+                    column_config={
+                        "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+
+                if shop_col:
+                    st.divider()
+                    st.markdown("**🏬 店舗別: 3日以上連続マイナス台の『上げリセット期待度』**")
+                    
+                    target_reset_df = reset_df[reset_df['連続マイナス日数'] >= 3]
+                    if not target_reset_df.empty:
+                        shop_reset_stats = target_reset_df.groupby(shop_col).agg(
+                            翌日勝率=('target', 'mean'),
+                            平均翌日差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index().sort_values('翌日勝率', ascending=False)
+                        
+                        st.dataframe(
+                            shop_reset_stats,
+                            column_config={
+                                shop_col: st.column_config.TextColumn("店舗名"),
+                                "翌日勝率": st.column_config.ProgressColumn("リセット(上げ)期待度", format="%.1f%%", min_value=0, max_value=1),
+                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("3日以上連続マイナスのデータがまだありません。")
+            else:
+                st.info("連続マイナス日数のデータがありません。")
+
+    # --- 6. 特徴量重要度 (Feature Importance) ---
+    if df_importance is not None and not df_importance.empty:
+        st.divider()
+        st.subheader("🧠 AIが重視したポイント (特徴量重要度)")
+        st.caption("AIが明日の勝敗を予測する上で、どのデータ（特徴量）を一番重要視したかを示します。")
+        
+        feature_name_map = {
+            '累計ゲーム': '前日: 累計ゲーム数',
+            'REG確率': '前日: REG確率',
+            'BIG確率': '前日: BIG確率',
+            '差枚': '前日: 差枚数',
+            '末尾番号': '台番号: 末尾',
+            'weekday': '日付: 曜日',
+            'weekday_avg_diff': '店舗: 曜日平均差枚',
+            'mean_7days_diff': '台: 直近7日平均差枚',
+            'mean_14days_diff': '台: 直近14日平均差枚',
+            'mean_30days_diff': '台: 直近30日平均差枚',
+            '連続マイナス日数': '台: 連続マイナス日数',
+            'machine_code': '機種',
+            'shop_code': '店舗',
+            'reg_ratio': '前日: REG比率',
+            'is_corner': '配置: 角台',
+            'neighbor_avg_diff': '配置: 両隣の平均差枚',
+            'event_avg_diff': 'イベント: 平均差枚',
+            'prev_最終ゲーム': '前々日: 最終ゲーム数',
+            'event_code': 'イベント: 種類',
+            'event_rank_score': 'イベント: ランク',
+            'prev_差枚': '前々日: 差枚数',
+            'prev_REG確率': '前々日: REG確率',
+            'prev_累計ゲーム': '前々日: 累計ゲーム数',
+            'shop_avg_diff': '店舗: 当日平均差枚',
+            'island_avg_diff': '島: 当日平均差枚'
+        }
+        
+        display_importance = df_importance.copy()
+        display_importance['特徴量名'] = display_importance['feature'].map(lambda x: feature_name_map.get(x, x))
+        
+        chart_imp = alt.Chart(display_importance).mark_bar(color='#AB47BC').encode(
+            x=alt.X('importance:Q', title='重要度スコア'),
+            y=alt.Y('特徴量名:N', title='特徴量', sort='-x'),
+            tooltip=['特徴量名', 'importance']
+        ).properties(height=500).interactive()
+        
+        st.altair_chart(chart_imp, use_container_width=True)
 
 # --- ページ描画関数: イベント管理 ---
 def render_event_management_page():
@@ -1278,6 +1709,7 @@ def main():
     with st.spinner("AIがデータを分析し、予測を生成しています..."):
         # キャッシュキーとしてデータの長さを利用（簡易的）
         df, df_verify = backend.run_analysis(df_raw, df_events, df_island, hyperparams)
+        df, df_verify, df_importance = backend.run_analysis(df_raw, df_events, df_island, hyperparams)
     
     if df.empty:
         st.warning("分析対象のデータがありません。")
@@ -1309,6 +1741,7 @@ def main():
         render_verification_page(df_log, df_raw)
     elif page == "AI傾向分析 (勝利の法則)":
         render_feature_analysis_page(df_verify)
+        render_feature_analysis_page(df_verify, df_importance)
     elif page == "島マスター管理":
         render_island_master_page(df_raw)
     elif page == "イベント管理":
@@ -1316,7 +1749,7 @@ def main():
     elif page == "💰 マイ収支管理":
         render_my_balance_page(df_raw)
     else:
-        render_shop_detail_page(df, df_raw, shop_col, df_events)
+        render_shop_detail_page(df, df_raw, shop_col, df_events, df_verify)
 
 if __name__ == "__main__":
     main()

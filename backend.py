@@ -533,7 +533,13 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff']
+    # --- 上げリセット（設定変更）検知用の特徴量 ---
+    # 差枚が0以上になったらリセットされるグループを作成し、マイナスの連続日数をカウントする
+    df['temp_reset_group'] = (df['差枚'] >= 0).groupby(group_keys).cumsum()
+    df['連続マイナス日数'] = (df['差枚'] < 0).astype(int).groupby(group_keys + ['temp_reset_group']).cumsum()
+    df = df.drop(columns=['temp_reset_group'])
+
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', '連続マイナス日数']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
 
@@ -572,6 +578,11 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     
     predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
     
+    feature_importances = pd.DataFrame({
+        'feature': features,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
     reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
     predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
@@ -599,9 +610,29 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         elif mean_7d > 500:
             reasons.append(f"直近1週間(平均+{int(mean_7d)}枚)と好調を維持しており、**「据え置き」**が期待できます。")
         
+        # --- 特殊パターンの検証結果を根拠に反映 ---
+        prev2_diff = row.get('prev_差枚')
+        if pd.notna(prev2_diff):
+            if prev2_diff <= -1000 and diff <= -1000:
+                reasons.append("【特殊】2日連続の大凹み(-1000枚以下)で、強烈な反発(底上げ)サインが点灯しています。")
+            elif prev2_diff < 0 and diff >= 0:
+                reasons.append("【特殊】前々日のマイナスから前日プラスへV字反発しており、好調ウェーブの続伸に注目です。")
+            elif prev2_diff >= 1000 and diff >= 1000:
+                reasons.append("【特殊】2日連続の大勝(+1000枚以上)です。据え置き店ならチャンス、回収店なら警戒が必要です。")
+
+        # 連続マイナスのリセット狙い
+        cons_minus = row.get('連続マイナス日数', 0)
+        if cons_minus >= 3:
+            reasons.append(f"【特殊】現在{int(cons_minus)}日連続マイナス中です。店舗の「上げリセット(底上げ)」ターゲットになる可能性が高いです。")
+
         reg_prob = row.get('REG確率', 0)
-        if reg_prob > (1/280): reasons.append(f"前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
-        elif reg_prob > (1/350): reasons.append(f"REG確率(1/{int(1/reg_prob)})が悪くなく、粘る価値があります。")
+        big = row.get('BIG', 0)
+        reg = row.get('REG', 0)
+        if reg > big and reg_prob >= (1/300):
+            reasons.append(f"【特殊】REG先行(BIG欠損)かつREG確率1/300以上(1/{int(1/reg_prob)})の「高設定 不発台」です。")
+        else:
+            if reg_prob > (1/280): reasons.append(f"前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
+            elif reg_prob > (1/350): reasons.append(f"REG確率(1/{int(1/reg_prob)})が悪くなく、粘る価値があります。")
         
         e_avg = row.get('event_avg_diff', 0)
         if e_avg > 150: reasons.append(f"今日はイベント特定日(平均+{int(e_avg)}枚)のため期待値が高いです。")
@@ -636,4 +667,4 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         predict_df['店舗期待度'] = shop_mean.apply(get_rating)
     predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
     
-    return predict_df, train_df
+    return predict_df, train_df, feature_importances
