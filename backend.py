@@ -4,6 +4,7 @@ import numpy as np
 import lightgbm as lgb # type: ignore
 import streamlit as st # type: ignore
 import gspread
+import unicodedata
 from google.oauth2.service_account import Credentials
 
 # 定数定義
@@ -16,29 +17,11 @@ SHEET_NAME = 'juggler_raw'
 # 機種スペック情報
 # ---------------------------------------------------------
 MACHINE_SPECS = {
-    "マイジャグラーV": {
-        "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8},
-        "設定4": {"BIG": 254.0, "REG": 290.0, "合算": 135.4},
-        "設定5": {"BIG": 240.1, "REG": 268.6, "合算": 126.8},
-        "設定6": {"BIG": 229.1, "REG": 229.1, "合算": 114.6},
-    },
-    "アイムジャグラーEX": {
-        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5},
-        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2},
-        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5},
-        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5},
-    },
-    "ファンキージャグラー2": {
-        "設定1": {"BIG": 266.4, "REG": 439.8, "合算": 165.9},
-        "設定4": {"BIG": 249.2, "REG": 322.8, "合算": 140.6},
-        "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2},
-        "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6},
-    },
-    "ハッピージャグラーVⅢ": {
-        "設定1": {"BIG": 273.1, "REG": 397.2, "合算": 161.8},
-        "設定4": {"BIG": 254.0, "REG": 300.6, "合算": 137.7},
-        "設定5": {"BIG": 239.2, "REG": 273.1, "合算": 127.5},
-        "設定6": {"BIG": 226.0, "REG": 256.0, "合算": 120.0},
+    "ウルトラミラクルジャグラー": {
+        "設定1": {"BIG": 267.5, "REG": 425.6, "合算": 164.3},
+        "設定4": {"BIG": 242.7, "REG": 322.8, "合算": 138.6},
+        "設定5": {"BIG": 233.2, "REG": 297.9, "合算": 130.8},
+        "設定6": {"BIG": 216.3, "REG": 277.7, "合算": 121.6},
     },
     "ゴーゴージャグラー3": {
         "設定1": {"BIG": 259.0, "REG": 354.2, "合算": 149.6},
@@ -52,16 +35,54 @@ MACHINE_SPECS = {
         "設定5": {"BIG": 243.6, "REG": 270.8, "合算": 128.3},
         "設定6": {"BIG": 226.0, "REG": 252.1, "合算": 119.2},
     },
-    "ミスタージャグラー": {
-        "設定1": {"BIG": 268.6, "REG": 374.5, "合算": 156.4},
-        "設定4": {"BIG": 249.2, "REG": 291.3, "合算": 134.3},
-        "設定5": {"BIG": 240.9, "REG": 257.0, "合算": 124.4},
-        "設定6": {"BIG": 237.4, "REG": 237.4, "合算": 118.7},
+    "ネオアイムジャグラーEX": {
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5},
+    },
+    "ハッピージャグラーVIII": {
+        "設定1": {"BIG": 273.1, "REG": 397.2, "合算": 161.8},
+        "設定4": {"BIG": 254.0, "REG": 300.6, "合算": 137.7},
+        "設定5": {"BIG": 239.2, "REG": 273.1, "合算": 127.5},
+        "設定6": {"BIG": 226.0, "REG": 256.0, "合算": 120.0},
+    },
+    "ファンキージャグラー2KT": {
+        "設定1": {"BIG": 266.4, "REG": 439.8, "合算": 165.9},
+        "設定4": {"BIG": 249.2, "REG": 322.8, "合算": 140.6},
+        "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2},
+        "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6},
+    },
+    "マイジャグラーV": {
+        "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8},
+        "設定4": {"BIG": 254.0, "REG": 290.0, "合算": 135.4},
+        "設定5": {"BIG": 240.1, "REG": 268.6, "合算": 126.8},
+        "設定6": {"BIG": 229.1, "REG": 229.1, "合算": 114.6},
+    },
+    "ジャグラー（デフォルト）": {
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5},
     }
 }
 
 def get_machine_specs():
     return MACHINE_SPECS
+
+def get_matched_spec_key(machine_name, specs):
+    """機種名から最も一致するスペックキーを探す。見つからなければデフォルトを返す"""
+    if not isinstance(machine_name, str) or not machine_name:
+        return "ジャグラー（デフォルト）"
+    if machine_name in specs:
+        return machine_name
+    for spec_key in specs.keys():
+        if spec_key == "ジャグラー（デフォルト）": continue
+        chk_word = spec_key.split('ジャグラー')[0] if 'ジャグラー' in spec_key else spec_key
+        if not chk_word: chk_word = "ガールズ" if "ガールズ" in spec_key else spec_key
+        if chk_word and chk_word in machine_name:
+            return spec_key
+    return "ジャグラー（デフォルト）"
 
 # ---------------------------------------------------------
 # データ読み込み・保存関数 (Model / Logic)
@@ -99,6 +120,9 @@ def load_data():
         df.columns = [str(c).strip() for c in df.columns]
         rename_map = {'REG回数': 'REG', 'BIG回数': 'BIG', '店舗名': '店名'}
         df = df.rename(columns=rename_map)
+
+        if '機種名' in df.columns:
+            df['機種名'] = df['機種名'].apply(lambda x: unicodedata.normalize('NFKC', str(x)))
 
         def convert_prob(val):
             val_str = str(val).strip()
@@ -638,10 +662,77 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     
     predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
     
-    feature_importances = pd.DataFrame({
+    feature_importances_list = []
+    feature_importances_list.append(pd.DataFrame({
+        'shop_name': '全店舗',
+        'category': '全体',
         'feature': features,
         'importance': model.feature_importances_
-    }).sort_values('importance', ascending=False)
+    }))
+    
+    if shop_col:
+        for shop in train_df[shop_col].unique():
+            shop_train = train_df[train_df[shop_col] == shop]
+            if len(shop_train) >= 50: # サンプル数が少なすぎる場合は除外
+                X_shop = shop_train[features]
+                y_shop = shop_train['target']
+                sw_shop = sample_weights.loc[shop_train.index] if sample_weights is not None else None
+                
+                shop_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+                try:
+                    shop_model.fit(X_shop, y_shop, sample_weight=sw_shop)
+                    feature_importances_list.append(pd.DataFrame({
+                        'shop_name': shop,
+                        'category': '店舗',
+                        'feature': features,
+                        'importance': shop_model.feature_importances_
+                    }))
+                except: pass
+                    
+    # --- 曜日別モデルの学習 ---
+    weekdays_map = {0: '月曜', 1: '火曜', 2: '水曜', 3: '木曜', 4: '金曜', 5: '土曜', 6: '日曜'}
+    if 'weekday' in train_df.columns:
+        for wd in sorted(train_df['weekday'].unique()):
+            wd_train = train_df[train_df['weekday'] == wd]
+            if len(wd_train) >= 50:
+                X_wd = wd_train[features]
+                y_wd = wd_train['target']
+                sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None else None
+                
+                wd_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+                try:
+                    wd_model.fit(X_wd, y_wd, sample_weight=sw_wd)
+                    feature_importances_list.append(pd.DataFrame({
+                        'shop_name': weekdays_map.get(wd, f"曜日{wd}"),
+                        'category': '曜日',
+                        'feature': features,
+                        'importance': wd_model.feature_importances_
+                    }))
+                except: pass
+                
+    # --- イベント有無別モデルの学習 ---
+    if 'イベント名' in train_df.columns:
+        train_df_ev = train_df.copy()
+        train_df_ev['is_event'] = train_df_ev['イベント名'].apply(lambda x: '通常日' if x == '通常' else 'イベント日')
+        for ev_type in ['通常日', 'イベント日']:
+            ev_train = train_df_ev[train_df_ev['is_event'] == ev_type]
+            if len(ev_train) >= 50:
+                X_ev = ev_train[features]
+                y_ev = ev_train['target']
+                sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None else None
+                
+                ev_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+                try:
+                    ev_model.fit(X_ev, y_ev, sample_weight=sw_ev)
+                    feature_importances_list.append(pd.DataFrame({
+                        'shop_name': ev_type,
+                        'category': 'イベント',
+                        'feature': features,
+                        'importance': ev_model.feature_importances_
+                    }))
+                except: pass
+
+    feature_importances = pd.concat(feature_importances_list, ignore_index=True) if feature_importances_list else pd.DataFrame()
     
     reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
@@ -661,14 +752,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         if reg_prob <= 0 or games < 3000:
             return score
             
-        matched_spec_key = None
-        if isinstance(machine_name, str):
-            for spec_key in specs.keys():
-                chk_word = spec_key.split('ジャグラー')[0] if 'ジャグラー' in spec_key else spec_key
-                if not chk_word: chk_word = "ガールズ" if "ガールズ" in spec_key else spec_key
-                if chk_word in machine_name:
-                    matched_spec_key = spec_key
-                    break
+        matched_spec_key = get_matched_spec_key(machine_name, specs)
                     
         if matched_spec_key and "設定5" in specs[matched_spec_key]:
             set5_reg_prob = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
@@ -730,14 +814,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         
         # 機種固有の設定5基準を判定
         machine_name = row.get('機種名', '')
-        matched_spec_key = None
-        if isinstance(machine_name, str):
-            for spec_key in specs.keys():
-                chk_word = spec_key.split('ジャグラー')[0] if 'ジャグラー' in spec_key else spec_key
-                if not chk_word: chk_word = "ガールズ" if "ガールズ" in spec_key else spec_key
-                if chk_word in machine_name:
-                    matched_spec_key = spec_key
-                    break
+        matched_spec_key = get_matched_spec_key(machine_name, specs)
         
         is_setting5_over = False
         if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
