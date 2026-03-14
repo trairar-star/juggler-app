@@ -232,18 +232,32 @@ def load_island_master():
         return pd.DataFrame(worksheet.get_all_records())
     except: return pd.DataFrame()
 
-def save_island_master(shop, island_name, start_num, end_num):
+def save_island_master(shop, island_name, rule_str):
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         sheet_name = 'island_master'
-        try: worksheet = sh.worksheet(sheet_name)
+        try: 
+            worksheet = sh.worksheet(sheet_name)
+            header = worksheet.row_values(1)
+            if '台番号ルール' not in header:
+                worksheet.update_cell(1, len(header) + 1, '台番号ルール')
         except: 
-            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="5")
-            worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号'])
+            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="6")
+            worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール'])
+            header = ['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール']
         
         timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-        worksheet.append_row([timestamp, shop, island_name, start_num, end_num])
+        row_data = [timestamp, shop, island_name, "", "", rule_str]
+        
+        while len(row_data) < len(header):
+            row_data.append("")
+            
+        if '台番号ルール' in header:
+            idx = header.index('台番号ルール')
+            row_data[idx] = rule_str
+            
+        worksheet.append_row(row_data)
         return True
     except Exception as e:
         st.error(f"島マスター保存エラー: {e}")
@@ -391,21 +405,52 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         if df_island is not None and not df_island.empty:
             unique_machines = df[[shop_col, '台番号']].drop_duplicates()
             island_mapping = []
+            
+            parsed_islands = []
+            for _, i_row in df_island.iterrows():
+                s_name = i_row.get('店名')
+                i_name = i_row.get('島名')
+                machines = []
+                
+                # 旧仕様(開始〜終了)の互換性維持
+                try:
+                    s = int(i_row.get('開始台番号', 0))
+                    e = int(i_row.get('終了台番号', 0))
+                    if s > 0 and e >= s: machines.extend(range(s, e + 1))
+                except: pass
+                
+                # 新仕様(柔軟なルール指定)の解析
+                rule = str(i_row.get('台番号ルール', ''))
+                if rule and rule.strip() != '' and rule != 'nan':
+                    for part in rule.split(','):
+                        part = part.strip()
+                        if not part: continue
+                        if '-' in part:
+                            try:
+                                s_str, e_str = part.split('-', 1)
+                                machines.extend(range(int(s_str), int(e_str) + 1))
+                            except: pass
+                        else:
+                            try: machines.append(int(part))
+                            except: pass
+                            
+                machines = sorted(list(set(machines)))
+                if machines:
+                    parsed_islands.append({
+                        'shop': s_name, 'island_id': f"{s_name}_{i_name}",
+                        'machines': machines, 'corner_min': min(machines), 'corner_max': max(machines)
+                    })
+                    
             for _, row in unique_machines.iterrows():
                 s_name = row[shop_col]
                 m_num = row['台番号']
-                s_islands = df_island[df_island['店名'] == s_name]
                 i_id = "Unknown"
                 is_cor = 0
-                for _, i_row in s_islands.iterrows():
-                    try:
-                        s_num = int(i_row['開始台番号'])
-                        e_num = int(i_row['終了台番号'])
-                        if s_num <= m_num <= e_num:
-                            i_id = f"{s_name}_{i_row['島名']}"
-                            if m_num == s_num or m_num == e_num: is_cor = 1
-                            break
-                    except: pass
+                for pi in parsed_islands:
+                    if pi['shop'] == s_name and m_num in pi['machines']:
+                        i_id = pi['island_id']
+                        if m_num == pi['corner_min'] or m_num == pi['corner_max']: is_cor = 1
+                        break
                 island_mapping.append({shop_col: s_name, '台番号': m_num, 'master_island_id': i_id, 'master_is_corner': is_cor})
             mapping_df = pd.DataFrame(island_mapping)
             df = pd.merge(df, mapping_df, on=[shop_col, '台番号'], how='left')
@@ -413,35 +458,54 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
             df.loc[df['master_island_id'] != "Unknown", 'is_corner'] = df['master_is_corner']
 
     if shop_col and '台番号' in df.columns and '対象日付' in df.columns:
-        df = df.sort_values([shop_col, '対象日付', '台番号'])
-        prev_shop = df[shop_col].shift(1)
-        prev_date = df['対象日付'].shift(1)
-        prev_no = df['台番号'].shift(1)
-        prev_diff = df['差枚'].shift(1)
-        next_shop = df[shop_col].shift(-1)
-        next_date = df['対象日付'].shift(-1)
-        next_no = df['台番号'].shift(-1)
-        next_diff = df['差枚'].shift(-1)
-        
-        # 飛び番対応: 島が同じなら無条件で隣とする。島が不明な場合は差が3以内(4,9欠番などを考慮)なら隣とする。
         if 'island_id' in df.columns:
+            # 同じ島IDごとにまとめてからソートすることで、関係ない台が間に挟まるのを防ぐ
+            df = df.sort_values([shop_col, '対象日付', 'island_id', '台番号'])
+            
+            prev_shop = df[shop_col].shift(1)
+            prev_date = df['対象日付'].shift(1)
             prev_island = df['island_id'].shift(1)
+            prev_no = df['台番号'].shift(1)
+            prev_diff = df['差枚'].shift(1)
+            
+            next_shop = df[shop_col].shift(-1)
+            next_date = df['対象日付'].shift(-1)
             next_island = df['island_id'].shift(-1)
+            next_no = df['台番号'].shift(-1)
+            next_diff = df['差枚'].shift(-1)
+            
             is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & (
                 ((df['island_id'] != "Unknown") & (df['island_id'] == prev_island)) |
-                ((df['island_id'] == "Unknown") & ((df['台番号'] - prev_no).between(1, 3)))
+                ((df['island_id'] == "Unknown") & (df['island_id'] == prev_island) & ((df['台番号'] - prev_no).between(1, 3)))
             )
             is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & (
                 ((df['island_id'] != "Unknown") & (df['island_id'] == next_island)) |
-                ((df['island_id'] == "Unknown") & ((next_no - df['台番号']).between(1, 3)))
+                ((df['island_id'] == "Unknown") & (df['island_id'] == next_island) & ((next_no - df['台番号']).between(1, 3)))
             )
+            
+            p_val = np.where(is_prev, prev_diff, np.nan)
+            n_val = np.where(is_next, next_diff, np.nan)
+            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
+            
+            # 元の並び順に戻す
+            df = df.sort_values([shop_col, '対象日付', '台番号']).reset_index(drop=True)
         else:
+            df = df.sort_values([shop_col, '対象日付', '台番号'])
+            prev_shop = df[shop_col].shift(1)
+            prev_date = df['対象日付'].shift(1)
+            prev_no = df['台番号'].shift(1)
+            prev_diff = df['差枚'].shift(1)
+            next_shop = df[shop_col].shift(-1)
+            next_date = df['対象日付'].shift(-1)
+            next_no = df['台番号'].shift(-1)
+            next_diff = df['差枚'].shift(-1)
+            
             is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no).between(1, 3))
             is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']).between(1, 3))
         
-        p_val = np.where(is_prev, prev_diff, np.nan)
-        n_val = np.where(is_next, next_diff, np.nan)
-        df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
+            p_val = np.where(is_prev, prev_diff, np.nan)
+            n_val = np.where(is_next, next_diff, np.nan)
+            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
 
     sort_keys = [shop_col, '台番号', '対象日付'] if shop_col else ['台番号', '対象日付']
     group_keys = [shop_col, '台番号'] if shop_col else ['台番号']
