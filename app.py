@@ -646,7 +646,85 @@ def render_feature_analysis_page(df_train, df_importance=None):
     else:
         st.info("イベントデータが結合されていません。")
 
-    # --- 5. 特殊パターンの検証 (REG先行・大凹み・大勝) ---
+    # --- 5. 予測日ベースの曜日・末尾別の傾向 ---
+    st.divider()
+    st.subheader("📅 予測日ベースの傾向 (曜日・末尾)")
+    st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、「予測日の曜日」や「台の末尾番号」ごとの成績を比較します。店舗のクセを見抜くのに役立ちます。")
+
+    if not reg_df.empty:
+        tab_wd, tab_end = st.tabs(["📅 曜日別の傾向", "🔢 末尾番号の傾向"])
+
+        with tab_wd:
+            if 'target_weekday' in reg_df.columns:
+                weekdays_map = {0: '月曜', 1: '火曜', 2: '水曜', 3: '木曜', 4: '金曜', 5: '土曜', 6: '日曜'}
+                wd_df = reg_df.dropna(subset=['target_weekday']).copy()
+                wd_df['曜日'] = wd_df['target_weekday'].map(weekdays_map)
+
+                wd_stats = wd_df.groupby(['target_weekday', '曜日']).agg(
+                    勝率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('target_weekday')
+
+                wd_stats['信頼度'] = wd_stats['サンプル数'].apply(get_confidence_indicator)
+
+                col_w1, col_w2 = st.columns([1.2, 1])
+                with col_w1:
+                    chart_wd = alt.Chart(wd_stats).mark_bar().encode(
+                        x=alt.X('曜日', sort=[weekdays_map[i] for i in range(7)], title='予測日の曜日'),
+                        y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
+                        color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        tooltip=['曜日', alt.Tooltip('勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_wd, use_container_width=True)
+                with col_w2:
+                    st.dataframe(
+                        wd_stats[['曜日', '勝率', '平均翌日差枚', 'サンプル数', '信頼度']],
+                        column_config={
+                            "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+            else:
+                st.info("曜日データがありません。")
+
+        with tab_end:
+            if '末尾番号' in reg_df.columns:
+                end_df = reg_df.dropna(subset=['末尾番号']).copy()
+                end_stats = end_df.groupby('末尾番号').agg(
+                    勝率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('末尾番号')
+                
+                end_stats['末尾番号'] = end_stats['末尾番号'].astype(int).astype(str)
+                end_stats['信頼度'] = end_stats['サンプル数'].apply(get_confidence_indicator)
+
+                col_e1, col_e2 = st.columns([1.2, 1])
+                with col_e1:
+                    chart_end = alt.Chart(end_stats).mark_bar().encode(
+                        x=alt.X('末尾番号', title='末尾番号', sort=None),
+                        y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
+                        color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        tooltip=['末尾番号', alt.Tooltip('勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_end, use_container_width=True)
+                with col_e2:
+                    st.dataframe(
+                        end_stats[['末尾番号', '勝率', '平均翌日差枚', 'サンプル数', '信頼度']],
+                        column_config={
+                            "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+            else:
+                st.info("末尾番号データがありません。")
+
+    # --- 6. 特殊パターンの検証 (REG先行・大凹み・大勝) ---
     st.divider()
     st.subheader("🕵️‍♂️ 特殊パターンの検証 (REG先行・凹み反発・大勝のその後)")
     st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、スロット特有のパターンの翌日の成績を調査します。")
@@ -1032,7 +1110,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
             else:
                 st.info("週間勝率や平均差枚のデータがありません。")
 
-    # --- 6. 特徴量重要度 (Feature Importance) ---
+    # --- 7. 特徴量重要度 (Feature Importance) ---
     if df_importance is not None and not df_importance.empty:
         if 'shop_name' in df_importance.columns:
             display_importance = df_importance[df_importance['shop_name'] == selected_shop].copy()
@@ -1054,7 +1132,8 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 'BIG確率': '前日: BIG確率',
                 '差枚': '前日: 差枚数',
                 '末尾番号': '台番号: 末尾',
-                'weekday': '日付: 曜日',
+                'target_weekday': '予測日: 曜日',
+                'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)',
                 'weekday_avg_diff': '店舗: 曜日平均差枚',
                 'mean_7days_diff': '台: 直近7日平均差枚',
                 'mean_14days_diff': '台: 直近14日平均差枚',

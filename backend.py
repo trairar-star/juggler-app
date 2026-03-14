@@ -468,21 +468,6 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     if '機種名' in df.columns: df['machine_code'] = df['機種名'].astype('category').cat.codes
     if shop_col: df['shop_code'] = df[shop_col].astype('category').cat.codes
 
-    if df_events is not None and not df_events.empty and shop_col:
-        events_unique = df_events.drop_duplicates(subset=['店名', 'イベント日付'], keep='last').copy()
-        merge_cols = ['店名', 'イベント日付', 'イベント名']
-        if 'イベントランク' in events_unique.columns: merge_cols.append('イベントランク')
-
-        df = pd.merge(df, events_unique[merge_cols], left_on=[shop_col, '対象日付'], right_on=['店名', 'イベント日付'], how='left')
-        df = df.drop(columns=['店名_y', 'イベント日付_y'], errors='ignore')
-        if '店名_x' in df.columns: df = df.rename(columns={'店名_x': '店名'})
-        
-        df['イベント名'] = df['イベント名'].fillna('通常')
-        df['event_code'] = df['イベント名'].astype('category').cat.codes
-        if 'イベントランク' in df.columns:
-            rank_map = {'S': 5, 'A': 4, 'B': 3, 'C': 2}
-            df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
-
     if 'REG' in df.columns and 'BIG' in df.columns:
         df['reg_ratio'] = df['REG'] / (df['BIG'] + df['REG'] + 1)
 
@@ -607,6 +592,33 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
     df['target'] = (df['next_diff'] > 0).astype(int)
     
+    # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
+    df['next_date'] = df.groupby(group_keys)['対象日付'].shift(-1)
+    if target_date is not None:
+        target_ts = pd.to_datetime(target_date)
+        df.loc[df['next_diff'].isna(), 'next_date'] = target_ts
+    else:
+        df['next_date'] = df['next_date'].fillna(df['対象日付'] + pd.Timedelta(days=1))
+        
+    df['target_weekday'] = df['next_date'].dt.dayofweek
+    df['target_date_end_digit'] = df['next_date'].dt.day % 10
+
+    if df_events is not None and not df_events.empty and shop_col:
+        events_unique = df_events.drop_duplicates(subset=['店名', 'イベント日付'], keep='last').copy()
+        merge_cols = ['店名', 'イベント日付', 'イベント名']
+        if 'イベントランク' in events_unique.columns: merge_cols.append('イベントランク')
+
+        # 対象日付ではなく、予測対象日（next_date）のイベントを結合する
+        df = pd.merge(df, events_unique[merge_cols], left_on=[shop_col, 'next_date'], right_on=['店名', 'イベント日付'], how='left')
+        df = df.drop(columns=['店名_y', 'イベント日付_y', 'イベント日付'], errors='ignore')
+        if '店名_x' in df.columns: df = df.rename(columns={'店名_x': '店名'})
+        
+        df['イベント名'] = df['イベント名'].fillna('通常')
+        df['event_code'] = df['イベント名'].astype('category').cat.codes
+        if 'イベントランク' in df.columns:
+            rank_map = {'S': 5, 'A': 4, 'B': 3, 'C': 2}
+            df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
+
     df = df.sort_values('対象日付')
     df['weekday'] = df['対象日付'].dt.dayofweek
     df['weekday_avg_diff'] = df.groupby('weekday')['差枚'].transform(lambda x: x.shift(1).expanding().mean()).fillna(0)
@@ -640,7 +652,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     # 台ごとの過去データ件数（履歴の長さ）を計算し、信頼度の指標とする
     df['history_count'] = df.groupby(group_keys).cumcount() + 1
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', 'win_rate_7days', '連続マイナス日数']
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', 'win_rate_7days', '連続マイナス日数']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
 
@@ -708,9 +720,9 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
                     
     # --- 曜日別モデルの学習 ---
     weekdays_map = {0: '月曜', 1: '火曜', 2: '水曜', 3: '木曜', 4: '金曜', 5: '土曜', 6: '日曜'}
-    if 'weekday' in train_df.columns:
-        for wd in sorted(train_df['weekday'].unique()):
-            wd_train = train_df[train_df['weekday'] == wd]
+    if 'target_weekday' in train_df.columns:
+        for wd in sorted(train_df['target_weekday'].unique()):
+            wd_train = train_df[train_df['target_weekday'] == wd]
             if len(wd_train) >= 50:
                 X_wd = wd_train[features]
                 y_wd = wd_train['target']
@@ -881,7 +893,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
 
         w_avg = row.get('weekday_avg_diff', 0)
         if w_avg > 150:
-            wd_name = ['月', '火', '水', '木', '金', '土', '日'][int(row['weekday'])] if 0 <= row['weekday'] <= 6 else ''
+            wd_name = ['月', '火', '水', '木', '金', '土', '日'][int(row['target_weekday'])] if 'target_weekday' in row and 0 <= row['target_weekday'] <= 6 else ''
             reasons.append(f"{wd_name}曜日はこの店の得意日(平均+{int(w_avg)}枚)です。")
 
         if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
