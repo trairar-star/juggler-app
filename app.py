@@ -252,6 +252,10 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             
     results = base_df.apply(get_actual_result, axis=1)
     base_df[['差枚_actual', '結果_BIG', '結果_REG', '結果_累計ゲーム']] = results
+    
+    # --- BIG/REG確率分母の計算 ---
+    base_df['結果_BIG確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / row.get('結果_BIG', 1) if row.get('結果_BIG', 0) > 0 else 0, axis=1)
+    base_df['結果_REG確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / row.get('結果_REG', 1) if row.get('結果_REG', 0) > 0 else 0, axis=1)
 
     # 特徴量の名前を _current から元に戻す（弱点分析などで使用するため）
     for col in base_df.columns.copy():
@@ -590,14 +594,18 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     else:
         display_df['予想設定5以上確率'] = 0
 
-    cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_REG', 'REG不足分', '設定5近似度', '結果判定']
+    cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母', 'REG不足分']
     config_dict = {
         "対象日付": st.column_config.DateColumn("予測日", format="MM/DD"),
-        "予想設定5以上確率": st.column_config.ProgressColumn("予測(設定5期待度)", format="%d%%", min_value=0, max_value=100),
-        "差枚_actual": st.column_config.NumberColumn("結果差枚", format="%+d"),
-        "結果_REG": st.column_config.NumberColumn("結果REG", format="%d回"),
-        "REG不足分": st.column_config.NumberColumn("REG過不足", format="%+.1f回"),
-        "設定5近似度": st.column_config.ProgressColumn("設定5近似度", format="%d点", min_value=0, max_value=100),
+        "予想設定5以上確率": st.column_config.ProgressColumn("AI期待度", format="%d%%", min_value=0, max_value=100),
+        "設定5近似度": st.column_config.ProgressColumn("5近似度", format="%d点", min_value=0, max_value=100),
+        "差枚_actual": st.column_config.NumberColumn("差枚", format="%+d"),
+        "結果_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
+        "結果_BIG": st.column_config.NumberColumn("BIG", format="%d"),
+        "結果_BIG確率分母": st.column_config.NumberColumn("B確率", format="1/%d"),
+        "結果_REG": st.column_config.NumberColumn("REG", format="%d"),
+        "結果_REG確率分母": st.column_config.NumberColumn("R確率", format="1/%d"),
+        "REG不足分": st.column_config.NumberColumn("R過不足", format="%+.1f"),
     }
 
     if 'prediction_score' in merged_df.columns:
