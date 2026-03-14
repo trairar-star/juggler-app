@@ -11,108 +11,178 @@ from utils import get_confidence_indicator
 def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw, df_events, specs):
     """店舗別詳細ページで、ランキング上位台の詳細情報を表示するExpanderを描画する"""
     shop_name = row.get(shop_col, '')
-    machine_no = row.get('台番号', 'Unknown')
     machine_name = row.get('機種名', '')
-    prob_val = row.get('予想設定5以上確率', 0)
-    diff_pred = row.get('予測差枚数', 0)
+    machine_no = row.get('台番号', 'Unknown')
     
-    label_prefix = f"【{shop_name}】 " if selected_shop == '全て' else ""
-    label = f"{label_prefix}#{machine_no} {machine_name} (設定5以上確率:{prob_val}% / +{diff_pred}枚)"
+    # This function now renders the *content* of an expander, not the expander itself.
+    if '根拠' in row and pd.notna(row['根拠']) and str(row['根拠']).strip() != "":
+        st.markdown(f"**💡 AIの推奨根拠:**")
+        st.info(row['根拠'])
     
-    with st.expander(label, expanded=(index == 0)):
-        if '根拠' in row and pd.notna(row['根拠']) and str(row['根拠']).strip() != "":
-            st.markdown(f"**💡 AIの推奨根拠:**")
-            st.info(row['根拠'])
-        
-        ref_date = row.get('対象日付', pd.NaT)
-        date_str = ref_date.strftime('%Y-%m-%d') if pd.notna(ref_date) else "日付不明"
-        st.markdown(f"**📊 参考データ ({date_str} の実績):**")
-        
-        def format_val(v):
-            try: return f"{int(float(v))}"
-            except: return str(v)
-        
-        def format_prob(v):
-            try:
-                p = float(v)
-                if p > 0: return f"1/{int(1/p)}"
-            except: pass
-            return "-"
+    ref_date = row.get('対象日付', pd.NaT)
+    date_str = ref_date.strftime('%Y-%m-%d') if pd.notna(ref_date) else "日付不明"
+    st.markdown(f"**📊 参考データ ({date_str} の実績):**")
+    
+    def format_val(v):
+        try: return f"{int(float(v))}"
+        except: return str(v)
+    
+    def format_prob(v):
+        try:
+            p = float(v)
+            if p > 0: return f"1/{int(1/p)}"
+        except: pass
+        return "-"
 
-        c1, c2 = st.columns(2)
-        with c1: st.metric("累計ゲーム", format_val(row.get('累計ゲーム', '-')))
-        with c2: st.metric("週間平均差枚", f"{int(row.get('mean_7days_diff', 0)):+d}枚")
-        
-        c3, c4 = st.columns(2)
-        with c3: st.metric("BIG回数", format_val(row.get('BIG', '-')))
-        with c4: st.metric("REG回数", format_val(row.get('REG', '-')))
-        
-        c5, c6 = st.columns(2)
-        with c5: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
-        with c6: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
-        
-        matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
-        
-        if matched_spec_key:
-            st.markdown(f"**📚 {matched_spec_key} スペック目安:**")
-            if matched_spec_key == "ジャグラー（デフォルト）":
-                st.warning("⚠️ **注意:** この機種はスペックが未登録のため、デフォルト値で代用して分析しています。")
-            spec_df = pd.DataFrame(specs[matched_spec_key]).T
-            st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
-        
-        if 'prediction_score' in row:
-            st.markdown("**🎯 AI推定の設定期待度 (擬似分布):**")
-            score = float(row['prediction_score'])
-            
-            games = float(row.get('累計ゲーム', 0))
-            big_count = float(row.get('BIG', 0))
-            reg_count = float(row.get('REG', 0))
-            
-            likelihoods = [1.0] * 6
-            
-            if matched_spec_key and games > 0:
-                import math
-                ms = specs[matched_spec_key]
-                s1 = ms.get("設定1", {"BIG": 280.0, "REG": 400.0})
-                s4 = ms.get("設定4", {"BIG": 260.0, "REG": 300.0})
-                s5 = ms.get("設定5", s4)
-                s6 = ms.get("設定6", s5)
-                
-                full_specs = {1: s1, 4: s4, 5: s5, 6: s6}
-                
-                for s in [2, 3]:
-                    full_specs[s] = {}
-                    for k in ["BIG", "REG"]:
-                        p1 = 1.0 / s1.get(k, 300.0)
-                        p4 = 1.0 / s4.get(k, 300.0)
-                        p_s = p1 + (p4 - p1) * (s - 1) / 3.0
-                        full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
-                
-                log_L = []
-                for i in range(1, 7):
-                    p_big = 1.0 / full_specs[i]["BIG"]
-                    p_reg = 1.0 / full_specs[i]["REG"]
-                    exp_big = games * p_big
-                    exp_reg = games * p_reg
-                    ll_big = big_count * math.log(exp_big) - exp_big if exp_big > 0 else 0
-                    ll_reg = reg_count * math.log(exp_reg) - exp_reg if exp_reg > 0 else 0
-                    log_L.append(ll_big + ll_reg)
-                
-                max_ll = max(log_L)
-                likelihoods = [math.exp(ll - max_ll) for ll in log_L]
-            
-            l_low, l_high = likelihoods[0:3], likelihoods[3:6]
-            sum_low, sum_high = sum(l_low), sum(l_high)
-            p_ai_low, p_ai_high = max(0, 1.0 - score), max(0, score)
-            
-            sizes = [p_ai_low * (l / sum_low) if sum_low > 0 else p_ai_low / 3.0 for l in l_low] + \
-                    [p_ai_high * (h / sum_high) if sum_high > 0 else p_ai_high / 3.0 for h in l_high]
+    c1, c2 = st.columns(2)
+    with c1: st.metric("累計ゲーム", format_val(row.get('累計ゲーム', '-')))
+    with c2: st.metric("週間平均差枚", f"{int(row.get('mean_7days_diff', 0)):+d}枚")
+    
+    c3, c4 = st.columns(2)
+    with c3: st.metric("BIG回数", format_val(row.get('BIG', '-')))
+    with c4: st.metric("REG回数", format_val(row.get('REG', '-')))
+    
+    c5, c6 = st.columns(2)
+    with c5: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
+    with c6: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
+    
+    matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
+    
+    if matched_spec_key:
+        st.markdown(f"**📚 {matched_spec_key} スペック目安:**")
+        if matched_spec_key == "ジャグラー（デフォルト）":
+            st.warning("⚠️ **注意:** この機種はスペックが未登録のため、デフォルト値で代用して分析しています。")
+        spec_df = pd.DataFrame(specs[matched_spec_key]).T
+        st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
+    
+    # --- 過去の同曜日成績 ---
+    target_wd = row.get('weekday', -1)
+    try: target_wd = int(target_wd)
+    except: target_wd = -1
 
-            labels, colors, explode = ['Set 1', 'Set 2', 'Set 3', 'Set 4', 'Set 5', 'Set 6'], ['#cfd8dc', '#b0bec5', '#90a4ae', '#fff59d', '#ffcc80', '#ffab91'], (0, 0, 0, 0, 0.05, 0.1)
-            fig, ax = plt.subplots(figsize=(6, 3)); fig.patch.set_alpha(0); ax.patch.set_alpha(0)
-            wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct=lambda p: f'{p:.0f}%' if p >= 1.0 else '', startangle=90, counterclock=False, colors=colors, explode=explode, textprops={'fontsize': 8})
-            plt.setp(autotexts, weight="bold", color="black")
-            st.pyplot(fig); plt.close(fig)
+    if target_wd != -1 and not df_raw.empty:
+        weekdays_jp = ['月', '火', '水', '木', '金', '土', '日']
+        wd_name = weekdays_jp[target_wd] if 0 <= target_wd <= 6 else '不明'
+        
+        st.markdown(f"**🔄 過去の同曜日 ({wd_name}曜) 平均成績:**")
+        
+        if shop_col in df_raw.columns and '台番号' in df_raw.columns and '対象日付' in df_raw.columns:
+            history_subset = df_raw[(df_raw[shop_col] == shop_name) & (df_raw['台番号'] == machine_no)].copy()
+            
+            if not history_subset.empty:
+                history_subset['wd'] = history_subset['対象日付'].dt.dayofweek
+                same_wd_df = history_subset[history_subset['wd'] == target_wd]
+                
+                if not same_wd_df.empty:
+                    count = len(same_wd_df)
+                    avg_diff = same_wd_df['差枚'].mean()
+                    win_rate = (same_wd_df['差枚'] > 0).mean() * 100
+                    avg_reg = same_wd_df['REG'].mean()
+                    
+                    sw1, sw2 = st.columns(2)
+                    with sw1: st.metric("集計回数", f"{count} 回")
+                    with sw2: st.metric("勝率", f"{win_rate:.1f} %")
+                    
+                    sw3, sw4 = st.columns(2)
+                    with sw3: st.metric("平均差枚", f"{int(avg_diff):+d} 枚")
+                    with sw4: st.metric("平均REG", f"{avg_reg:.1f} 回")
+                else:
+                    st.caption(f"※ 過去に{wd_name}曜日のデータが存在しません。")
+
+    if 'prediction_score' in row:
+        st.progress(float(row['prediction_score']), text=f"設定5以上確率: {float(row['prediction_score']) * 100:.1f}%")
+        st.markdown("**🎯 AI推定の設定期待度 (擬似分布):**")
+        score = float(row['prediction_score'])
+        
+        games = float(row.get('累計ゲーム', 0))
+        big_count = float(row.get('BIG', 0))
+        reg_count = float(row.get('REG', 0))
+        
+        likelihoods = [1.0] * 6
+        
+        if matched_spec_key and games > 0:
+            import math
+            ms = specs[matched_spec_key]
+            s1 = ms.get("設定1", {"BIG": 280.0, "REG": 400.0})
+            s4 = ms.get("設定4", {"BIG": 260.0, "REG": 300.0})
+            s5 = ms.get("設定5", s4)
+            s6 = ms.get("設定6", s5)
+            
+            full_specs = {1: s1, 4: s4, 5: s5, 6: s6}
+            
+            for s in [2, 3]:
+                full_specs[s] = {}
+                for k in ["BIG", "REG"]:
+                    p1 = 1.0 / s1.get(k, 300.0)
+                    p4 = 1.0 / s4.get(k, 300.0)
+                    p_s = p1 + (p4 - p1) * (s - 1) / 3.0
+                    full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
+            
+            log_L = []
+            for i in range(1, 7):
+                p_big = 1.0 / full_specs[i]["BIG"]
+                p_reg = 1.0 / full_specs[i]["REG"]
+                exp_big = games * p_big
+                exp_reg = games * p_reg
+                ll_big = big_count * math.log(exp_big) - exp_big if exp_big > 0 else 0
+                ll_reg = reg_count * math.log(exp_reg) - exp_reg if exp_reg > 0 else 0
+                log_L.append(ll_big + ll_reg)
+            
+            max_ll = max(log_L)
+            likelihoods = [math.exp(ll - max_ll) for ll in log_L]
+        
+        l_low, l_high = likelihoods[0:3], likelihoods[3:6]
+        sum_low, sum_high = sum(l_low), sum(l_high)
+        p_ai_low, p_ai_high = max(0, 1.0 - score), max(0, score)
+        
+        sizes = [p_ai_low * (l / sum_low) if sum_low > 0 else p_ai_low / 3.0 for l in l_low] + \
+                [p_ai_high * (h / sum_high) if sum_high > 0 else p_ai_high / 3.0 for h in l_high]
+
+        labels, colors, explode = ['Set 1', 'Set 2', 'Set 3', 'Set 4', 'Set 5', 'Set 6'], ['#cfd8dc', '#b0bec5', '#90a4ae', '#fff59d', '#ffcc80', '#ffab91'], (0, 0, 0, 0, 0.05, 0.1)
+        fig, ax = plt.subplots(figsize=(6, 3)); fig.patch.set_alpha(0); ax.patch.set_alpha(0)
+        wedges, texts, autotexts = ax.pie(sizes, labels=labels, autopct=lambda p: f'{p:.0f}%' if p >= 1.0 else '', startangle=90, counterclock=False, colors=colors, explode=explode, textprops={'fontsize': 8})
+        plt.setp(autotexts, weight="bold", color="black")
+        st.pyplot(fig); plt.close(fig)
+
+    # --- 過去の差枚推移グラフ ---
+    st.markdown("**📉 過去7日間の差枚推移:**")
+    
+    if not df_raw.empty and shop_col in df_raw.columns:
+        history_df = df_raw[
+            (df_raw[shop_col] == shop_name) & 
+            (df_raw['台番号'] == machine_no)
+        ].sort_values('対象日付').tail(7).copy()
+        
+        if not history_df.empty:
+            history_df['DisplayDate'] = history_df['対象日付'].dt.strftime('%m-%d')
+            
+            # イベント情報を結合
+            if df_events is not None and not df_events.empty:
+                shop_events = df_events[df_events['店名'] == shop_name].drop_duplicates(subset=['イベント日付'])
+                history_df = pd.merge(history_df, shop_events[['イベント日付', 'イベント名', 'イベントランク']], left_on='対象日付', right_on='イベント日付', how='left')
+                history_df['イベント情報'] = history_df.apply(lambda r: f"{r['イベント名']} ({r.get('イベントランク', '-')})" if pd.notna(r['イベント名']) and str(r['イベント名']).strip() != '' else "なし", axis=1)
+            else:
+                history_df['イベント情報'] = "なし"
+            
+            base = alt.Chart(history_df).encode(
+                x=alt.X('DisplayDate', title='日付', sort=None),
+                y=alt.Y('差枚', title='差枚数'),
+                tooltip=[
+                    alt.Tooltip('DisplayDate', title='日付'),
+                    alt.Tooltip('差枚', title='差枚'),
+                    alt.Tooltip('イベント情報', title='イベント'),
+                    alt.Tooltip('BIG', title='BIG回数'),
+                    alt.Tooltip('REG', title='REG回数'),
+                    alt.Tooltip('累計ゲーム', title='総回転数')
+                ]
+            )
+            
+            line_chart = base.mark_line(point=True)
+            event_points = base.transform_filter(alt.datum.イベント情報 != 'なし').mark_point(color='#FF4B4B', size=150, filled=True)
+            
+            st.altair_chart((line_chart + event_points).interactive(), use_container_width=True)
+        else:
+            st.caption("過去データが見つかりませんでした。")
 
 # --- ページ描画関数: 店舗別詳細データ ---
 def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None):
@@ -318,217 +388,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         label = f"{label_prefix}#{machine_no} {machine_name} (設定5以上確率:{prob_val}% / +{diff_pred}枚)"
         
         with st.expander(label, expanded=(i == 0)):
-            if '根拠' in row and pd.notna(row['根拠']) and str(row['根拠']).strip() != "":
-                st.markdown(f"**💡 AIの推奨根拠:**")
-                st.info(row['根拠'])
-            
-            ref_date = row.get('対象日付', pd.NaT)
-            date_str = ref_date.strftime('%Y-%m-%d') if pd.notna(ref_date) else "日付不明"
-            st.markdown(f"**📊 参考データ ({date_str} の実績):**")
-            
-            def format_val(v):
-                try: return f"{int(float(v))}"
-                except: return str(v)
-            
-            def format_prob(v):
-                try:
-                    p = float(v)
-                    if p > 0: return f"1/{int(1/p)}"
-                except: pass
-                return "-"
-        _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs)
-
-            # スマホ対応 2カラム x 3行構成
-            c1, c2 = st.columns(2)
-            with c1: st.metric("累計ゲーム", format_val(row.get('累計ゲーム', '-')))
-            with c2: st.metric("週間平均差枚", f"{int(row.get('mean_7days_diff', 0)):+d}枚")
-            
-            c3, c4 = st.columns(2)
-            with c3: st.metric("BIG回数", format_val(row.get('BIG', '-')))
-            with c4: st.metric("REG回数", format_val(row.get('REG', '-')))
-            
-            c5, c6 = st.columns(2)
-            with c5: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
-            with c6: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
-            
-            # --- 機種スペック目安の表示 ---
-            specs = backend.get_machine_specs()
-            matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
-            
-            if matched_spec_key:
-                st.markdown(f"**📚 {matched_spec_key} スペック目安:**")
-                if matched_spec_key == "ジャグラー（デフォルト）":
-                    st.warning("⚠️ **注意:** この機種はスペックが未登録のため、デフォルト値で代用して分析しています。")
-                spec_df = pd.DataFrame(specs[matched_spec_key]).T
-                st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
-            
-            # --- 過去の同曜日成績 ---
-            target_wd = row.get('weekday', -1)
-            try: target_wd = int(target_wd)
-            except: target_wd = -1
-
-            if target_wd != -1 and not df_raw.empty:
-                weekdays_jp = ['月', '火', '水', '木', '金', '土', '日']
-                wd_name = weekdays_jp[target_wd] if 0 <= target_wd <= 6 else '不明'
-                
-                st.markdown(f"**🔄 過去の同曜日 ({wd_name}曜) 平均成績:**")
-                
-                if shop_col in df_raw.columns and '台番号' in df_raw.columns and '対象日付' in df_raw.columns:
-                    history_subset = df_raw[(df_raw[shop_col] == shop_name) & (df_raw['台番号'] == machine_no)].copy()
-                    
-                    if not history_subset.empty:
-                        history_subset['wd'] = history_subset['対象日付'].dt.dayofweek
-                        same_wd_df = history_subset[history_subset['wd'] == target_wd]
-                        
-                        if not same_wd_df.empty:
-                            count = len(same_wd_df)
-                            avg_diff = same_wd_df['差枚'].mean()
-                            win_rate = (same_wd_df['差枚'] > 0).mean() * 100
-                            avg_reg = same_wd_df['REG'].mean()
-                            
-                            # スマホ対応 2カラム x 2行
-                            sw1, sw2 = st.columns(2)
-                            with sw1: st.metric("集計回数", f"{count} 回")
-                            with sw2: st.metric("勝率", f"{win_rate:.1f} %")
-                            
-                            sw3, sw4 = st.columns(2)
-                            with sw3: st.metric("平均差枚", f"{int(avg_diff):+d} 枚")
-                            with sw4: st.metric("平均REG", f"{avg_reg:.1f} 回")
-                        else:
-                            st.caption(f"※ 過去に{wd_name}曜日のデータが存在しません。")
-
-            if 'prediction_score' in row:
-                st.progress(float(row['prediction_score']), text=f"設定5以上確率: {float(row['prediction_score']) * 100:.1f}%")
-            
-            # --- 設定期待度（円グラフ） ---
-            if 'prediction_score' in row:
-                st.markdown("**🎯 AI推定の設定期待度 (擬似分布):**")
-                score = float(row['prediction_score'])
-                
-                # --- 機種スペックに基づいた尤度計算で割合を細分化 ---
-                games = float(row.get('累計ゲーム', 0))
-                big_count = float(row.get('BIG', 0))
-                reg_count = float(row.get('REG', 0))
-                
-                likelihoods = [1.0] * 6 # デフォルトは均等
-                
-                if matched_spec_key and games > 0:
-                    import math
-                    ms = specs[matched_spec_key]
-                    s1 = ms.get("設定1", {"BIG": 280.0, "REG": 400.0})
-                    s4 = ms.get("設定4", {"BIG": 260.0, "REG": 300.0})
-                    s5 = ms.get("設定5", s4)
-                    s6 = ms.get("設定6", s5)
-                    
-                    full_specs = {1: s1, 4: s4, 5: s5, 6: s6}
-                    
-                    # 設定2, 3を確率ベースで線形補間
-                    for s in [2, 3]:
-                        full_specs[s] = {}
-                        for k in ["BIG", "REG"]:
-                            p1 = 1.0 / s1.get(k, 300.0)
-                            p4 = 1.0 / s4.get(k, 300.0)
-                            p_s = p1 + (p4 - p1) * (s - 1) / 3.0
-                            full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
-                    
-                    log_L = []
-                    for i in range(1, 7):
-                        p_big = 1.0 / full_specs[i]["BIG"]
-                        p_reg = 1.0 / full_specs[i]["REG"]
-                        
-                        exp_big = games * p_big
-                        exp_reg = games * p_reg
-                        
-                        # ポアソン分布の対数尤度（定数項除く）
-                        ll_big = big_count * math.log(exp_big) - exp_big if exp_big > 0 else 0
-                        ll_reg = reg_count * math.log(exp_reg) - exp_reg if exp_reg > 0 else 0
-                        
-                        log_L.append(ll_big + ll_reg)
-                    
-                    # Log-Sum-Exp でオーバーフロー防止しつつ尤度を相対値化
-                    max_ll = max(log_L)
-                    likelihoods = [math.exp(ll - max_ll) for ll in log_L]
-                
-                # 低設定(1-3)と高設定(4-6)グループごとに尤度を正規化してAIスコアと掛け合わせる
-                l_low = likelihoods[0:3]
-                l_high = likelihoods[3:6]
-                
-                sum_low = sum(l_low)
-                sum_high = sum(l_high)
-                
-                p_ai_low = max(0, 1.0 - score)
-                p_ai_high = max(0, score)
-                
-                sizes = [0.0] * 6
-                for i in range(3):
-                    sizes[i] = p_ai_low * (l_low[i] / sum_low) if sum_low > 0 else p_ai_low / 3.0
-                for i in range(3):
-                    sizes[i+3] = p_ai_high * (l_high[i] / sum_high) if sum_high > 0 else p_ai_high / 3.0
-                # -----------------------------------------------------
-
-                labels = ['Set 1', 'Set 2', 'Set 3', 'Set 4', 'Set 5', 'Set 6']
-                colors = ['#cfd8dc', '#b0bec5', '#90a4ae', '#fff59d', '#ffcc80', '#ffab91']
-                explode = (0, 0, 0, 0, 0.05, 0.1)
-
-                fig, ax = plt.subplots(figsize=(6, 3))
-                fig.patch.set_alpha(0)
-                ax.patch.set_alpha(0)
-                
-                wedges, texts, autotexts = ax.pie(
-                    sizes, 
-                    labels=labels,
-                    autopct=lambda p: f'{p:.0f}%' if p >= 1.0 else '',
-                    startangle=90,
-                    counterclock=False,
-                    colors=colors,
-                    explode=explode,
-                    textprops={'fontsize': 8}
-                )
-                
-                plt.setp(autotexts, weight="bold", color="black")
-                
-                st.pyplot(fig)
-                plt.close(fig)
-
-            # --- 過去の差枚推移グラフ ---
-            st.markdown("**📉 過去7日間の差枚推移:**")
-            
-            if not df_raw.empty and shop_col in df_raw.columns:
-                history_df = df_raw[
-                    (df_raw[shop_col] == shop_name) & 
-                    (df_raw['台番号'] == machine_no)
-                ].sort_values('対象日付').tail(7).copy()
-                
-                if not history_df.empty:
-                    history_df['DisplayDate'] = history_df['対象日付'].dt.strftime('%m-%d')
-                    
-                    # イベント情報を結合
-                    if df_events is not None and not df_events.empty:
-                        shop_events = df_events[df_events['店名'] == shop_name].drop_duplicates(subset=['イベント日付'])
-                        history_df = pd.merge(history_df, shop_events[['イベント日付', 'イベント名', 'イベントランク']], left_on='対象日付', right_on='イベント日付', how='left')
-                        history_df['イベント情報'] = history_df.apply(lambda r: f"{r['イベント名']} ({r.get('イベントランク', '-')})" if pd.notna(r['イベント名']) and str(r['イベント名']).strip() != '' else "なし", axis=1)
-                    else:
-                        history_df['イベント情報'] = "なし"
-                    
-                    base = alt.Chart(history_df).encode(
-                        x=alt.X('DisplayDate', title='日付', sort=None),
-                        y=alt.Y('差枚', title='差枚数'),
-                        tooltip=[
-                            alt.Tooltip('DisplayDate', title='日付'),
-                            alt.Tooltip('差枚', title='差枚'),
-                            alt.Tooltip('イベント情報', title='イベント'),
-                            alt.Tooltip('BIG', title='BIG回数'),
-                            alt.Tooltip('REG', title='REG回数'),
-                            alt.Tooltip('累計ゲーム', title='総回転数')
-                        ]
-                    )
-                    
-                    line_chart = base.mark_line(point=True)
-                    event_points = base.transform_filter(alt.datum.イベント情報 != 'なし').mark_point(color='#FF4B4B', size=150, filled=True)
-                    
-                    st.altair_chart((line_chart + event_points).interactive(), use_container_width=True)
-                else:
-                    st.caption("過去データが見つかりませんでした。")
+            _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs)
 
     # --- 店舗別 傾向分析 (下部に移動) ---
     if selected_shop != '全て' and not df_raw_shop.empty:

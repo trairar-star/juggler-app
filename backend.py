@@ -92,12 +92,16 @@ def _get_gspread_client():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     
     # 1. Streamlit CloudのSecrets機能を確認
-    if "gcp_service_account" in st.secrets:
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-        return gspread.authorize(creds)
+    try:
+        if "gcp_service_account" in st.secrets:
+            creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+            return gspread.authorize(creds)
+    except Exception:
+        # secrets.tomlが存在しない場合は例外を無視してローカルJSONでの認証へ進む
+        pass
     
     # 2. ローカルのJSONファイルを確認
-    elif os.path.exists(SERVICE_ACCOUNT_FILE):
+    if os.path.exists(SERVICE_ACCOUNT_FILE):
         creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
         return gspread.authorize(creds)
     
@@ -167,7 +171,11 @@ def save_prediction_log(df):
         st.warning("保存するデータがありません。")
         return
     if 'prediction_score' in df.columns:
-        df = df.sort_values('prediction_score', ascending=False).head(10)
+        shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
+        if shop_col:
+            df = df.sort_values('prediction_score', ascending=False).groupby(shop_col).head(10)
+        else:
+            df = df.sort_values('prediction_score', ascending=False).head(10)
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -187,7 +195,7 @@ def save_prediction_log(df):
                 save_df[col] = save_df[col].dt.strftime('%Y-%m-%d')
         save_df = save_df.fillna('')
         worksheet.append_rows(save_df.values.tolist())
-        st.success(f"予測結果（Top 10）を '{log_sheet_name}' シートに保存しました！")
+        st.success(f"予測結果（各店舗 Top 10）を '{log_sheet_name}' シートに保存しました！")
     except Exception as e: st.error(f"保存エラー: {e}")
 
 @st.cache_data(ttl=600)
@@ -446,8 +454,14 @@ def delete_my_balance(target_timestamp):
 # 分析・予測ロジック
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
-    if df.empty: return df, pd.DataFrame()
+def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_date=None):
+    if df.empty: return df, pd.DataFrame(), pd.DataFrame()
+
+    if target_date is not None:
+        target_ts = pd.to_datetime(target_date)
+        df = df[df['対象日付'] < target_ts].copy()
+
+    if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
     
@@ -623,6 +637,9 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_negative'].cumsum()
     df = df.drop(columns=['temp_reset_group', 'is_positive', 'is_negative'])
 
+    # 台ごとの過去データ件数（履歴の長さ）を計算し、信頼度の指標とする
+    df['history_count'] = df.groupby(group_keys).cumcount() + 1
+
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', 'win_rate_7days', '連続マイナス日数']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
@@ -639,7 +656,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
             predict_df = predict_df[predict_df['対象日付'] == max_date]
         
     if len(train_df) < 10 or len(predict_df) == 0:
-        return predict_df, pd.DataFrame()
+        return predict_df, pd.DataFrame(), pd.DataFrame()
 
     X, y = train_df[features], train_df['target']
     sample_weights = None
@@ -762,6 +779,28 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
 
     if not predict_df.empty: predict_df['prediction_score'] = predict_df.apply(apply_setting5_boost, axis=1)
     if not train_df.empty: train_df['prediction_score'] = train_df.apply(apply_setting5_boost, axis=1)
+
+    # --- 予測スコアに信頼度（過去データ量）によるペナルティを付与 ---
+    def apply_reliability_penalty(row):
+        score = row.get('prediction_score', 0)
+        hc = row.get('history_count', 1)
+        # 過去データが少ない場合は予測のブレが大きいためスコアを割り引く
+        if hc < 3: return score * 0.8
+        elif hc < 7: return score * 0.95
+        return score
+        
+    def get_reliability_mark(row):
+        hc = row.get('history_count', 1)
+        if hc < 3: return "🔻低"
+        elif hc < 7: return "🔸中"
+        return "🔼高"
+
+    if not predict_df.empty: 
+        predict_df['prediction_score'] = predict_df.apply(apply_reliability_penalty, axis=1)
+        predict_df['予測信頼度'] = predict_df.apply(get_reliability_mark, axis=1)
+    if not train_df.empty: 
+        train_df['prediction_score'] = train_df.apply(apply_reliability_penalty, axis=1)
+        train_df['予測信頼度'] = train_df.apply(get_reliability_mark, axis=1)
 
     def get_rating(score):
         if score >= 0.85: return 'A'
