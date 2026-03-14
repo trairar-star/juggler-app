@@ -384,6 +384,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             with c5: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
             with c6: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
             
+            # --- 機種スペック目安の表示 ---
+            specs = backend.get_machine_specs()
+            matched_spec_key = None
+            for spec_key in specs.keys():
+                chk_word = spec_key.split('ジャグラー')[0] if 'ジャグラー' in spec_key else spec_key
+                if not chk_word: chk_word = "ガールズ" if "ガールズ" in spec_key else spec_key
+                if chk_word in machine_name:
+                    matched_spec_key = spec_key
+                    break
+            
+            if matched_spec_key:
+                st.markdown(f"**📚 {matched_spec_key} スペック目安:**")
+                spec_df = pd.DataFrame(specs[matched_spec_key]).T
+                st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
+            
             # --- 過去の同曜日成績 ---
             target_wd = row.get('weekday', -1)
             try: target_wd = int(target_wd)
@@ -506,7 +521,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖/警戒条件**")
             
             if top_trends_df is not None and not top_trends_df.empty:
-                st.caption("AIが過去データから見つけた、この店舗で特に勝率が高い『激アツ条件 (🔥)』です。")
+                st.caption("AIが過去データから見つけた、この店舗で特に翌日の勝率が高い『激アツ条件 (🔥)』です。")
                 st.dataframe(
                     top_trends_df,
                             column_config={
@@ -520,7 +535,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                         )
 
             if worst_trends_df is not None and not worst_trends_df.empty:
-                st.caption("AIが過去データから見つけた、この店舗で特に勝率が低い『警戒条件 (⚠️)』です。")
+                st.caption("AIが過去データから見つけた、この店舗で特に翌日の勝率が低い『警戒条件 (⚠️)』です。")
                 st.dataframe(
                     worst_trends_df,
                         column_config={
@@ -1763,11 +1778,33 @@ def main():
     # タイトルや設定は共通
     st.title("🎰 明日のスロット予測")
     
+    if "current_page" not in st.session_state:
+        st.session_state["current_page"] = "店舗別詳細データ"
+        
+    pages = ["店舗別詳細データ", "全店分析サマリー", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
         "メニュー", 
-        ["店舗別詳細データ", "全店分析サマリー", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+        pages,
+        index=pages.index(st.session_state["current_page"]) if st.session_state["current_page"] in pages else 0
     )
+    
+    if page != st.session_state["current_page"]:
+        st.session_state["current_page"] = page
+        # スマホ幅 (768px以下) の場合のみサイドバーを閉じるJSを発火
+        st.components.v1.html(
+            """
+            <script>
+                if (window.parent.innerWidth <= 768) {
+                    var btn = window.parent.document.querySelector('[data-testid="stSidebarCollapseButton"]') || window.parent.document.querySelector('button[kind="header"]');
+                    if (btn) { btn.click(); }
+                }
+            </script>
+            """,
+            width=0, height=0
+        )
+        
     st.sidebar.divider()
 
     # データ更新ボタン (サイドバー)

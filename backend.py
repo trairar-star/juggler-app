@@ -13,6 +13,57 @@ SPREADSHEET_KEY = '1ylt9mdIkKKk6YRcZh4O05O7fPF4d2BU6VXzboP_vs5s'
 SHEET_NAME = 'juggler_raw'
 
 # ---------------------------------------------------------
+# 機種スペック情報
+# ---------------------------------------------------------
+MACHINE_SPECS = {
+    "マイジャグラーV": {
+        "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8},
+        "設定4": {"BIG": 254.0, "REG": 290.0, "合算": 135.4},
+        "設定5": {"BIG": 240.1, "REG": 268.6, "合算": 126.8},
+        "設定6": {"BIG": 229.1, "REG": 229.1, "合算": 114.6},
+    },
+    "アイムジャグラーEX": {
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5},
+    },
+    "ファンキージャグラー2": {
+        "設定1": {"BIG": 266.4, "REG": 439.8, "合算": 165.9},
+        "設定4": {"BIG": 249.2, "REG": 322.8, "合算": 140.6},
+        "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2},
+        "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6},
+    },
+    "ハッピージャグラーVⅢ": {
+        "設定1": {"BIG": 273.1, "REG": 397.2, "合算": 161.8},
+        "設定4": {"BIG": 254.0, "REG": 300.6, "合算": 137.7},
+        "設定5": {"BIG": 239.2, "REG": 273.1, "合算": 127.5},
+        "設定6": {"BIG": 226.0, "REG": 256.0, "合算": 120.0},
+    },
+    "ゴーゴージャグラー3": {
+        "設定1": {"BIG": 259.0, "REG": 354.2, "合算": 149.6},
+        "設定4": {"BIG": 254.0, "REG": 268.6, "合算": 130.5},
+        "設定5": {"BIG": 247.3, "REG": 247.3, "合算": 123.7},
+        "設定6": {"BIG": 234.9, "REG": 234.9, "合算": 117.4},
+    },
+    "ジャグラーガールズSS": {
+        "設定1": {"BIG": 273.1, "REG": 381.0, "合算": 159.1},
+        "設定4": {"BIG": 250.1, "REG": 281.3, "合算": 132.4},
+        "設定5": {"BIG": 243.6, "REG": 270.8, "合算": 128.3},
+        "設定6": {"BIG": 226.0, "REG": 252.1, "合算": 119.2},
+    },
+    "ミスタージャグラー": {
+        "設定1": {"BIG": 268.6, "REG": 374.5, "合算": 156.4},
+        "設定4": {"BIG": 249.2, "REG": 291.3, "合算": 134.3},
+        "設定5": {"BIG": 240.9, "REG": 257.0, "合算": 124.4},
+        "設定6": {"BIG": 237.4, "REG": 237.4, "合算": 118.7},
+    }
+}
+
+def get_machine_specs():
+    return MACHINE_SPECS
+
+# ---------------------------------------------------------
 # データ読み込み・保存関数 (Model / Logic)
 # ---------------------------------------------------------
 def _get_gspread_client():
@@ -92,7 +143,7 @@ def save_prediction_log(df):
         st.warning("保存するデータがありません。")
         return
     if 'prediction_score' in df.columns:
-        df = df.sort_values('prediction_score', ascending=False).head(5)
+        df = df.sort_values('prediction_score', ascending=False).head(10)
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -112,7 +163,7 @@ def save_prediction_log(df):
                 save_df[col] = save_df[col].dt.strftime('%Y-%m-%d')
         save_df = save_df.fillna('')
         worksheet.append_rows(save_df.values.tolist())
-        st.success(f"予測結果（Top 5）を '{log_sheet_name}' シートに保存しました！")
+        st.success(f"予測結果（Top 10）を '{log_sheet_name}' シートに保存しました！")
     except Exception as e: st.error(f"保存エラー: {e}")
 
 @st.cache_data(ttl=600)
@@ -599,6 +650,35 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
     train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
 
+    # --- 設定5以上の挙動台をスコア加算して常におすすめ抽出されやすくする ---
+    specs = get_machine_specs()
+    def apply_setting5_boost(row):
+        score = row.get('prediction_score', 0)
+        machine_name = row.get('機種名', '')
+        reg_prob = row.get('REG確率', 0)
+        games = row.get('累計ゲーム', 0)
+        
+        if reg_prob <= 0 or games < 3000:
+            return score
+            
+        matched_spec_key = None
+        if isinstance(machine_name, str):
+            for spec_key in specs.keys():
+                chk_word = spec_key.split('ジャグラー')[0] if 'ジャグラー' in spec_key else spec_key
+                if not chk_word: chk_word = "ガールズ" if "ガールズ" in spec_key else spec_key
+                if chk_word in machine_name:
+                    matched_spec_key = spec_key
+                    break
+                    
+        if matched_spec_key and "設定5" in specs[matched_spec_key]:
+            set5_reg_prob = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
+            if reg_prob >= set5_reg_prob:
+                score = min(1.0, score + 0.3) # 設定5以上なら大幅にスコアを加算
+        return score
+
+    if not predict_df.empty: predict_df['prediction_score'] = predict_df.apply(apply_setting5_boost, axis=1)
+    if not train_df.empty: train_df['prediction_score'] = train_df.apply(apply_setting5_boost, axis=1)
+
     def get_rating(score):
         if score >= 0.85: return 'A'
         elif score >= 0.70: return 'B'
@@ -647,7 +727,28 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)
-        if reg > big and reg_prob >= (1/300):
+        
+        # 機種固有の設定5基準を判定
+        machine_name = row.get('機種名', '')
+        matched_spec_key = None
+        if isinstance(machine_name, str):
+            for spec_key in specs.keys():
+                chk_word = spec_key.split('ジャグラー')[0] if 'ジャグラー' in spec_key else spec_key
+                if not chk_word: chk_word = "ガールズ" if "ガールズ" in spec_key else spec_key
+                if chk_word in machine_name:
+                    matched_spec_key = spec_key
+                    break
+        
+        is_setting5_over = False
+        if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
+            set5_reg_prob_threshold = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
+            games = row.get('累計ゲーム', 0)
+            if games >= 3000 and reg_prob >= set5_reg_prob_threshold:
+                is_setting5_over = True
+
+        if is_setting5_over:
+            reasons.append(f"【🌟高設定挙動】前日のREG確率が1/{int(1/reg_prob)}で、機種スペックの**「設定5以上」**の基準を満たしており、強く推奨されます。")
+        elif reg > big and reg_prob >= (1/300):
             reasons.append(f"【特殊】REG先行(BIG欠損)かつREG確率1/300以上(1/{int(1/reg_prob)})の「高設定 不発台」です。")
         else:
             if reg_prob > (1/280): reasons.append(f"前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
