@@ -1708,7 +1708,6 @@ def main():
     # 分析実行
     with st.spinner("AIがデータを分析し、予測を生成しています..."):
         # キャッシュキーとしてデータの長さを利用（簡易的）
-        df, df_verify = backend.run_analysis(df_raw, df_events, df_island, hyperparams)
         df, df_verify, df_importance = backend.run_analysis(df_raw, df_events, df_island, hyperparams)
     
     if df.empty:
@@ -1740,7 +1739,6 @@ def main():
         df_log = backend.load_prediction_log()
         render_verification_page(df_log, df_raw)
     elif page == "AI傾向分析 (勝利の法則)":
-        render_feature_analysis_page(df_verify)
         render_feature_analysis_page(df_verify, df_importance)
     elif page == "島マスター管理":
         render_island_master_page(df_raw)

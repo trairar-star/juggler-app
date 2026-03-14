@@ -536,9 +536,12 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
 
     # --- 上げリセット（設定変更）検知用の特徴量 ---
     # 差枚が0以上になったらリセットされるグループを作成し、マイナスの連続日数をカウントする
-    df['temp_reset_group'] = (df['差枚'] >= 0).groupby(group_keys).cumsum()
-    df['連続マイナス日数'] = (df['差枚'] < 0).astype(int).groupby(group_keys + ['temp_reset_group']).cumsum()
-    df = df.drop(columns=['temp_reset_group'])
+    df['is_positive'] = (df['差枚'] >= 0).astype(int)
+    df['temp_reset_group'] = df.groupby(group_keys)['is_positive'].cumsum()
+    
+    df['is_negative'] = (df['差枚'] < 0).astype(int)
+    df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_negative'].cumsum()
+    df = df.drop(columns=['temp_reset_group', 'is_positive', 'is_negative'])
 
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'weekday', 'weekday_avg_diff', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', '連続マイナス日数']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
