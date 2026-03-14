@@ -894,7 +894,9 @@ def render_feature_analysis_page(df_train, df_importance=None):
     st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、スロット特有のパターンの翌日の成績を調査します。")
 
     if not reg_df.empty:
-            
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃"])
+        
+        with tab1:
             if 'BIG' in reg_df.columns and 'REG' in reg_df.columns:
                 reg_lead_df = reg_df.copy()
                 def classify_reg_lead(row):
