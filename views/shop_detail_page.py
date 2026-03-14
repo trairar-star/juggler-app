@@ -363,7 +363,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             "台番号": st.column_config.TextColumn("No.", width="small"),
             "機種名": st.column_config.TextColumn("機種", width="small"),
             "店癖マッチ": st.column_config.TextColumn("店癖/警戒", width="medium"),
-            "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:7日~ / 🔸中:3~6日 / 🔻低:1~2日)"),
+            "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
             "予想設定5以上確率": st.column_config.ProgressColumn("設定5以上確率", format="%d%%", min_value=0, max_value=100, width="small"),
             "予測差枚数": st.column_config.NumberColumn("予想差枚", format="%d", width="small"),
         },

@@ -785,14 +785,14 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         score = row.get('prediction_score', 0)
         hc = row.get('history_count', 1)
         # 過去データが少ない場合は予測のブレが大きいためスコアを割り引く
-        if hc < 3: return score * 0.8
-        elif hc < 7: return score * 0.95
+        if hc < 14: return score * 0.8
+        elif hc < 30: return score * 0.95
         return score
         
     def get_reliability_mark(row):
         hc = row.get('history_count', 1)
-        if hc < 3: return "🔻低"
-        elif hc < 7: return "🔸中"
+        if hc < 14: return "🔻低"
+        elif hc < 30: return "🔸中"
         return "🔼高"
 
     if not predict_df.empty: 

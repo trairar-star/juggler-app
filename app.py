@@ -31,7 +31,7 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
             平均予測差枚=('予測差枚数', 'mean'),
             平均スコア=('prediction_score', 'mean'),
             推奨台数=('prediction_score', lambda x: (x >= 0.70).sum()),
-            全台数=('台番号', 'count')
+            全台数=('台番号', 'nunique')
         ).reset_index()
         
         # 平均スコアが高い順にソート
