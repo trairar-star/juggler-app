@@ -378,7 +378,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
 
     sort_cols = []
     if 'prediction_score' in df.columns: sort_cols.append('prediction_score')
-    if '予測差枚数' in df.columns: sort_cols.append('予測差枚数')
     
     ascending_list = [False] * len(sort_cols)
     
@@ -394,7 +393,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     df_top10 = df_sorted.head(10)
 
     # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
-    base_cols = ['台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率', '予測差枚数']
+    base_cols = ['台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
     if selected_shop == '全て' and shop_col in df.columns:
         base_cols.insert(0, shop_col)
         
@@ -410,7 +409,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             "店癖マッチ": st.column_config.TextColumn("店癖/警戒", width="medium"),
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
             "予想設定5以上確率": st.column_config.ProgressColumn("設定5以上確率", format="%d%%", min_value=0, max_value=100, width="small"),
-            "予測差枚数": st.column_config.NumberColumn("予想差枚", format="%d", width="small"),
         },
         use_container_width=True,
         hide_index=True
@@ -427,10 +425,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         machine_no = row.get('台番号', 'Unknown')
         machine_name = row.get('機種名', '')
         prob_val = row.get('予想設定5以上確率', 0)
-        diff_pred = row.get('予測差枚数', 0)
         
         label_prefix = f"【{shop_name}】 " if selected_shop == '全て' else ""
-        label = f"{label_prefix}#{machine_no} {machine_name} (設定5以上確率:{prob_val}% / +{diff_pred}枚)"
+        label = f"{label_prefix}#{machine_no} {machine_name} (設定5以上確率: {prob_val}%)"
         
         with st.expander(label, expanded=(i == 0)):
             _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs)
@@ -574,13 +571,13 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
 
     # --- 視覚化: 機種ごとの分析 ---
     st.divider()
-    st.subheader("📊 機種別 平均予想差枚")
+    st.subheader("📊 機種別 平均設定5以上確率")
     
-    if '機種名' in df.columns and '予測差枚数' in df.columns:
-        # 機種ごとの平均差枚を算出
-        machine_stats = df.groupby("機種名")["予測差枚数"].mean().sort_values(ascending=False)
+    if '機種名' in df.columns and 'prediction_score' in df.columns:
+        # 機種ごとの平均設定5以上確率(%)を算出
+        machine_stats = (df.groupby("機種名")["prediction_score"].mean() * 100).sort_values(ascending=False)
         
         # 棒グラフで表示
         st.bar_chart(machine_stats, color="#FF4B4B")
         
-        st.caption("※ 各機種の予測差枚数の平均値です（0枚以上の台のみ対象とするなど調整可）")
+        st.caption("※ 各機種の予想設定5以上確率の平均値です")

@@ -590,6 +590,9 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
     
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
+    if 'BIG' in df.columns: df['next_BIG'] = df.groupby(group_keys)['BIG'].shift(-1)
+    if 'REG' in df.columns: df['next_REG'] = df.groupby(group_keys)['REG'].shift(-1)
+    if '累計ゲーム' in df.columns: df['next_累計ゲーム'] = df.groupby(group_keys)['累計ゲーム'].shift(-1)
     df['target'] = (df['next_diff'] > 0).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---

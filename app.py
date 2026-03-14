@@ -28,7 +28,6 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
         
         # 店舗ごとの集計
         shop_stats = df.groupby(shop_col).agg(
-            平均予測差枚=('予測差枚数', 'mean'),
             平均スコア=('prediction_score', 'mean'),
             推奨台数=('prediction_score', lambda x: (x >= 0.70).sum()),
             全台数=('台番号', 'nunique')
@@ -41,7 +40,6 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
             shop_stats,
             column_config={
                 shop_col: st.column_config.TextColumn("店舗名"),
-                "平均予測差枚": st.column_config.NumberColumn("平均予想差枚", format="%d 枚"),
                 "平均スコア": st.column_config.ProgressColumn("平均 設定5以上確率", min_value=0, max_value=1.0, format="%.2f"),
                 "推奨台数": st.column_config.NumberColumn("高確率台数 (70%以上)", format="%d 台"),
                 "全台数": st.column_config.NumberColumn("全台数", format="%d 台"),
@@ -53,7 +51,7 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
         
         # --- 店舗の質 vs 量 分析 (散布図) ---
         st.subheader("📊 店舗の質 vs 量 分析")
-        st.caption("横軸が「推奨台数（量）」、縦軸が「平均予想差枚（質）」です。右上に位置するほど優良店と判断できます。")
+        st.caption("横軸が「推奨台数（量）」、縦軸が「平均設定5以上確率（質）」です。右上に位置するほど優良店と判断できます。")
 
         if not shop_stats.empty:
             # 散布図用に店舗名をインデックスに設定
@@ -61,8 +59,8 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
             st.scatter_chart(
                 chart_data,
                 x='推奨台数',
-                y='平均予測差枚',
-                size='平均スコア',
+                y='平均スコア',
+                size='全台数',
                 color="#FF4B4B" # Red color for bubbles
             )
         st.divider()
@@ -147,9 +145,16 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
                 )
 
 # --- ページ描画関数: 精度検証 (答え合わせ) ---
-def render_verification_page(df_pred_log, df_verify):
+def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.header("✅ 精度検証 (保存データの答え合わせ)")
     st.caption("あなたが保存した過去の「予測結果ログ」と、実際の結果データを照合して、当時のAIの精度を検証します。")
+
+    # --- 検証・評価設定 (サイドバー) ---
+    with st.sidebar.expander("🎯 検証・評価設定", expanded=False):
+        st.caption("設定5近似度を計算する際の減点ルールを調整できます。")
+        penalty_reg = st.slider("REG 1回不足ごとの減点", min_value=0, max_value=50, value=15, step=1)
+        penalty_big = st.slider("BIG 1回不足ごとの減点", min_value=0, max_value=50, value=5, step=1)
+        low_g_penalty = st.slider("低稼働(1000G未満)の最大減点率(%)", min_value=0, max_value=100, value=30, step=5)
 
     if df_pred_log.empty:
         st.warning("保存された予測結果ログがありません。サイドバーの「予測結果をログ保存」ボタンから予測を保存してください。")
@@ -163,17 +168,25 @@ def render_verification_page(df_pred_log, df_verify):
     df_pred_log['対象日付'] = pd.to_datetime(df_pred_log['対象日付'], errors='coerce')
     
     # 店舗カラム名の統一
-    shop_col = '店名' if '店名' in df_verify.columns else '店舗名'
+    shop_col = '店名' if '店名' in df_verify.columns else ('店舗名' if '店舗名' in df_verify.columns else '店名')
     shop_col_pred = '店名' if '店名' in df_pred_log.columns else '店舗名'
     if shop_col != shop_col_pred:
         df_pred_log = df_pred_log.rename(columns={shop_col_pred: shop_col})
         
-    # 保存ログと実データ(df_verify)を結合
+    # 台番号を文字列化して型を統一（結合ミス防止）
+    df_pred_log['台番号'] = df_pred_log['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+    
+    # df_verify と df_predict を結合して全台の特徴量ベースを作る
+    full_feature_df = pd.concat([df_verify, df_predict], ignore_index=True)
+    if '台番号' in full_feature_df.columns:
+        full_feature_df['台番号'] = full_feature_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+    # 保存ログをベースに左外部結合（データ落ち防止）
     base_df = pd.merge(
         df_pred_log,
-        df_verify,
+        full_feature_df,
         on=['対象日付', shop_col, '台番号'],
-        how='inner',
+        how='left',
         suffixes=('_saved', '_current')
     )
 
@@ -195,15 +208,89 @@ def render_verification_page(df_pred_log, df_verify):
     else:
         base_df['予測信頼度'] = "-"
         
+    # --- 実際の成績を df_raw から直接取得 (未稼働台のデータ落ちを防ぐ) ---
+    if '台番号' in df_raw.columns:
+        df_raw_temp = df_raw.copy()
+        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+    else:
+        df_raw_temp = pd.DataFrame()
+
+    shop_operating_dates = {}
+    if not df_raw_temp.empty and shop_col in df_raw_temp.columns:
+        for shop in df_raw_temp[shop_col].unique():
+            shop_dates = sorted(df_raw_temp[df_raw_temp[shop_col] == shop]['対象日付'].dropna().unique())
+            shop_operating_dates[shop] = shop_dates
+
+    def get_actual_result(row):
+        shop = row.get(shop_col)
+        base_date = row.get('対象日付')
+        machine_no = row.get('台番号')
+        
+        next_date = pd.NaT
+        if shop in shop_operating_dates and pd.notna(base_date):
+            for d in shop_operating_dates[shop]:
+                if d > base_date:
+                    next_date = d
+                    break
+                    
+        if pd.isna(next_date) or df_raw_temp.empty:
+            return pd.Series([np.nan, np.nan, np.nan, np.nan])
+            
+        target_row = df_raw_temp[
+            (df_raw_temp[shop_col] == shop) & 
+            (df_raw_temp['対象日付'] == next_date) & 
+            (df_raw_temp['台番号'] == machine_no)
+        ]
+        
+        if not target_row.empty:
+            tr = target_row.iloc[0]
+            return pd.Series([tr.get('差枚', 0), tr.get('BIG', 0), tr.get('REG', 0), tr.get('累計ゲーム', 0)])
+        else:
+            # 営業日だが該当台のデータがない = 未稼働(0G)とみなす
+            return pd.Series([0, 0, 0, 0])
+            
+    results = base_df.apply(get_actual_result, axis=1)
+    base_df[['差枚_actual', '結果_BIG', '結果_REG', '結果_累計ゲーム']] = results
+
     # 特徴量の名前を _current から元に戻す（弱点分析などで使用するため）
     for col in base_df.columns.copy():
         if col.endswith('_current'):
             orig_col = col.replace('_current', '')
-            if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠']:
+            if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠', 'next_diff', 'next_BIG', 'next_REG', 'next_累計ゲーム']:
                 base_df[orig_col] = base_df[col]
 
-    base_df = base_df.dropna(subset=['next_diff', 'prediction_score']).copy()
-    base_df = base_df.rename(columns={'next_diff': '差枚_actual'})
+    base_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
+    
+    # --- 設定5近似度の算出 (ボーナス回数の精査) ---
+    specs = backend.get_machine_specs()
+    def evaluate_setting5(row):
+        g = row.get('結果_累計ゲーム', 0)
+        act_b = row.get('結果_BIG', 0)
+        act_r = row.get('結果_REG', 0)
+        if pd.isna(g) or g <= 0: return pd.Series([0, 0, 0, 0, 0])
+        machine = row.get('機種名', '')
+        matched_spec = backend.get_matched_spec_key(machine, specs)
+        p_b, p_r = 1/259.0, 1/255.0 # デフォルト
+        if matched_spec and "設定5" in specs[matched_spec]:
+            s5 = specs[matched_spec]["設定5"]
+            if "BIG" in s5: p_b = 1.0 / s5["BIG"]
+            if "REG" in s5: p_r = 1.0 / s5["REG"]
+        exp_b, exp_r = g * p_b, g * p_r
+        diff_b, diff_r = act_b - exp_b, act_r - exp_r
+        
+        # 期待回数からの「不足回数」をベースに減点する方式
+        score_r = max(0, 80 + (diff_r * penalty_reg if diff_r < 0 else 0))
+        score_b = max(0, 20 + (diff_b * penalty_big if diff_b < 0 else 0))
+        
+        total_score = score_r + score_b
+        # 極端な低稼働（1000G未満）の場合のみ指定の減点率を適用
+        if g < 1000:
+            total_score *= (1 - ((1000 - g) / 1000) * (low_g_penalty / 100.0))
+        return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r])
+        
+    eval_df = base_df.apply(evaluate_setting5, axis=1)
+    base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分']] = eval_df
     
     if base_df.empty:
         st.info("まだ結果が判明している予測がありません。")
@@ -262,35 +349,92 @@ def render_verification_page(df_pred_log, df_verify):
         
         st.altair_chart(pie_chart, use_container_width=True)
 
+    # --- AI振り返りレポート ---
+    st.divider()
+    st.subheader("🤖 AIの振り返りレポート (設定5近似度の精査)")
+    st.caption("予測した台が、結果的に「設定5の確率」でBIG/REGを引けていたかを100点満点で評価し、AI自身が分析します。")
+    
+    avg_s5_score = merged_df['設定5近似度'].mean()
+    avg_g = merged_df['結果_累計ゲーム'].mean()
+    avg_diff_r = merged_df['REG不足分'].mean()
+    avg_diff_b = merged_df['BIG不足分'].mean()
+    
+    if pd.isna(avg_g) or avg_g < 2000:
+        comment = f"私が推奨した台の翌日平均回転数は **{int(avg_g if not pd.isna(avg_g) else 0)}G** でした。全体的にあまり回されておらず、設定の答え合わせが難しい状態です。もっと稼働がある店舗やイベント日を狙うと精度が上がるかもしれません！"
+        mood = "🤔"
+    elif avg_s5_score >= 80:
+        comment = f"【大成功！】私が予測した台の『設定5近似度（理論値との合致度）』は平均 **{avg_s5_score:.1f}点 (100点満点)** でした！REG回数も設定5の期待値をしっかり満たしており、本物の高設定を的確に見抜けています！"
+        mood = "🌟"
+    elif avg_s5_score >= 60:
+        if avg_diff_r < 0:
+            comment = f"【まずまずの精度】設定5近似度は平均 **{avg_s5_score:.1f}点** でした。勝率は悪くないですが、REG回数が設定5の期待値に対して平均 **{abs(avg_diff_r):.1f}回** 足りていません。低〜中間設定のヒキ強に助けられている部分もありそうです。"
+        else:
+            comment = f"【優秀な結果】設定5近似度は平均 **{avg_s5_score:.1f}点** でした！差枚だけでなく、中身（REG確率）も高設定らしい挙動を示している台が多く、予測はしっかり機能しています。"
+        mood = "👍"
+    elif avg_s5_score >= 40:
+        if avg_g < 4000:
+            comment = f"【惜しい結果】設定5近似度は平均 **{avg_s5_score:.1f}点** でした。ボーナス回数が理論値に少し届いていませんが、平均回転数が **{int(avg_g)}G** とまだ少ないため、試行回数不足で下振れした可能性も十分にあります。もう少し回されていれば結果は変わったかもしれません。"
+            mood = "😅"
+        else:
+            comment = f"【反省点あり】設定5近似度は平均 **{avg_s5_score:.1f}点** でした。十分な回転数（平均 **{int(avg_g)}G**）がある中でボーナス回数が設定5の理論値に届いておらず、中身は「低〜中間設定」っぽい挙動が目立ちます。店選びやイベント日を見直す余地があります。"
+            mood = "💦"
+    else:
+        if avg_g < 3000:
+            comment = f"【判断が難しい結果】設定5近似度は平均 **{avg_s5_score:.1f}点** と低めですが、平均回転数が **{int(avg_g)}G** と少なく、試行回数不足による極端な下振れを引いた可能性が高いです。この回転数だけで「予測が完全に外れた」と判断するのは早計かもしれません。"
+            mood = "🤔"
+        else:
+            comment = f"【大反省…】設定5近似度は平均 **{avg_s5_score:.1f}点** と惨敗です…。十分回された上で推奨台が軒並み低設定挙動になってしまいました。過去の傾向が変わった（据え置きしなくなった等）可能性が高いので、最近のデータで学習し直すか、この店舗は警戒したほうが良いです。"
+            mood = "😭"
+
+    st.info(f"{mood} **AIコメント:**\n\n{comment}\n\n※REG過不足: 平均 **{avg_diff_r:+.1f}回** / BIG過不足: 平均 **{avg_diff_b:+.1f}回**")
+    
+    # --- 特に優秀だった台トップ3 ---
+    if not merged_df.empty:
+        top3_df = merged_df[merged_df['設定5近似度'] > 0].sort_values('設定5近似度', ascending=False).head(3)
+        if not top3_df.empty:
+            st.markdown("##### 🌟 特に高設定挙動だった推奨台 トップ3")
+            for _, row in top3_df.iterrows():
+                shop = row.get(shop_col, '')
+                m_num = row.get('台番号', '')
+                m_name = row.get('機種名', '')
+                score = row.get('設定5近似度', 0)
+                diff = row.get('差枚_actual', 0)
+                g = row.get('結果_累計ゲーム', 0)
+                r = row.get('結果_REG', 0)
+                b = row.get('結果_BIG', 0)
+                date_str = row['対象日付'].strftime('%m/%d') if pd.notna(row.get('対象日付')) else ""
+                st.markdown(f"- **{score:.1f}点** : {date_str} {shop} #{m_num} {m_name} ({int(g)}G BIG{int(b)} REG{int(r)} / {int(diff):+d}枚)")
+
     # --- 2. 時系列推移 (勝率 & 収支) ---
-    st.subheader("📈 日別の勝率・収支推移")
+    st.subheader("📈 日別の推移")
     
     daily_stats = merged_df.groupby('対象日付').agg(
         win_rate=('差枚_actual', lambda x: (x > 0).mean()),
         total_profit=('差枚_actual', 'sum'),
+        avg_s5_score=('設定5近似度', 'mean'),
         count=('台番号', 'count')
     ).reset_index()
     
     if not daily_stats.empty:
         daily_stats['date_str'] = daily_stats['対象日付'].dt.strftime('%m/%d')
         
-        base_chart = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='日付', sort=None))
-        
-        # 棒グラフ: 収支 (左軸)
-        bar_chart = base_chart.mark_bar(opacity=0.6).encode(
-            y=alt.Y('total_profit', title='日別収支 (枚)'),
-            color=alt.condition(alt.datum.total_profit > 0, alt.value("#FF4B4B"), alt.value("#4B4BFF")),
-            tooltip=['date_str', alt.Tooltip('total_profit', format='+d'), 'count']
-        )
-        
-        # 折れ線グラフ: 勝率 (右軸)
-        line_chart = base_chart.mark_line(point=True, color='#FFA726', strokeWidth=3).encode(
-            y=alt.Y('win_rate', title='勝率 (%)', axis=alt.Axis(format='%')),
-            tooltip=['date_str', alt.Tooltip('win_rate', format='.1%')]
-        )
-        
-        # 2軸グラフの合成
-        st.altair_chart(alt.layer(bar_chart, line_chart).resolve_scale(y='independent'), use_container_width=True)
+        tab_prof, tab_s5 = st.tabs(["💰 勝率・収支推移", "🎯 設定5近似度 推移"])
+        with tab_prof:
+            base_chart = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='日付', sort=None))
+            bar_chart = base_chart.mark_bar(opacity=0.6).encode(
+                y=alt.Y('total_profit', title='日別収支 (枚)'), color=alt.condition(alt.datum.total_profit > 0, alt.value("#FF4B4B"), alt.value("#4B4BFF")), tooltip=['date_str', alt.Tooltip('total_profit', format='+d'), 'count']
+            )
+            line_chart = base_chart.mark_line(point=True, color='#FFA726', strokeWidth=3).encode(
+                y=alt.Y('win_rate', title='勝率 (%)', axis=alt.Axis(format='%')), tooltip=['date_str', alt.Tooltip('win_rate', format='.1%')]
+            )
+            st.altair_chart(alt.layer(bar_chart, line_chart).resolve_scale(y='independent'), use_container_width=True)
+        with tab_s5:
+            base_chart_s5 = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='日付', sort=None))
+            line_s5 = base_chart_s5.mark_line(point=True, color='#AB47BC', strokeWidth=3).encode(
+                y=alt.Y('avg_s5_score', title='設定5近似度 (平均点)', scale=alt.Scale(domain=[0, 100])), tooltip=['date_str', alt.Tooltip('avg_s5_score', format='.1f', title='設定5近似度'), 'count']
+            )
+            st.altair_chart(line_s5, use_container_width=True)
+            st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。")
 
     # --- 2. 確率帯別 精度分析 ---
     st.subheader("📈 確率帯別 精度分析")
@@ -446,20 +590,21 @@ def render_verification_page(df_pred_log, df_verify):
     else:
         display_df['予想設定5以上確率'] = 0
 
-    cols = ['対象日付', shop_col, '台番号', '機種名', '予測信頼度', '予想設定5以上確率', '予測差枚数', '差枚_actual', '結果判定']
+    cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_REG', 'REG不足分', '設定5近似度', '結果判定']
+    config_dict = {
+        "対象日付": st.column_config.DateColumn("予測日", format="MM/DD"),
+        "予想設定5以上確率": st.column_config.ProgressColumn("予測(設定5期待度)", format="%d%%", min_value=0, max_value=100),
+        "差枚_actual": st.column_config.NumberColumn("結果差枚", format="%+d"),
+        "結果_REG": st.column_config.NumberColumn("結果REG", format="%d回"),
+        "REG不足分": st.column_config.NumberColumn("REG過不足", format="%+.1f回"),
+        "設定5近似度": st.column_config.ProgressColumn("設定5近似度", format="%d点", min_value=0, max_value=100),
+    }
+
     if 'prediction_score' in merged_df.columns:
         bad_pred_df = display_df[(display_df['prediction_score'] >= 0.70) & (display_df['差枚_actual'] <= -1000)].copy()
         missed_df = display_df[(display_df['prediction_score'] <= 0.40) & (display_df['差枚_actual'] >= 2000)].copy()
         
         tab_b1, tab_b2 = st.tabs(["📉 期待はずれ (高評価で大負け)", "📈 逃したお宝台 (低評価で大勝ち)"])
-        
-        config_dict = {
-            "対象日付": st.column_config.DateColumn("予測日", format="MM/DD"),
-            "予測信頼度": st.column_config.TextColumn("信頼度"),
-            "予想設定5以上確率": st.column_config.ProgressColumn("設定5以上確率", format="%d%%", min_value=0, max_value=100),
-            "予測差枚数": st.column_config.NumberColumn("予想", format="%d"),
-            "差枚_actual": st.column_config.NumberColumn("結果", format="%+d 枚"),
-        }
         
         with tab_b1:
             if bad_pred_df.empty: st.success("現在、大きく期待を裏切った台はありません！")
@@ -476,13 +621,7 @@ def render_verification_page(df_pred_log, df_verify):
     # display_dfは上で作成済み
     st.dataframe(
         display_df[cols],
-        column_config={
-            "対象日付": st.column_config.DateColumn("予測日", format="MM/DD"),
-            "予測信頼度": st.column_config.TextColumn("信頼度"),
-            "予想設定5以上確率": st.column_config.ProgressColumn("設定5以上確率", format="%d%%", min_value=0, max_value=100),
-            "予測差枚数": st.column_config.NumberColumn("予想", format="%d"),
-            "差枚_actual": st.column_config.NumberColumn("結果", format="%+d 枚"),
-        },
+        column_config=config_dict,
         use_container_width=True,
         hide_index=True
     )
@@ -1666,7 +1805,7 @@ def main():
     # --- 予測対象日の選択 (サイドバー) ---
     predict_target_date = st.sidebar.date_input(
         "📅 予測対象日",
-        value=pd.Timestamp.now().date() + pd.Timedelta(days=1),
+        value=pd.Timestamp.now().date(),
         help="指定した日付の予測を行います。過去日を指定した場合は、その前日までのデータのみを使用して予測を再現します。"
     )
     st.sidebar.divider()
@@ -1771,7 +1910,7 @@ def main():
         render_summary_page(df, df_raw, shop_col, df_events)
     elif page == "精度検証 (答え合わせ)":
         df_pred_log = backend.load_prediction_log()
-        render_verification_page(df_pred_log, df_verify)
+        render_verification_page(df_pred_log, df_verify, df, df_raw)
     elif page == "AI傾向分析 (勝利の法則)":
         render_feature_analysis_page(df_verify, df_importance)
     elif page == "島マスター管理":
