@@ -242,6 +242,7 @@ def save_island_master(shop, island_name, rule_str):
             header = worksheet.row_values(1)
             if '台番号ルール' not in header:
                 worksheet.update_cell(1, len(header) + 1, '台番号ルール')
+                header.append('台番号ルール')
         except: 
             worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="6")
             worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール'])
@@ -257,7 +258,7 @@ def save_island_master(shop, island_name, rule_str):
             idx = header.index('台番号ルール')
             row_data[idx] = rule_str
             
-        worksheet.append_row(row_data)
+        worksheet.append_row(row_data, value_input_option='RAW')
         return True
     except Exception as e:
         st.error(f"島マスター保存エラー: {e}")

@@ -1342,7 +1342,7 @@ def render_island_master_page(df_raw):
             return f"{s}〜{e}"
             
         df_island['対象台番号'] = df_island.apply(get_display_rule, axis=1)
-        df_island['uid_label'] = df_island['店名'] + " | " + df_island['島名'] + " (" + df_island['対象台番号'] + ")"
+        df_island['uid_label'] = df_island['店名'].astype(str) + " | " + df_island['島名'].astype(str) + " (" + df_island['対象台番号'].astype(str) + ")"
         st.dataframe(df_island[['店名', '島名', '対象台番号']], use_container_width=True, hide_index=True)
         
         with st.form("delete_island_form"):
