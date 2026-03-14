@@ -600,10 +600,10 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
     train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
 
     def get_rating(score):
-        if score >= 0.8: return 'A'
-        elif score >= 0.6: return 'B'
-        elif score >= 0.4: return 'C'
-        elif score >= 0.2: return 'D'
+        if score >= 0.85: return 'A'
+        elif score >= 0.70: return 'B'
+        elif score >= 0.50: return 'C'
+        elif score >= 0.30: return 'D'
         else: return 'E'
 
     def get_reason(row):
@@ -614,12 +614,16 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
         mean_7d = row.get('mean_7days_diff', 0)
         win_rate_7d = row.get('win_rate_7days', 0)
         diff = row.get('差枚', 0)
+        reg_prob = row.get('REG確率', 0)
+
         if mean_7d < -300:
             if diff < -1000: reasons.append(f"直近1週間(平均{int(mean_7d)}枚)と前日が大きく凹んでおり、**「不調台の反発」**の可能性が高いです。")
             else: reasons.append(f"週間成績は不調(平均{int(mean_7d)}枚)ですが、AIは**「底打ち上昇」**を予測しています。")
         elif mean_7d > 500:
-            if win_rate_7d >= 0.5:
-                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 勝率{win_rate_7d*100:.0f}%)と安定して好調で、**「高設定の据え置き」**が期待できます。")
+            if win_rate_7d >= 0.5 and reg_prob >= (1/300):
+                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 勝率{win_rate_7d*100:.0f}%)と好調かつ、REG確率(1/{int(1/reg_prob) if reg_prob > 0 else '-'})も優秀で、**「高設定の据え置き」**が期待できます。")
+            elif win_rate_7d >= 0.5:
+                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 勝率{win_rate_7d*100:.0f}%)と安定して好調です。")
             elif diff >= 2000:
                 reasons.append(f"週間平均はプラスですが、直近の一撃(+{int(diff)}枚)による影響が大きいです。一撃後の回収に警戒が必要です。")
         
@@ -631,14 +635,16 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None):
             elif prev2_diff < 0 and diff >= 0:
                 reasons.append("【特殊】前々日のマイナスから前日プラスへV字反発しており、好調ウェーブの続伸に注目です。")
             elif prev2_diff >= 1000 and diff >= 1000:
-                reasons.append("【特殊】2日連続の大勝(+1000枚以上)です。据え置き店ならチャンス、回収店なら警戒が必要です。")
+                if reg_prob >= (1/300):
+                    reasons.append("【特殊】2日連続の大勝(+1000枚以上)かつREG確率も優秀です。高設定の据え置きの可能性があります。")
+                else:
+                    reasons.append("【特殊】2日連続の大勝(+1000枚以上)ですが、REG確率が伴っていません。一撃の可能性があり警戒が必要です。")
 
         # 連続マイナスのリセット狙い
         cons_minus = row.get('連続マイナス日数', 0)
         if cons_minus >= 3:
             reasons.append(f"【特殊】現在{int(cons_minus)}日連続マイナス中です。店舗の「上げリセット(底上げ)」ターゲットになる可能性が高いです。")
 
-        reg_prob = row.get('REG確率', 0)
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)
         if reg > big and reg_prob >= (1/300):
