@@ -12,6 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, 'service_account.json')
 SPREADSHEET_KEY = '1ylt9mdIkKKk6YRcZh4O05O7fPF4d2BU6VXzboP_vs5s'
 SHEET_NAME = 'juggler_raw'
+HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.pkl')
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -108,27 +109,68 @@ def _get_gspread_client():
     else:
         raise FileNotFoundError("認証情報が見つかりません。st.secrets または service_account.json を設定してください。")
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_data():
     """Googleスプレッドシートから生の稼働データを読み込む"""
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet(SHEET_NAME)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
         
-        if df.empty: return pd.DataFrame()
+        # 速度改善: get_all_records() はパースが重いため get_all_values() で取得する
+        data = worksheet.get_all_values()
+        if not data or len(data) < 2: return pd.DataFrame()
+        raw_df = pd.DataFrame(data[1:], columns=data[0])
+        
+        if raw_df.empty: return pd.DataFrame()
 
         # 前処理
-        df.columns = [str(c).strip() for c in df.columns]
-        rename_map = {'REG回数': 'REG', 'BIG回数': 'BIG', '店舗名': '店名'}
-        df = df.rename(columns=rename_map)
+        raw_df.columns = [str(c).strip() for c in raw_df.columns]
+        date_col = '対象日付'
+        if date_col not in raw_df.columns: return pd.DataFrame()
 
-        if '機種名' in df.columns:
-            df['機種名'] = df['機種名'].apply(lambda x: unicodedata.normalize('NFKC', str(x)))
+        # --- 1週間以上前のデータは更新されない仕様を利用した高速化 (ローカルキャッシュ) ---
+        raw_df['tmp_date'] = pd.to_datetime(raw_df[date_col], errors='coerce')
+        latest_date = raw_df['tmp_date'].max()
+        if pd.isna(latest_date):
+            latest_date = pd.Timestamp.now()
+        
+        # 7日前の日付を「確定済みデータ（フリーズ）」の境界とする
+        freeze_threshold = latest_date - pd.Timedelta(days=7)
+
+        history_df = pd.DataFrame()
+        if os.path.exists(HISTORY_CACHE_FILE):
+            try:
+                history_df = pd.read_pickle(HISTORY_CACHE_FILE)
+                # キャッシュ内のデータが古すぎる/新しすぎる場合を考慮し、確定済み範囲のみ残す
+                if date_col in history_df.columns:
+                    history_df = history_df[history_df[date_col] < freeze_threshold]
+                else:
+                    history_df = pd.DataFrame()
+            except:
+                pass
+
+        if not history_df.empty:
+            max_history_date = history_df[date_col].max()
+            # 履歴キャッシュより新しいデータのみをパース対象にする（劇的な高速化）
+            target_raw_df = raw_df[raw_df['tmp_date'] > max_history_date].copy()
+        else:
+            target_raw_df = raw_df.copy()
+
+        target_raw_df = target_raw_df.drop(columns=['tmp_date'])
+        
+        if target_raw_df.empty and not history_df.empty:
+            return history_df
+
+        # --- 重い前処理（新規データのみ実行されるため一瞬で終わる） ---
+        rename_map = {'REG回数': 'REG', 'BIG回数': 'BIG', '店舗名': '店名'}
+        target_raw_df = target_raw_df.rename(columns=rename_map)
+
+        if '機種名' in target_raw_df.columns:
+            target_raw_df['機種名'] = target_raw_df['機種名'].apply(lambda x: unicodedata.normalize('NFKC', str(x)) if pd.notna(x) else x)
 
         def convert_prob(val):
+            if pd.isna(val) or str(val).strip() == '': return 0.0
             val_str = str(val).strip()
             if '/' in val_str:
                 try:
@@ -141,23 +183,38 @@ def load_data():
             except: return 0.0
 
         for col in ['合成確率', 'BIG確率', 'REG確率']:
-            if col in df.columns:
-                df[col] = df[col].apply(convert_prob)
+            if col in target_raw_df.columns:
+                target_raw_df[col] = target_raw_df[col].apply(convert_prob)
 
         num_cols = ['台番号', '累計ゲーム', 'BIG', 'REG', '差枚', '末尾番号', '最終ゲーム']
         for col in num_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            if col in target_raw_df.columns:
+                target_raw_df[col] = target_raw_df[col].replace('', np.nan) # 空文字をNaNに変換
+                target_raw_df[col] = pd.to_numeric(target_raw_df[col], errors='coerce').fillna(0)
         
-        if '対象日付' in df.columns:
-            df['対象日付'] = pd.to_datetime(df['対象日付'])
+        target_raw_df[date_col] = pd.to_datetime(target_raw_df[date_col], errors='coerce')
+        target_raw_df = target_raw_df.dropna(subset=[date_col])
+        
+        # --- キャッシュと新規データを結合 ---
+        if not history_df.empty:
+            df = pd.concat([history_df, target_raw_df], ignore_index=True)
+        else:
+            df = target_raw_df
+
+        # 次回のために、確定済みデータをキャッシュファイルに保存
+        frozen_df = df[df[date_col] < freeze_threshold]
+        if not frozen_df.empty:
+            try:
+                frozen_df.to_pickle(HISTORY_CACHE_FILE)
+            except Exception:
+                pass # 保存エラーは無視（Streamlit Cloud環境等への配慮）
             
         return df
     except Exception as e:
         st.error(f"データの読み込みに失敗しました: {e}")
         return pd.DataFrame()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_prediction_log():
     try:
         gc = _get_gspread_client()
@@ -204,7 +261,7 @@ def save_prediction_log(df):
         st.success(f"予測結果（各店舗 Top 10）を '{log_sheet_name}' シートに保存しました！")
     except Exception as e: st.error(f"保存エラー: {e}")
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_shop_events():
     try:
         gc = _get_gspread_client()
@@ -312,7 +369,7 @@ def delete_shop_event(shop_name, event_date, event_name):
         return False
 
 # --- 島マスター管理機能 ---
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_island_master():
     try:
         gc = _get_gspread_client()
@@ -367,7 +424,7 @@ def delete_island_master(target_timestamp):
         return False
 
 # --- マイ収支管理機能 ---
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=3600)
 def load_my_balance():
     try:
         gc = _get_gspread_client()
@@ -606,7 +663,8 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     specs = get_machine_specs()
     spec_reg = df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
     spec_tot = df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-    df['target'] = ((df['next_reg_prob'] >= spec_reg) | (df['next_total_prob'] >= spec_tot)).astype(int)
+    # ターゲット判定時も「翌日3000G以上回ったか」を条件に入れ、上振れノイズを学習しないようにする
+    df['target'] = ((df['next_累計ゲーム'] >= 3000) & ((df['next_reg_prob'] >= spec_reg) | (df['next_total_prob'] >= spec_tot))).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
     df['next_date'] = df.groupby(group_keys)['対象日付'].shift(-1)
@@ -648,7 +706,8 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
 
     # --- 勝率安定度（一撃ノイズ排除用） ---
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
-    df['is_win'] = ((df['REG確率'] >= spec_reg) | (df['total_prob'] >= spec_tot)).astype(int) # 変数名はwinのままだが、中身は高設定フラグ
+    # 高設定フラグにも「3000G以上回っている」条件を加え、信頼性の高い実績だけを評価する
+    df['is_win'] = ((df['累計ゲーム'] >= 3000) & ((df['REG確率'] >= spec_reg) | (df['total_prob'] >= spec_tot))).astype(int)
     df['win_rate_7days'] = df.groupby(group_keys)['is_win'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
 
     if shop_col:
@@ -672,9 +731,16 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
 
-    train_df = df.dropna(subset=['next_diff'])
+    train_df = df.dropna(subset=['next_diff']).copy()
     predict_df = df[df['next_diff'].isna()].copy()
     
+    # --- 学習データの期間絞り込み（直近データのみ使用） ---
+    train_months = hyperparams.get('train_months', 3) if hyperparams else 3
+    if '対象日付' in train_df.columns and not train_df.empty:
+        max_train_date = train_df['対象日付'].max()
+        cutoff_date = max_train_date - pd.DateOffset(months=train_months)
+        train_df = train_df[train_df['対象日付'] >= cutoff_date]
+
     if '対象日付' in predict_df.columns and not predict_df.empty:
         if shop_col:
             latest_dates = predict_df.groupby(shop_col)['対象日付'].transform('max')
@@ -847,9 +913,14 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         diff = row.get('差枚', 0)
         reg_prob = row.get('REG確率', 0)
         is_win_flag = row.get('is_win', 0)
+        games = row.get('累計ゲーム', 0)
 
         if mean_7d < -300:
-            if diff < -1000: reasons.append(f"直近1週間(平均{int(mean_7d)}枚)と前日が大きく凹んでおり、**「不調台の反発」**の可能性が高いです。")
+            if diff <= -1000:
+                if games >= 7000:
+                    reasons.append(f"直近1週間(平均{int(mean_7d)}枚)不調な上、前日は{int(games)}Gもタコ粘りされて大凹みしており、強烈な**「お詫び(反発)」**が期待できます。")
+                else:
+                    reasons.append(f"直近1週間(平均{int(mean_7d)}枚)と前日が大きく凹んでおり、**「不調台の反発」**の可能性が高いです。")
             else: reasons.append(f"週間成績は不調(平均{int(mean_7d)}枚)ですが、AIは**「底打ち上昇」**を予測しています。")
         elif mean_7d > 500:
             if win_rate_7d >= 0.5 and is_win_flag == 1:
@@ -863,14 +934,14 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         prev2_diff = row.get('prev_差枚')
         if pd.notna(prev2_diff):
             if prev2_diff <= -1000 and diff <= -1000:
-                reasons.append("【特殊】2日連続の大凹み(-1000枚以下)で、強烈な反発(底上げ)サインが点灯しています。")
+                reasons.append("【波・推移】2日連続の大凹み(-1000枚以下)で、グラフ底からの強烈な反発(底上げ)サインが点灯しています。")
             elif prev2_diff < 0 and diff >= 0:
-                reasons.append("【特殊】前々日のマイナスから前日プラスへV字反発しており、好調ウェーブの続伸に注目です。")
+                reasons.append("【波・推移】前々日のマイナスから前日プラスへV字反発しており、右肩上がりの好調ウェーブ続伸に期待できます。")
             elif prev2_diff >= 1000 and diff >= 1000:
                 if reg_prob >= (1/300):
-                    reasons.append("【特殊】2日連続の大勝(+1000枚以上)かつREG確率も優秀です。高設定の据え置きの可能性があります。")
+                    reasons.append("【波・推移】2日連続の大勝(+1000枚以上)かつREG確率も優秀です。高設定の据え置きによる綺麗な右肩上がりグラフに期待できます。")
                 else:
-                    reasons.append("【特殊】2日連続の大勝(+1000枚以上)ですが、REG確率が伴っていません。一撃の可能性があり警戒が必要です。")
+                    reasons.append("【波・推移】2日連続の大勝(+1000枚以上)ですが、REG確率が伴っていません。一撃の波が終わる可能性があり警戒が必要です。")
 
         # 連続マイナスのリセット狙い
         cons_minus = row.get('連続マイナス日数', 0)
@@ -887,14 +958,31 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         is_setting5_over = False
         if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
             set5_reg_prob_threshold = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
-            games = row.get('累計ゲーム', 0)
             if games >= 3000 and reg_prob >= set5_reg_prob_threshold:
                 is_setting5_over = True
 
+        spec_reg_5 = 1.0 / specs[matched_spec_key].get("設定5", {"REG": 260.0})["REG"] if matched_spec_key else 1/260.0
+        spec_big_5 = 1.0 / specs[matched_spec_key].get("設定5", {"BIG": 260.0})["BIG"] if matched_spec_key else 1/260.0
+
+        # BIG確率の計算
+        big_prob = big / games if games > 0 else 0
+        big_denom = 1 / big_prob if big_prob > 0 else 9999
+
         if is_setting5_over:
             reasons.append(f"【🌟高設定挙動】前日のREG確率が1/{int(1/reg_prob)}で、機種スペックの**「設定5以上」**の基準を満たしており、強く推奨されます。")
-        elif reg > big and reg_prob >= (1/300):
-            reasons.append(f"【特殊】REG先行(BIG欠損)かつREG確率1/300以上(1/{int(1/reg_prob)})の「高設定 不発台」です。")
+        elif reg > big and reg_prob >= spec_reg_5:            
+            if big_denom >= 400:
+                if diff <= 0:
+                    reasons.append(f"【超不発】BIG確率が1/{int(big_denom)}と極端に欠損していますが、REG確率は設定5以上(1/{int(1/reg_prob)})をキープしている超・狙い目台です。")
+                else:
+                    reasons.append(f"【特殊】BIGが極端に引けていませんが(1/{int(big_denom)})、REG確率は設定5以上(1/{int(1/reg_prob)})の高設定挙動です。")
+            else:
+                if diff <= 0:
+                    reasons.append(f"【特殊】REG先行(BB欠損)で差枚が沈んでいる、狙い目の「高設定 不発台」です。(REG 1/{int(1/reg_prob)})")
+                else:
+                    reasons.append(f"【特殊】REG先行かつREG確率が設定5以上(1/{int(1/reg_prob)})の「高設定台」です。")
+        elif big >= reg and big_prob >= spec_big_5:
+            reasons.append(f"【特殊】BIG先行(1/{int(big_denom)})でBIG確率が設定5以上をキープしています。BIGヒキ強台の据え置き狙いとして期待できます。")
         else:
             if reg_prob > (1/280): reasons.append(f"前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
             elif reg_prob > (1/350): reasons.append(f"REG確率(1/{int(1/reg_prob)})が悪くなく、粘る価値があります。")
@@ -931,6 +1019,13 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
         predict_df['店舗期待度'] = shop_mean.apply(get_rating)
     predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
-    predict_df['ai_version'] = "v2.0 (設定5基準)"
+    
+    # --- AIバージョンの動的生成 ---
+    t_m = hyperparams.get('train_months', 3) if hyperparams else 3
+    n_est = hyperparams.get('n_estimators', 300) if hyperparams else 300
+    nl = hyperparams.get('num_leaves', 15) if hyperparams else 15
+    lr = hyperparams.get('learning_rate', 0.03) if hyperparams else 0.03
+    # バージョン名にハイパーパラメータを組み込むことで、後から精度比較を可能にする
+    predict_df['ai_version'] = f"v2.1_設定5(m{t_m}_n{n_est}_l{nl}_lr{lr})"
     
     return predict_df, train_df, feature_importances

@@ -71,7 +71,10 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             
             if not history_subset.empty:
                 history_subset['wd'] = history_subset['対象日付'].dt.dayofweek
-                same_wd_df = history_subset[history_subset['wd'] == target_wd]
+                same_wd_df = history_subset[history_subset['wd'] == target_wd].copy()
+                
+                # 低回転ノイズを除外 (1000G未満は集計から外す)
+                same_wd_df = same_wd_df[same_wd_df['累計ゲーム'] >= 1000].copy()
                 
                 if not same_wd_df.empty:
                     same_wd_df['合算確率'] = (same_wd_df['BIG'] + same_wd_df['REG']) / same_wd_df['累計ゲーム'].replace(0, np.nan)
@@ -80,7 +83,8 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                     
                     count = len(same_wd_df)
                     avg_diff = same_wd_df['差枚'].mean()
-                    win_rate = ((same_wd_df['REG確率'] >= spec_reg_p) | (same_wd_df['合算確率'] >= spec_tot_p)).mean() * 100
+                    # 3000G以上を要求
+                    win_rate = ((same_wd_df['累計ゲーム'] >= 3000) & ((same_wd_df['REG確率'] >= spec_reg_p) | (same_wd_df['合算確率'] >= spec_tot_p))).mean() * 100
                     avg_reg = same_wd_df['REG'].mean()
                     
                     sw1, sw2 = st.columns(2)
@@ -234,15 +238,24 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             if 'is_corner' in train_shop.columns:
                 subset = train_shop[train_shop['is_corner'] == 1]
                 if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
-            if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'is_win' in train_shop.columns:
-                subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['is_win'] == 1)]
-                if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行 (高設定不発狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'REG確率' in train_shop.columns:
+                spec_reg_5 = train_shop['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['REG確率'] >= spec_reg_5)]
+                if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行・BB欠損 (高設定不発狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+                if 'BIG確率' in train_shop.columns:
+                    train_shop_tmp = train_shop.copy()
+                    train_shop_tmp['BIG分母'] = train_shop_tmp['BIG確率'].apply(lambda x: 1/x if x > 0 else 9999)
+                    subset_bb = train_shop_tmp[(train_shop_tmp['BIG分母'] >= 400) & (train_shop_tmp['REG確率'] >= spec_reg_5)]
+                    if len(subset_bb) >= 5: trends.append({"id": "bb_deficit", "条件": "超不発台 (BIG 1/400以下 & REG高設定)", "高設定率": subset_bb['target'].mean(), "サンプル": len(subset_bb)})
             if '連続マイナス日数' in train_shop.columns:
                 subset = train_shop[train_shop['連続マイナス日数'] >= 3]
                 if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if '差枚' in train_shop.columns:
                 subset = train_shop[train_shop['差枚'] <= -1000]
                 if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+                if '累計ゲーム' in train_shop.columns:
+                    subset_taco = train_shop[(train_shop['差枚'] <= -1000) & (train_shop['累計ゲーム'] >= 7000)]
+                    if len(subset_taco) >= 5: trends.append({"id": "taco_lose", "条件": "タコ粘り大凹み (7000G~ & -1000枚以下)", "高設定率": subset_taco['target'].mean(), "サンプル": len(subset_taco)})
                 subset = train_shop[train_shop['差枚'] >= 1000]
                 if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
                 if 'is_win' in train_shop.columns:
@@ -251,6 +264,12 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                 else:
                     subset = train_shop[train_shop['差枚'] >= 1000]
                     if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if 'prev_差枚' in train_shop.columns and '差枚' in train_shop.columns:
+                subset_v = train_shop[(train_shop['prev_差枚'] < 0) & (train_shop['差枚'] >= 0)]
+                if len(subset_v) >= 5: trends.append({"id": "v_recovery", "条件": "V字反発 (前々日負け → 前日勝ち)", "高設定率": subset_v['target'].mean(), "サンプル": len(subset_v)})
+                
+                subset_cont_lose = train_shop[(train_shop['prev_差枚'] <= -1000) & (train_shop['差枚'] <= -1000)]
+                if len(subset_cont_lose) >= 5: trends.append({"id": "cont_big_lose", "条件": "連続大負け (-1000枚以下2日連続)", "高設定率": subset_cont_lose['target'].mean(), "サンプル": len(subset_cont_lose)})
             if 'target_date_end_digit' in train_shop.columns:
                 for d in [0, 5, 7]:
                     subset = train_shop[train_shop['target_date_end_digit'] == d]
@@ -289,10 +308,18 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                 def get_matched_trends(row):
                     matched_hot = []
                     if "corner" in top_ids and row.get('is_corner') == 1: matched_hot.append("角")
-                    if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0) and row.get('REG確率', 0) >= (1/300): matched_hot.append("REG先行")
+                    if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0): matched_hot.append("BB欠損・不発")
+                    if "bb_deficit" in top_ids:
+                        b_p = row.get('BIG確率', 0)
+                        b_d = 1 / b_p if b_p > 0 else 9999
+                        sp_r5 = 1.0 / specs[backend.get_matched_spec_key(row.get('機種名', ''), specs)].get('設定5', {"REG": 260.0})["REG"]
+                        if b_d >= 400 and row.get('REG確率', 0) >= sp_r5: matched_hot.append("超不発")
                     if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹")
+                    if "taco_lose" in top_ids and row.get('差枚', 0) <= -1000 and row.get('累計ゲーム', 0) >= 7000: matched_hot.append("タコ粘りお詫び")
                     if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発")
                     if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え")
+                    if "v_recovery" in top_ids and row.get('prev_差枚', 0) < 0 and row.get('差枚', -1) >= 0: matched_hot.append("V字反発")
+                    if "cont_big_lose" in top_ids and row.get('prev_差枚', 0) <= -1000 and row.get('差枚', 0) <= -1000: matched_hot.append("連大凹み")
                     if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え")
                     for tid in top_ids:
                         if tid.startswith("day_") and 'target_date_end_digit' in row:
@@ -351,14 +378,22 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                                 add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗が還元している『{h}』に合致しています。")
                             elif h == "角":
                                 add_reasons.append("【🎯店癖】過去の傾向から、この店舗で設定が入りやすい『角台』に合致しています。")
-                            elif h == "REG先行":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行（不発台）』に合致しています。")
+                            elif h == "BB欠損・不発":
+                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています。")
+                            elif h == "超不発":
+                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています。")
                             elif h == "連凹":
                                 add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています。")
+                            elif h == "タコ粘りお詫び":
+                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています。")
                             elif h == "負反発":
                                 add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています。")
                             elif h == "勝据え":
                                 add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています。")
+                            elif h == "V字反発":
+                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています。")
+                            elif h == "連大凹み":
+                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています。")
                             elif h == "高設定据え":
                                 add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています。")
                                 
@@ -480,27 +515,44 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1%}** です。")
         
         # スマホ対応: 縦に並べる
-        if '日付要素' in df_raw_shop.columns and not df_raw_shop['日付要素'].isnull().all():
-            st.markdown("**🔥 イベント別 平均差枚**")
-            event_summary = df_raw_shop.groupby('日付要素')['差枚'].mean().sort_values(ascending=False)
-            st.bar_chart(event_summary, color="#FF4B4B")
         
-        st.markdown("**📅 曜日別 平均差枚**")
-        viz_df = df_raw_shop.copy()
+        # --- 低回転ノイズの除外 ---
+        # 実態に即した分析を行うため、1000G未満の台（未稼働/即ヤメ）は集計対象（分母）から除外する
+        viz_df = df_raw_shop[df_raw_shop['累計ゲーム'] >= 1000].copy()
+        
+        specs = backend.get_machine_specs()
+        viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
+        spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+        spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+        
+        # 高設定判定（分子）には3000G以上の試行回数を要求し、低回転の上振れを防ぐ
+        viz_df['高設定'] = ((viz_df['累計ゲーム'] >= 3000) & ((viz_df['REG確率'] >= spec_reg) | (viz_df['合算確率'] >= spec_tot))).astype(int)
+
+        chart_metric_shop = st.radio("📊 グラフの表示指標", ["平均差枚", "高設定率"], horizontal=True, key="shop_detail_metric")
+        y_col = "差枚" if chart_metric_shop == "平均差枚" else "高設定"
+        bar_color1 = "#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC"
+        bar_color2 = "#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC"
+
+        if '日付要素' in viz_df.columns and not viz_df['日付要素'].isnull().all():
+            st.markdown(f"**🔥 イベント別 {chart_metric_shop}**")
+            event_summary = viz_df.groupby('日付要素')[y_col].mean().sort_values(ascending=False)
+            st.bar_chart(event_summary, color=bar_color1)
+        
+        st.markdown(f"**📅 曜日別 {chart_metric_shop}**")
         if '曜日' not in viz_df.columns and '対象日付' in viz_df.columns:
             day_map = {'Monday': '月', 'Tuesday': '火', 'Wednesday': '水', 'Thursday': '木', 'Friday': '金', 'Saturday': '土', 'Sunday': '日'}
             viz_df['曜日'] = viz_df['対象日付'].dt.day_name().map(day_map)
         
         if '曜日' in viz_df.columns:
-            weekday_shop_stats = viz_df.groupby('曜日')['差枚'].mean().sort_values(ascending=False)
-            st.bar_chart(weekday_shop_stats, color="#4B4BFF")
+            weekday_shop_stats = viz_df.groupby('曜日')[y_col].mean().sort_values(ascending=False)
+            st.bar_chart(weekday_shop_stats, color=bar_color2)
         
         # --- 月間トレンド分析 (月初・月末) ---
         st.divider()
         st.subheader("🗓️ 月間トレンド (月初・月末の傾向)")
-        st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数です。")
+        st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数や高設定率です。")
         
-        trend_df = df_raw_shop.copy()
+        trend_df = viz_df.copy()
         if '対象日付' in trend_df.columns:
             trend_df['day'] = trend_df['対象日付'].dt.day
             
@@ -510,7 +562,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                 else: return '中旬 (8-24日)'
             
             trend_df['period'] = trend_df['day'].apply(classify_period)
-            period_stats = trend_df.groupby('period')['差枚'].mean()
+            period_stats = trend_df.groupby('period')[y_col].mean()
             
             # スマホ対応: 少し狭いがmetricは自動調整されるのでそのまま
             m1, m2, m3 = st.columns(3)
@@ -518,9 +570,14 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             val_mid = period_stats.get('中旬 (8-24日)', 0)
             val_end = period_stats.get('月末 (25日-)', 0)
             
-            m1.metric("🌙 月初 (1-7)", f"{int(val_start):+d} 枚")
-            m2.metric("☀️ 中旬 (8-24)", f"{int(val_mid):+d} 枚")
-            m3.metric("🌑 月末 (25-)", f"{int(val_end):+d} 枚")
+            if chart_metric_shop == "平均差枚":
+                m1.metric("🌙 月初 (1-7)", f"{int(val_start):+d} 枚")
+                m2.metric("☀️ 中旬 (8-24)", f"{int(val_mid):+d} 枚")
+                m3.metric("🌑 月末 (25-)", f"{int(val_end):+d} 枚")
+            else:
+                m1.metric("🌙 月初 (1-7)", f"{val_start:.1%}")
+                m2.metric("☀️ 中旬 (8-24)", f"{val_mid:.1%}")
+                m3.metric("🌑 月末 (25-)", f"{val_end:.1%}")
             
             st.markdown("👇 **期間を選択すると、その期間に強い機種が表示されます**")
             selected_period = st.radio("期間選択", ['月初 (1-7日)', '中旬 (8-24日)', '月末 (25日-)'], horizontal=True, label_visibility="collapsed")
@@ -530,13 +587,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                 if not period_df.empty:
                     st.markdown(f"🎰 **{selected_period} の機種別ランキング**")
                     
-                    specs = backend.get_machine_specs()
-                    period_df = trend_df[trend_df['period'] == selected_period].copy()
-                    period_df['合算確率'] = (period_df['BIG'] + period_df['REG']) / period_df['累計ゲーム'].replace(0, np.nan)
-                    spec_reg = period_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-                    spec_tot = period_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                    period_df['高設定'] = ((period_df['REG確率'] >= spec_reg) | (period_df['合算確率'] >= spec_tot)).astype(int)
-
                     machine_rank = period_df.groupby('機種名').agg(
                         平均差枚=('差枚', 'mean'),
                         高設定率=('高設定', 'mean'),
@@ -565,7 +615,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                         ).sort_index().reset_index()
                         digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
                         
-                        st.bar_chart(digit_rank['平均差枚'], color="#29b6f6")
+                        st.bar_chart(digit_rank.set_index('末尾番号')[y_col], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#AB47BC")
                         st.dataframe(
                             digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300),
                             column_config={
@@ -576,10 +626,57 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                             },
                             use_container_width=True
                         )
+                        
+                    st.markdown(f"📅 **{selected_period} の曜日別傾向**")
+                    if '曜日' in period_df.columns:
+                        wd_rank = period_df.groupby('曜日').agg(
+                            平均差枚=('差枚', 'mean'),
+                            高設定率=('高設定', 'mean'),
+                            サンプル数=('差枚', 'count')
+                        ).reset_index()
+                        day_order = {'月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6, '日': 7}
+                        wd_rank['sort'] = wd_rank['曜日'].map(day_order).fillna(99)
+                        wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
+                        wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
+                        
+                        st.bar_chart(wd_rank.set_index('曜日')[y_col], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                        st.dataframe(
+                            wd_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300),
+                            column_config={
+                                "平均差枚": st.column_config.NumberColumn(format="%+d 枚"),
+                                "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
+                                "サンプル数": st.column_config.NumberColumn(format="%d 件"),
+                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
 
-            st.markdown("**📅 日付別 平均差枚推移**")
-            day_stats = trend_df.groupby('day')['差枚'].mean()
-            st.bar_chart(day_stats, color="#00E676")
+                    if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
+                        st.markdown(f"🔥 **{selected_period} のイベント別傾向**")
+                        ev_rank = period_df.groupby('日付要素').agg(
+                            平均差枚=('差枚', 'mean'),
+                            高設定率=('高設定', 'mean'),
+                            サンプル数=('差枚', 'count')
+                        ).reset_index().sort_values(y_col, ascending=False)
+                        ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
+                        
+                        st.bar_chart(ev_rank.set_index('日付要素')[y_col], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                        st.dataframe(
+                            ev_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300),
+                            column_config={
+                                "平均差枚": st.column_config.NumberColumn(format="%+d 枚"),
+                                "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
+                                "サンプル数": st.column_config.NumberColumn(format="%d 件"),
+                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+
+            st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
+            day_stats = trend_df.groupby('day')[y_col].mean()
+            st.bar_chart(day_stats, color="#00E676" if chart_metric_shop == "平均差枚" else "#AB47BC")
 
     # --- 視覚化: 機種ごとの分析 ---
     st.divider()

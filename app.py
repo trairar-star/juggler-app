@@ -101,6 +101,10 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
             if trend_df.empty:
                 st.warning("指定した条件に一致するデータがありません。")
             else:
+                # --- 低回転ノイズの除外 ---
+                # 分母が膨らんで確率が下がるのを防ぐため、1000G未満の未稼働・即ヤメ台は集計から除外する
+                trend_df = trend_df[trend_df['累計ゲーム'] >= 1000].copy()
+                
                 trend_df['年月'] = trend_df['対象日付'].dt.strftime('%Y-%m')
                 
                 # 機種別の設定5基準(REGまたは合算)で高設定挙動を定義
@@ -108,7 +112,9 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
                 spec_reg = trend_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
                 spec_tot = trend_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
                 trend_df['合算確率'] = (trend_df['BIG'] + trend_df['REG']) / trend_df['累計ゲーム'].replace(0, np.nan)
-                trend_df['高設定'] = ((trend_df['REG確率'] >= spec_reg) | (trend_df['合算確率'] >= spec_tot)).astype(int)
+                
+                # 高設定の判定には「3000G以上回っていること」を条件に加え、低回転での上振れノイズを排除
+                trend_df['高設定'] = ((trend_df['累計ゲーム'] >= 3000) & ((trend_df['REG確率'] >= spec_reg) | (trend_df['合算確率'] >= spec_tot))).astype(int)
 
                 trend_stats = trend_df.groupby(['年月', shop_col]).agg(
                     高設定投入率=('高設定', 'mean'),
@@ -523,6 +529,53 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     # --- 2. 確率帯別 精度分析 ---
     st.subheader("📈 確率帯別 精度分析")
     if 'prediction_score' in merged_df.columns:
+        # --- 期待度スコアのヒストグラム ---
+        st.markdown("**📊 期待度スコア (予測スコア) の分布と正解率**")
+        
+        # 5%刻みの代表値(左端)に丸めて集計
+        merged_df['score_bin_left'] = (merged_df['prediction_score'] // 0.05) * 0.05
+        hist_stats = merged_df.groupby('score_bin_left').agg(
+            count=('台番号', 'count'),
+            high_setting_rate=('is_high_setting', 'mean')
+        ).reset_index()
+        
+        base_hist = alt.Chart(hist_stats).encode(
+            x=alt.X('score_bin_left:O', title='AI期待度 (5%刻み)', axis=alt.Axis(format='%'))
+        )
+        bar_hist = base_hist.mark_bar(color='#42A5F5', opacity=0.8).encode(
+            y=alt.Y('count:Q', title='検証台数'),
+            tooltip=[alt.Tooltip('score_bin_left:Q', format='.0%', title='スコア帯(下限)'), alt.Tooltip('count:Q', title='台数')]
+        )
+        line_hist = base_hist.mark_line(color='#FF7043', point=True, strokeWidth=3).encode(
+            y=alt.Y('high_setting_rate:Q', title='実際の高設定率', axis=alt.Axis(format='%')),
+            tooltip=[alt.Tooltip('score_bin_left:Q', format='.0%', title='スコア帯(下限)'), alt.Tooltip('high_setting_rate:Q', format='.1%', title='実際の高設定率')]
+        )
+        st.altair_chart(alt.layer(bar_hist, line_hist).resolve_scale(y='independent').properties(height=300), use_container_width=True)
+
+        # AIチューニングアドバイス
+        score_mean = merged_df['prediction_score'].mean()
+        high_score_df = merged_df[merged_df['prediction_score'] >= 0.70]
+        high_score_accuracy = high_score_df['is_high_setting'].mean() if not high_score_df.empty else 0
+        
+        advices = []
+        if score_mean > high_setting_rate + 0.15:
+            advices.append("全体的にAIの評価が**甘すぎ（期待度が高すぎ）**る傾向があります。棒グラフが右側に寄りすぎている場合、サイドバーの `葉の数 (num_leaves)` を下げる（例: 10〜12）か、`学習率` を下げてより厳格に学習させてみてください。")
+        elif score_mean < high_setting_rate - 0.15:
+            advices.append("全体的にAIの評価が**慎重すぎ（期待度が低すぎ）**る傾向があります。グラフが左側に偏っている場合、サイドバーの `学習回数 (n_estimators)` を増やす（例: 400〜500）か、`葉の数` を少し上げて、パターンをより多く覚えさせてみてください。")
+            
+        if not high_score_df.empty and high_score_accuracy < 0.40:
+            advices.append("期待度70%以上の台（本来のおすすめ台）の**正解率が低く、過学習（たまたまのノイズを必勝法と勘違い）**を起こしている可能性があります。`深さ制限 (max_depth)` を 3 などに下げて、シンプルな条件だけを覚えさせてみてください。")
+        elif not high_score_df.empty and high_score_accuracy > 0.60:
+            advices.append("期待度70%以上の台の正解率が非常に高く、**高評価の台はしっかり結果を出せています**。折れ線グラフが右肩上がりになっていれば大成功です！")
+            
+        if not advices or (len(advices) == 1 and "大成功" in advices[0]):
+            advices.append("期待度と実際の高設定率のバランスが取れており、**現在のパラメータ設定は非常に良好**です！この設定のまま運用を続けることをおすすめします。")
+
+        with st.expander("🤖 ヒストグラムから見る AI チューニングアドバイス", expanded=True):
+            st.markdown("分布の偏りと実際の正解率（折れ線グラフ）のズレを分析した結果、以下の設定調整をおすすめします：")
+            for adv in advices:
+                st.markdown(f"- {adv}")
+
         def get_prob_band(score):
             if score >= 0.85: return '85%以上'
             elif score >= 0.70: return '70%〜84%'
@@ -708,9 +761,16 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.divider()
     st.subheader("📝 全履歴データ (バックテスト結果)")
     
-    # display_dfは上で作成済み
+    band_options = ['すべて', '85%以上', '70%〜84%', '50%〜69%', '30%〜49%', '30%未満']
+    selected_band = st.selectbox("表示する期待度（確率帯）を選択", band_options, index=0)
+    
+    history_display_df = display_df.copy()
+    if selected_band != 'すべて':
+        if '確率帯' in history_display_df.columns:
+            history_display_df = history_display_df[history_display_df['確率帯'] == selected_band]
+
     st.dataframe(
-        display_df[cols],
+        history_display_df[cols],
         column_config=config_dict,
         use_container_width=True,
         hide_index=True
@@ -718,11 +778,31 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
 # --- ページ描画関数: AI学習データ分析 (勝利の法則) ---
 def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
+    st.header("🔬 AI学習データ分析 (勝利の法則)")
+    
     base_analysis_df = df_train.copy()
 
     if base_analysis_df.empty:
         st.warning("分析可能な過去データがありません。")
         return
+        
+    # --- データ期間フィルター ---
+    if '対象日付' in base_analysis_df.columns:
+        max_date = base_analysis_df['対象日付'].max()
+        
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            selected_months = st.slider("📅 分析対象の期間 (直近〇ヶ月)", min_value=1, max_value=12, value=12, help="サイドバーの「AIモデル設定」で指定された学習データ期間の範囲内で、さらに期間を絞り込んで傾向を分析できます。")
+            
+        cutoff_date = max_date - pd.DateOffset(months=selected_months)
+        base_analysis_df = base_analysis_df[base_analysis_df['対象日付'] >= cutoff_date]
+        
+        if base_analysis_df.empty:
+            st.warning("指定された期間のデータがありません。")
+            return
+            
+        actual_min_date = base_analysis_df['対象日付'].min()
+        st.info(f"📅 **現在の集計期間**: {actual_min_date.strftime('%Y-%m-%d')} 〜 {max_date.strftime('%Y-%m-%d')} (対象: {len(base_analysis_df):,}件)\n\n※大元のデータ上限は、サイドバーの「⚙️ AIモデル設定」の学習データ期間に依存します。")
     
     # --- 店舗フィルター ---
     shop_col = '店名' if '店名' in base_analysis_df.columns else ('店舗名' if '店舗名' in base_analysis_df.columns else None)
@@ -733,11 +813,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
 
     if selected_shop == '全店舗':
         analysis_df = base_analysis_df.copy()
-        st.header("🔬 AI学習データ分析 (勝利の法則) - 全店舗")
         st.caption("過去の全データから、「翌日高設定挙動になった台」の傾向を分析し、高設定が入りやすい台の特徴を可視化します。")
     else:
         analysis_df = base_analysis_df[base_analysis_df[shop_col] == selected_shop].copy()
-        st.header(f"🔬 AI学習データ分析 (勝利の法則) - {selected_shop}")
         st.caption(f"【{selected_shop}】の過去データから、この店で高設定が入りやすい台の特徴を可視化します。")
 
     if analysis_df.empty:
@@ -970,19 +1048,41 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
     st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、スロット特有のパターンの翌日の成績を調査します。")
 
     if not reg_df.empty:
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃"])
+        chart_metric = st.radio("📊 グラフの表示指標", ["平均翌日差枚", "翌日高設定率"], horizontal=True)
+        y_field = "平均翌日差枚" if chart_metric == "平均翌日差枚" else "翌日高設定率"
+        y_title = "平均翌日差枚 (枚)" if chart_metric == "平均翌日差枚" else "翌日高設定率"
+        y_format = "" if chart_metric == "平均翌日差枚" else "%"
+        y_axis = alt.Axis(format=y_format, title=y_title) if y_format else alt.Axis(title=y_title)
+        color_cond = alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")) if chart_metric == "平均翌日差枚" else alt.value("#AB47BC")
+
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃", "BB極端欠損"])
         
         with tab1:
-            if 'BIG' in reg_df.columns and 'REG' in reg_df.columns:
+            if 'BIG' in reg_df.columns and 'REG' in reg_df.columns and 'REG確率' in reg_df.columns and 'BIG確率' in reg_df.columns:
                 reg_lead_df = reg_df.copy()
+                specs = backend.get_machine_specs()
+                
+                reg_lead_df['spec_reg_5'] = reg_lead_df['機種名'].apply(
+                    lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"]
+                )
+                reg_lead_df['spec_big_5'] = reg_lead_df['機種名'].apply(
+                    lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"BIG": 260.0})["BIG"]
+                )
+                
                 def classify_reg_lead(row):
                     if row['REG'] > row['BIG']:
-                        if row.get('is_win', 0) == 1:
-                            return "REG先行 & 機種別高設定基準クリア (高設定不発候補)"
+                        if row.get('REG確率', 0) >= row.get('spec_reg_5', 1/260.0):
+                            if row.get('差枚', 0) <= 0:
+                                return "① REG先行 & 差枚マイナス (BB欠損・完全不発)"
+                            else:
+                                return "② REG先行 & 差枚プラス (チョイ浮き)"
                         else:
-                            return "REG先行 & 基準未達"
+                            return "③ REG先行 & REG確率不足 (低設定の偏り)"
                     else:
-                        return "BIG先行 または 同数"
+                        if row.get('BIG確率', 0) >= row.get('spec_big_5', 1/260.0):
+                            return "④ BIG先行/同数 & BIG設定5以上 (BIGヒキ強)"
+                        else:
+                            return "⑤ BIG先行/同数 & BIG確率不足 (マグレ吹き/低設定)"
                 
                 reg_lead_df['REG先行分類'] = reg_lead_df.apply(classify_reg_lead, axis=1)
                 
@@ -994,22 +1094,32 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
 
                 rl_stats['信頼度'] = rl_stats['サンプル数'].apply(get_confidence_indicator)
                 
-                st.dataframe(
-                    rl_stats,
-                    column_config={
-                        "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                        "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
+                col_rl1, col_rl2 = st.columns([1, 1.2])
+                with col_rl1:
+                    st.dataframe(
+                        rl_stats,
+                        column_config={
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_rl2:
+                    chart_rl = alt.Chart(rl_stats).mark_bar().encode(
+                        x=alt.X('REG先行分類', title='REG先行の分類'),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
+                        tooltip=['REG先行分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_rl, use_container_width=True)
 
-                if shop_col:
+                if shop_col and selected_shop == '全店舗':
                     st.divider()
-                    st.markdown("**🏬 店舗別: 高設定不発候補 (REG先行&高設定基準) の翌日成績**")
+                    st.markdown("**🏬 店舗別: 完全不発台 (REG先行&BB欠損マイナス) の翌日成績**")
                     st.caption("このパターンが発生したとき、どの店舗が一番底上げ（上げ狙い成功）しやすいかを比較します。")
-                    target_reg_df = reg_lead_df[reg_lead_df['REG先行分類'] == "REG先行 & 機種別高設定基準クリア (高設定不発候補)"]
+                    target_reg_df = reg_lead_df[reg_lead_df['REG先行分類'] == "① REG先行 & 差枚マイナス (BB欠損・完全不発)"]
                     if not target_reg_df.empty:
                         shop_reg_stats = target_reg_df.groupby(shop_col).agg(
                             翌日高設定率=('target', 'mean'),
@@ -1029,6 +1139,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                             hide_index=True,
                             use_container_width=True
                         )
+                    else:
+                        st.info("現在、該当するパターンのデータはありません。")
             else:
                 st.info("BIG/REG回数のデータがありません。")
 
@@ -1069,13 +1181,13 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
             with col_dp2:
                 chart_dp = alt.Chart(dp_stats).mark_bar().encode(
                     x=alt.X('前日結果', title='前日差枚'),
-                    y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
-                    color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                    y=alt.Y(y_field, axis=y_axis),
+                    color=color_cond,
                     tooltip=['前日結果', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                 ).interactive()
                 st.altair_chart(chart_dp, use_container_width=True)
 
-            if shop_col:
+            if shop_col and selected_shop == '全店舗':
                 st.divider()
                 st.markdown("**🏬 店舗別: パターン別翌日成績の比較**")
                 
@@ -1107,6 +1219,78 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                         hide_index=True,
                         use_container_width=True
                     )
+                else:
+                    st.info("現在、該当するパターンのデータはありません。")
+
+            st.divider()
+            st.markdown("**📉 大凹み台の「総ゲーム数」別 反発期待度**")
+            st.caption("前日大きく凹んだ(-1000枚以下)台について、あまり回されずに放置された台と、タコ粘りされて凹んだ台で翌日の反発(上げ)期待度がどう違うか検証します。")
+            
+            big_lose_df = diff_pat_df[diff_pat_df['差枚'] <= -1000].copy()
+            if not big_lose_df.empty:
+                g_bins2 = [0, 3000, 5000, 7000, 15000]
+                g_labels2 = ['① ~3000G (放置)', '② 3000~5000G', '③ 5000~7000G', '④ 7000G~ (タコ粘り)']
+                
+                big_lose_df['G数区間'] = pd.cut(big_lose_df['累計ゲーム'], bins=g_bins2, labels=g_labels2)
+                
+                bl_stats = big_lose_df.groupby('G数区間', observed=True).agg(
+                    翌日高設定率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index()
+                bl_stats['信頼度'] = bl_stats['サンプル数'].apply(get_confidence_indicator)
+                
+                col_bl1, col_bl2 = st.columns([1, 1.2])
+                with col_bl1:
+                    st.dataframe(
+                        bl_stats,
+                        column_config={
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_bl2:
+                    chart_bl = alt.Chart(bl_stats).mark_bar().encode(
+                        x=alt.X('G数区間', title='前日の総ゲーム数'),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
+                        tooltip=['G数区間', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_bl, use_container_width=True)
+                
+                if shop_col and selected_shop == '全店舗':
+                    st.divider()
+                    st.markdown("**🏬 店舗別: タコ粘り大凹み台 (7000G~ & -1000枚以下) の翌日成績**")
+                    st.caption("たくさん回されて大きく負けた台に対して、翌日しっかり「お詫び（上げ・据え置き）」をしてくれる店舗を比較します。")
+                    
+                    target_bl_df = big_lose_df[big_lose_df['G数区間'] == '④ 7000G~ (タコ粘り)']
+                    if not target_bl_df.empty:
+                        shop_bl_stats = target_bl_df.groupby(shop_col).agg(
+                            翌日高設定率=('target', 'mean'),
+                            平均翌日差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index().sort_values('翌日高設定率', ascending=False)
+                        shop_bl_stats['信頼度'] = shop_bl_stats['サンプル数'].apply(get_confidence_indicator)
+                        
+                        st.dataframe(
+                            shop_bl_stats,
+                            column_config={
+                                shop_col: st.column_config.TextColumn("店舗名"),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("現在、該当するパターンのデータはありません。")
+            else:
+                st.info("大凹み（-1000枚以下）のデータがありません。")
 
         with tab3:
             st.markdown("**🔍 2日間の差枚トレンド (連勝・連敗・V字回復)**")
@@ -1158,13 +1342,13 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                 with col_t2:
                     chart_t2 = alt.Chart(t2_stats).mark_bar().encode(
                         x=alt.X('2日間トレンド', title='2日間の成績パターン'),
-                        y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
-                        color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
                         tooltip=['2日間トレンド', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_t2, use_container_width=True)
 
-                if shop_col:
+                if shop_col and selected_shop == '全店舗':
                     st.divider()
                     st.markdown("**🏬 店舗別: 2日間トレンド別 翌日成績の比較**")
                     
@@ -1197,6 +1381,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                             hide_index=True,
                             use_container_width=True
                         )
+                    else:
+                        st.info("現在、該当するパターンのデータはありません。")
             else:
                 st.info("前々日の差枚データが不足しています。")
 
@@ -1225,18 +1411,28 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                 ).reset_index().sort_values('マイナス継続状況')
                 r_stats['信頼度'] = r_stats['サンプル数'].apply(get_confidence_indicator)
                 
-                st.dataframe(
-                    r_stats,
-                    column_config={
-                        "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                        "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
+                col_r1, col_r2 = st.columns([1, 1.2])
+                with col_r1:
+                    st.dataframe(
+                        r_stats,
+                        column_config={
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_r2:
+                    chart_r = alt.Chart(r_stats).mark_bar().encode(
+                        x=alt.X('マイナス継続状況', title='マイナス継続状況'),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
+                        tooltip=['マイナス継続状況', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_r, use_container_width=True)
 
-                if shop_col:
+                if shop_col and selected_shop == '全店舗':
                     st.divider()
                     st.markdown("**🏬 店舗別: 3日以上連続マイナス台の『上げリセット期待度』**")
                     
@@ -1313,13 +1509,13 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                 with col_s2:
                     chart_stab = alt.Chart(stab_stats).mark_bar().encode(
                         x=alt.X('安定度分類', title='台の性質'),
-                        y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
-                        color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
                         tooltip=['安定度分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_stab, use_container_width=True)
 
-                if shop_col:
+                if shop_col and selected_shop == '全店舗':
                     st.divider()
                     st.markdown("**🏬 店舗別: 「一撃・荒波台」の翌日成績（据え置きか回収か）**")
                     st.caption("一撃で出た台をそのまま据え置く店か、しっかり回収する店かを比較します。")
@@ -1349,6 +1545,92 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                         st.info("該当するデータがありません。")
             else:
                 st.info("週間勝率や平均差枚のデータがありません。")
+
+        with tab6:
+            st.markdown("**🔍 BIG極端欠損台の反発期待度**")
+            st.caption("BIG確率が極端に悪い（1/400以下など）台が、翌日どうなるか（反発するか、そのまま放置か）を検証します。")
+            
+            if 'BIG確率' in reg_df.columns and 'REG確率' in reg_df.columns:
+                bb_def_df = reg_df.copy()
+                specs = backend.get_machine_specs()
+                
+                bb_def_df['spec_reg_5'] = bb_def_df['機種名'].apply(
+                    lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"]
+                )
+                bb_def_df['BIG分母'] = bb_def_df['BIG確率'].apply(lambda x: 1/x if x > 0 else 9999)
+                
+                def classify_bb_deficit(row):
+                    if row['BIG分母'] >= 400:
+                        if row.get('REG確率', 0) >= row.get('spec_reg_5', 1/260.0):
+                            return "① BIG 1/400以下 & REGは高設定基準 (超不発台)"
+                        else:
+                            return "② BIG 1/400以下 & REGも基準未達 (低設定の極み)"
+                    elif row['BIG分母'] >= 300:
+                        return "③ BIG 1/300〜1/400 (やや不発)"
+                    else:
+                        return "④ BIG 1/300より良い (欠損なし)"
+                
+                bb_def_df['BB欠損分類'] = bb_def_df.apply(classify_bb_deficit, axis=1)
+                
+                bb_stats = bb_def_df.groupby('BB欠損分類').agg(
+                    翌日高設定率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('BB欠損分類')
+                
+                bb_stats['信頼度'] = bb_stats['サンプル数'].apply(get_confidence_indicator)
+                
+                col_bb1, col_bb2 = st.columns([1, 1.2])
+                with col_bb1:
+                    st.dataframe(
+                        bb_stats,
+                        column_config={
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_bb2:
+                    chart_bb = alt.Chart(bb_stats).mark_bar().encode(
+                        x=alt.X('BB欠損分類', title='BB欠損の度合い'),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
+                        tooltip=['BB欠損分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_bb, use_container_width=True)
+
+                if shop_col and selected_shop == '全店舗':
+                    st.divider()
+                    st.markdown("**🏬 店舗別: 超不発台 (BIG 1/400以下 & REG高設定基準) の翌日成績**")
+                    st.caption("BIGが全く引けなかった高設定挙動台に対して、翌日どの店舗が一番上げ(または据え置き)をしてくれるかを比較します。")
+                    
+                    target_bb_df = bb_def_df[bb_def_df['BB欠損分類'] == "① BIG 1/400以下 & REGは高設定基準 (超不発台)"]
+                    if not target_bb_df.empty:
+                        shop_bb_stats = target_bb_df.groupby(shop_col).agg(
+                            翌日高設定率=('target', 'mean'),
+                            平均翌日差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index().sort_values('平均翌日差枚', ascending=False)
+                        shop_bb_stats['信頼度'] = shop_bb_stats['サンプル数'].apply(get_confidence_indicator)
+                        
+                        st.dataframe(
+                            shop_bb_stats,
+                            column_config={
+                                shop_col: st.column_config.TextColumn("店舗名"),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                    else:
+                        st.info("現在、該当するパターンのデータはありません。")
+            else:
+                st.info("BIG確率のデータがありません。")
 
     # --- 7. 特徴量重要度 (Feature Importance) ---
     if df_importance is not None and not df_importance.empty:
@@ -1968,12 +2250,14 @@ def main():
 
     # --- ハイパーパラメータ調整 (サイドバー) ---
     with st.sidebar.expander("⚙️ AIモデル設定 (調整)", expanded=False):
+        hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, 3, step=1, help="店長スイッチ対策や処理落ちを防ぐため、直近のデータのみで学習させます。")
         hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, 300, step=50, help="値を大きくすると学習量が増えますが、時間がかかり過学習のリスクもあります。")
         hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.03, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
         hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, 15, step=1, help="モデルの複雑さ。スロットのようなノイズが多いデータは小さめ(15〜20)がおすすめです。")
         hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, 4, step=1, help="木の深さの上限。ノイズ対策として3〜7程度に制限するのがおすすめです。-1は無制限。")
         
         hyperparams = {
+            'train_months': hp_train_months,
             'n_estimators': hp_n_estimators,
             'learning_rate': hp_learning_rate,
             'num_leaves': hp_num_leaves,
