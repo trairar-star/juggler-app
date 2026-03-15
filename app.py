@@ -208,8 +208,15 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         return
 
     # --- データ準備 ---
+    if '予測対象日' in df_pred_log.columns:
+        df_pred_log['予測対象日'] = pd.to_datetime(df_pred_log['予測対象日'], errors='coerce')
     df_pred_log['対象日付'] = pd.to_datetime(df_pred_log['対象日付'], errors='coerce')
     
+    if '予測対象日' in df_pred_log.columns:
+        df_pred_log['予測対象日_merge'] = df_pred_log['予測対象日'].fillna(df_pred_log['対象日付'] + pd.Timedelta(days=1))
+    else:
+        df_pred_log['予測対象日_merge'] = df_pred_log['対象日付'] + pd.Timedelta(days=1)
+        
     # 店舗カラム名の統一
     shop_col = '店名' if '店名' in df_verify.columns else ('店舗名' if '店舗名' in df_verify.columns else '店名')
     shop_col_pred = '店名' if '店名' in df_pred_log.columns else '店舗名'
@@ -224,11 +231,16 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     if '台番号' in full_feature_df.columns:
         full_feature_df['台番号'] = full_feature_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
 
+    if 'next_date' in full_feature_df.columns:
+        full_feature_df['予測対象日_merge'] = pd.to_datetime(full_feature_df['next_date'], errors='coerce')
+    else:
+        full_feature_df['予測対象日_merge'] = pd.to_datetime(full_feature_df['対象日付'], errors='coerce') + pd.Timedelta(days=1)
+
     # 保存ログをベースに左外部結合（データ落ち防止）
     base_df = pd.merge(
         df_pred_log,
         full_feature_df,
-        on=['対象日付', shop_col, '台番号'],
+        on=['予測対象日_merge', shop_col, '台番号'],
         how='left',
         suffixes=('_saved', '_current')
     )
@@ -236,6 +248,15 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     if base_df.empty:
         st.info("保存された予測に対して、まだ結果データ（翌日の稼働データ）が登録されていないか、一致するデータがありません。")
         return
+        
+    # 古いログのフォールバック用に元の対象日付を保存
+    if '対象日付_saved' in base_df.columns:
+        base_df['予測ベース日'] = base_df['対象日付_saved']
+    elif '対象日付' in base_df.columns:
+        base_df['予測ベース日'] = base_df['対象日付']
+        
+    # 以降の集計や表示のために対象日付を予測対象日に上書きする
+    base_df['対象日付'] = base_df['予測対象日_merge']
 
     # 保存当時のスコアと予測結果を使用
     if 'prediction_score_saved' in base_df.columns:
@@ -267,22 +288,28 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
     def get_actual_result(row):
         shop = row.get(shop_col)
-        base_date = row.get('対象日付')
+        target_date = row.get('対象日付') # 予測対象日に上書き済み
+        base_date = row.get('予測ベース日') # 古いログのフォールバック用
         machine_no = row.get('台番号')
         
-        next_date = pd.NaT
-        if shop in shop_operating_dates and pd.notna(base_date):
+        actual_date = pd.NaT
+        if pd.notna(target_date) and shop in shop_operating_dates:
+            for d in shop_operating_dates[shop]:
+                if d >= target_date:
+                    actual_date = d
+                    break
+        elif pd.notna(base_date) and shop in shop_operating_dates:
             for d in shop_operating_dates[shop]:
                 if d > base_date:
-                    next_date = d
+                    actual_date = d
                     break
                     
-        if pd.isna(next_date) or df_raw_temp.empty:
+        if pd.isna(actual_date) or df_raw_temp.empty:
             return pd.Series([np.nan, np.nan, np.nan, np.nan])
             
         target_row = df_raw_temp[
             (df_raw_temp[shop_col] == shop) & 
-            (df_raw_temp['対象日付'] == next_date) & 
+            (df_raw_temp['対象日付'] == actual_date) & 
             (df_raw_temp['台番号'] == machine_no)
         ]
         
@@ -405,10 +432,18 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         
         st.altair_chart(pie_chart, use_container_width=True)
 
+    # 日別推移データをAI評価より先に計算する
+    daily_stats = merged_df.groupby('対象日付').agg(
+        high_setting_rate=('is_high_setting', 'mean'),
+        total_profit=('差枚_actual', 'sum'),
+        avg_s5_score=('設定5近似度', 'mean'),
+        count=('台番号', 'count')
+    ).reset_index().sort_values('対象日付')
+
     # --- AI振り返りレポート ---
     st.divider()
-    st.subheader("🤖 AIの振り返りレポート (設定5近似度の精査)")
-    st.caption("予測した台が、結果的に「設定5の確率」でBIG/REGを引けていたかを100点満点で評価し、AI自身が分析します。")
+    st.subheader("🤖 AIの振り返りレポート (過去の自分との比較)")
+    st.caption("最新の予測結果（設定5近似度）を過去の平均的なパフォーマンスと比較し、AIが自身の成長や調子を分析します。")
     
     avg_s5_score = merged_df['設定5近似度'].mean()
     avg_g = merged_df['結果_累計ゲーム'].mean()
@@ -420,38 +455,69 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     low_rel_rate = low_rel_count / total_count if total_count > 0 else 0
     comment_prefix = ""
     if total_count < 5:
-        comment_prefix = f"⚠️ **【検証台数不足】** 今回答え合わせの対象となった推奨台が **{total_count}台** と少ないため、たまたまのヒキ（上振れ・下振れ）の影響を強く受けています。点数は参考程度にご覧ください。\n\n"
+        comment_prefix = f"⚠️ **【検証台数不足】** 今回対象となった推奨台が **{total_count}台** と少ないため、たまたまのヒキの影響を強く受けています。点数は参考程度にご覧ください。\n\n"
     elif low_rel_rate >= 0.5:
-        comment_prefix = f"⚠️ **【学習データ不足】** 今回の推奨台は、過去の稼働日数が少ない（予測信頼度：🔻低）台が半数以上を占めています。AIが店舗の傾向を完全に把握しきれていない状態での予測結果となっています。\n\n"
+        comment_prefix = f"⚠️ **【学習データ不足】** 今回の推奨台は過去データが少ない台が多いため、傾向を完全に把握しきれていません。\n\n"
 
+    # 全体評価（期間全体の総評）
     if pd.isna(avg_g) or avg_g < 2000:
-        comment = f"私が推奨した台の翌日平均回転数は **{int(avg_g if not pd.isna(avg_g) else 0)}G** でした。全体的にあまり回されておらず、設定の答え合わせが難しい状態です。もっと稼働がある店舗やイベント日を狙うと精度が上がるかもしれません！"
+        overall_comment = f"全体として推奨台の平均回転数が **{int(avg_g if not pd.isna(avg_g) else 0)}G** と少なく、試行回数不足です。もう少し稼働がある状況で検証したいですね。"
         mood = "🤔"
     elif avg_s5_score >= 80:
-        comment = f"【大成功！】私が予測した台の『設定5近似度（理論値との合致度）』は平均 **{avg_s5_score:.1f}点 (100点満点)** でした！REG回数も設定5の期待値をしっかり満たしており、本物の高設定を的確に見抜けています！"
+        overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と大成功レベルです！本物の高設定を的確に見抜けています！"
         mood = "🌟"
     elif avg_s5_score >= 60:
         if avg_diff_r < 0:
-            comment = f"【まずまずの精度】設定5近似度は平均 **{avg_s5_score:.1f}点** でした。勝率は悪くないですが、REG回数が設定5の期待値に対して平均 **{abs(avg_diff_r):.1f}回** 足りていません。低〜中間設定のヒキ強に助けられている部分もありそうです。"
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** でまずまずですが、REGが平均 {abs(avg_diff_r):.1f}回 不足しています。低〜中間設定の上振れに助けられている部分もありそうです。"
         else:
-            comment = f"【優秀な結果】設定5近似度は平均 **{avg_s5_score:.1f}点** でした！差枚だけでなく、中身（REG確率）も高設定らしい挙動を示している台が多く、予測はしっかり機能しています。"
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** で優秀です！中身もしっかり高設定挙動を示しています。"
         mood = "👍"
     elif avg_s5_score >= 40:
         if avg_g < 4000:
-            comment = f"【惜しい結果】設定5近似度は平均 **{avg_s5_score:.1f}点** でした。ボーナス回数が理論値に少し届いていませんが、平均回転数が **{int(avg_g)}G** とまだ少ないため、試行回数不足で下振れした可能性も十分にあります。もう少し回されていれば結果は変わったかもしれません。"
-            mood = "😅"
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と惜しい結果です。平均回転数が {int(avg_g)}G と少なめなので、下振れの可能性もあります。"
         else:
-            comment = f"【反省点あり】設定5近似度は平均 **{avg_s5_score:.1f}点** でした。十分な回転数（平均 **{int(avg_g)}G**）がある中でボーナス回数が設定5の理論値に届いておらず、中身は「低〜中間設定」っぽい挙動が目立ちます。店選びやイベント日を見直す余地があります。"
-            mood = "💦"
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と反省点が残ります。低〜中間設定が混ざっている可能性が高いです。"
+        mood = "💦"
     else:
-        if avg_g < 3000:
-            comment = f"【判断が難しい結果】設定5近似度は平均 **{avg_s5_score:.1f}点** と低めですが、平均回転数が **{int(avg_g)}G** と少なく、試行回数不足による極端な下振れを引いた可能性が高いです。この回転数だけで「予測が完全に外れた」と判断するのは早計かもしれません。"
-            mood = "🤔"
-        else:
-            comment = f"【大反省…】設定5近似度は平均 **{avg_s5_score:.1f}点** と惨敗です…。十分回された上で推奨台が軒並み低設定挙動になってしまいました。過去の傾向が変わった（据え置きしなくなった等）可能性が高いので、最近のデータで学習し直すか、この店舗は警戒したほうが良いです。"
-            mood = "😭"
+        overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と惨敗です…。過去の傾向が変わった可能性があるので、最近のデータで学習し直すか、店選びを見直す余地があります。"
+        mood = "😭"
 
-    st.info(f"{comment_prefix}{mood} **AIコメント:**\n\n{comment}\n\n※REG過不足: 平均 **{avg_diff_r:+.1f}回** / BIG過不足: 平均 **{avg_diff_b:+.1f}回**")
+    # 過去の自分との比較ロジック
+    has_comparison = False
+    if len(daily_stats) >= 2:
+        latest_date = daily_stats['対象日付'].max()
+        latest_stat = daily_stats.iloc[-1]
+        past_stats = daily_stats.iloc[:-1]
+        
+        # 直近の過去平均（最大14日分）を「最近の実力」とする
+        recent_past = past_stats.tail(14)
+        past_avg_score = recent_past['avg_s5_score'].mean()
+        
+        latest_score = latest_stat['avg_s5_score']
+        score_diff = latest_score - past_avg_score
+        
+        has_comparison = True
+        latest_date_str = latest_date.strftime('%m/%d')
+        
+        if latest_stat['count'] < 5:
+             comparison_comment = f"最新 ({latest_date_str}) の設定5近似度は **{latest_score:.1f}点** でした。直近の平均 ({past_avg_score:.1f}点) と比較したいところですが、検証台数が{int(latest_stat['count'])}台と少ないため、たまたまのブレが大きい可能性があります。"
+             mood_cmp = "🤔"
+        elif score_diff >= 5:
+             comparison_comment = f"最新 ({latest_date_str}) の設定5近似度は **{latest_score:.1f}点** でした！直近の平均 ({past_avg_score:.1f}点) より **{score_diff:+.1f}点** も向上しており、予測精度が上がっています！日々学習して賢くなっているのを感じますね！"
+             mood_cmp = "📈"
+        elif score_diff <= -5:
+             comparison_comment = f"最新 ({latest_date_str}) の設定5近似度は **{latest_score:.1f}点** でした…。直近の平均 ({past_avg_score:.1f}点) より **{score_diff:+.1f}点** 下がっています。少し調子を落としているか、お店の設定配分のクセが変わった（フェイクが増えた等）可能性があります。"
+             mood_cmp = "📉"
+        else:
+             comparison_comment = f"最新 ({latest_date_str}) の設定5近似度は **{latest_score:.1f}点** でした。直近の平均 ({past_avg_score:.1f}点) とほぼ同水準をキープしており、安定した予測ができています。"
+             mood_cmp = "⚖️"
+
+    if has_comparison:
+        final_comment = f"{mood_cmp} **最近の調子 (過去の自分との比較):**\n{comparison_comment}\n\n{mood} **全体の総評:**\n{overall_comment}"
+    else:
+        final_comment = f"{mood} **全体の総評:**\n{overall_comment}\n\n※比較対象となる過去の推移データが不足しています。"
+
+    st.info(f"{comment_prefix}{final_comment}\n\n※全体平均 REG過不足: **{avg_diff_r:+.1f}回** / BIG過不足: **{avg_diff_b:+.1f}回**")
     
     # --- 特に優秀だった台トップ3 ---
     if not merged_df.empty:
@@ -473,19 +539,12 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     # --- 2. 時系列推移 (勝率 & 収支) ---
     st.subheader("📈 日別の推移")
     
-    daily_stats = merged_df.groupby('対象日付').agg(
-        high_setting_rate=('is_high_setting', 'mean'),
-        total_profit=('差枚_actual', 'sum'),
-        avg_s5_score=('設定5近似度', 'mean'),
-        count=('台番号', 'count')
-    ).reset_index()
-    
     if not daily_stats.empty:
         daily_stats['date_str'] = daily_stats['対象日付'].dt.strftime('%m/%d')
         
         tab_prof, tab_s5, tab_ver = st.tabs(["💰 高設定率・収支推移", "🎯 設定5近似度 推移", "📅 予測保存日ごとの精度推移"])
         with tab_prof:
-            base_chart = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='対象日付', sort=None))
+            base_chart = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='予測対象日', sort=None))
             bar_chart = base_chart.mark_bar(opacity=0.6).encode(
                 y=alt.Y('total_profit', title='日別収支 (枚)'), color=alt.condition(alt.datum.total_profit > 0, alt.value("#FF4B4B"), alt.value("#4B4BFF")), tooltip=['date_str', alt.Tooltip('total_profit', format='+d'), 'count']
             )
@@ -494,12 +553,12 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             )
             st.altair_chart(alt.layer(bar_chart, line_chart).resolve_scale(y='independent'), use_container_width=True)
         with tab_s5:
-            base_chart_s5 = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='対象日付', sort=None))
+            base_chart_s5 = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='予測対象日', sort=None))
             line_s5 = base_chart_s5.mark_line(point=True, color='#AB47BC', strokeWidth=3).encode(
                 y=alt.Y('avg_s5_score', title='設定5近似度 (平均点)', scale=alt.Scale(domain=[0, 100])), tooltip=['date_str', alt.Tooltip('avg_s5_score', format='.1f', title='設定5近似度'), 'count']
             )
             st.altair_chart(line_s5, use_container_width=True)
-            st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。(対象日付ベース)")
+            st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。(予測対象日ベース)")
             
         with tab_ver:
             if '実行日時' in merged_df.columns:
@@ -740,7 +799,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
     cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母', 'REG不足分']
     config_dict = {
-        "対象日付": st.column_config.DateColumn("日付", format="MM/DD"),
+        "対象日付": st.column_config.DateColumn("予測対象日", format="MM/DD"),
         "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100, help="AIが予測する設定5以上の確率"),
         "設定5近似度": st.column_config.ProgressColumn("近似度", format="%d点", min_value=0, max_value=100, help="設定5近似度"),
         "差枚_actual": st.column_config.NumberColumn("差枚", format="%+d"),

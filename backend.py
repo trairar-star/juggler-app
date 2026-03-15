@@ -240,18 +240,36 @@ def save_prediction_log(df):
         try: 
             worksheet = sh.worksheet(log_sheet_name)
             header = worksheet.row_values(1)
+            updates = []
             if 'ai_version' not in header:
-                worksheet.update_cell(1, len(header) + 1, 'ai_version')
+                updates.append({'cell': (1, len(header) + 1), 'val': 'ai_version'})
+                header.append('ai_version')
+            if '予測対象日' not in header:
+                updates.append({'cell': (1, len(header) + 1), 'val': '予測対象日'})
+                header.append('予測対象日')
+            for u in updates:
+                worksheet.update_cell(u['cell'][0], u['cell'][1], u['val'])
         except: 
             worksheet = sh.add_worksheet(title=log_sheet_name, rows="1000", cols="20")
-            worksheet.append_row(['実行日時', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version'])
+            worksheet.append_row(['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version'])
+            header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
             
         save_df = df.copy()
         save_df['実行日時'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:
             save_df['ai_version'] = "不明"
-        target_cols = ['実行日時', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
-        valid_cols = [c for c in target_cols if c in save_df.columns]
+            
+        if 'next_date' in save_df.columns:
+            save_df['予測対象日'] = save_df['next_date']
+        else:
+            save_df['予測対象日'] = save_df['対象日付'] + pd.Timedelta(days=1)
+            
+        target_cols = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
+        valid_cols = [c for c in header if c in save_df.columns]
+        for c in target_cols:
+            if c not in valid_cols and c in save_df.columns:
+                valid_cols.append(c)
+                
         save_df = save_df[valid_cols]
         for col in save_df.columns:
             if pd.api.types.is_datetime64_any_dtype(save_df[col]):
