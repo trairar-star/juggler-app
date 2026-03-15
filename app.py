@@ -415,6 +415,15 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     avg_diff_r = merged_df['REG不足分'].mean()
     avg_diff_b = merged_df['BIG不足分'].mean()
     
+    # データ不足の考慮 (検証台数不足 or 学習データ不足)
+    low_rel_count = (merged_df['予測信頼度'] == '🔻低').sum() if '予測信頼度' in merged_df.columns else 0
+    low_rel_rate = low_rel_count / total_count if total_count > 0 else 0
+    comment_prefix = ""
+    if total_count < 5:
+        comment_prefix = f"⚠️ **【検証台数不足】** 今回答え合わせの対象となった推奨台が **{total_count}台** と少ないため、たまたまのヒキ（上振れ・下振れ）の影響を強く受けています。点数は参考程度にご覧ください。\n\n"
+    elif low_rel_rate >= 0.5:
+        comment_prefix = f"⚠️ **【学習データ不足】** 今回の推奨台は、過去の稼働日数が少ない（予測信頼度：🔻低）台が半数以上を占めています。AIが店舗の傾向を完全に把握しきれていない状態での予測結果となっています。\n\n"
+
     if pd.isna(avg_g) or avg_g < 2000:
         comment = f"私が推奨した台の翌日平均回転数は **{int(avg_g if not pd.isna(avg_g) else 0)}G** でした。全体的にあまり回されておらず、設定の答え合わせが難しい状態です。もっと稼働がある店舗やイベント日を狙うと精度が上がるかもしれません！"
         mood = "🤔"
@@ -442,7 +451,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             comment = f"【大反省…】設定5近似度は平均 **{avg_s5_score:.1f}点** と惨敗です…。十分回された上で推奨台が軒並み低設定挙動になってしまいました。過去の傾向が変わった（据え置きしなくなった等）可能性が高いので、最近のデータで学習し直すか、この店舗は警戒したほうが良いです。"
             mood = "😭"
 
-    st.info(f"{mood} **AIコメント:**\n\n{comment}\n\n※REG過不足: 平均 **{avg_diff_r:+.1f}回** / BIG過不足: 平均 **{avg_diff_b:+.1f}回**")
+    st.info(f"{comment_prefix}{mood} **AIコメント:**\n\n{comment}\n\n※REG過不足: 平均 **{avg_diff_r:+.1f}回** / BIG過不足: 平均 **{avg_diff_b:+.1f}回**")
     
     # --- 特に優秀だった台トップ3 ---
     if not merged_df.empty:
