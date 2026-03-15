@@ -255,7 +255,7 @@ def save_prediction_log(df):
             header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
             
         save_df = df.copy()
-        save_df['実行日時'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:
             save_df['ai_version'] = "不明"
             
@@ -306,7 +306,7 @@ def save_shop_event(shop_name, event_date, event_name, event_rank):
             worksheet = sh.add_worksheet(title='shop_events', rows="1000", cols="6")
             worksheet.append_row(['登録日時', '店名', 'イベント日付', 'イベント名', '備考', 'イベントランク'])
         
-        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         date_str = event_date.strftime('%Y-%m-%d')
         worksheet.append_row([timestamp, shop_name, date_str, event_name, '', event_rank])
         return True
@@ -332,7 +332,7 @@ def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_na
         
         target_date_str = old_event_date.strftime('%Y-%m-%d')
         new_date_str = new_event_date.strftime('%Y-%m-%d')
-        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         
         for i, row in enumerate(all_values[1:], start=2):
             if len(row) <= max(idx_shop, idx_date, idx_name): continue
@@ -412,7 +412,7 @@ def save_island_master(shop, island_name, rule_str):
             worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール'])
             header = ['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール']
         
-        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         row_data = [timestamp, shop, island_name, "", "", rule_str]
         
         while len(row_data) < len(header):
@@ -465,7 +465,7 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
             worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="10")
             worksheet.append_row(['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', 'メモ'])
         
-        timestamp = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         date_str = date_obj.strftime('%Y-%m-%d')
         balance = int(recovery) - int(invest)
         
