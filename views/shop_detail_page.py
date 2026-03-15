@@ -225,6 +225,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         if selected_machine != '全て':
             df = df[df['機種名'] == selected_machine]
 
+    # 機種スペックの読み込み (スコープ全体で使用するため上部で定義)
+    specs = backend.get_machine_specs()
+
     # --- 店癖トップ5の抽出と明日の候補台へのマッピング ---
     top_trends_df = None
     worst_trends_df = None # 警戒条件用DFを追加
@@ -458,7 +461,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     st.subheader("🧐 上位台の詳細データ・根拠")
     st.caption("ランキング上位10台について、AIの判断根拠と詳細数値を表示します。")
 
-    specs = backend.get_machine_specs()
     for i, row in df_top10.iterrows():
         shop_name = row.get(shop_col, '')
         machine_no = row.get('台番号', 'Unknown')
@@ -520,7 +522,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         # 実態に即した分析を行うため、1000G未満の台（未稼働/即ヤメ）は集計対象（分母）から除外する
         viz_df = df_raw_shop[df_raw_shop['累計ゲーム'] >= 1000].copy()
         
-        specs = backend.get_machine_specs()
         viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
         spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
         spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
