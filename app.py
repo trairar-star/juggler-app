@@ -1106,6 +1106,11 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                     actual_df_day['REG確率分母'] = np.where(act_r > 0, act_g / act_r, 0).astype(int)
                     actual_df_day['合算確率分母'] = np.where(actual_df_day['合算回数'] > 0, act_g / actual_df_day['合算回数'], 0).astype(int)
                     
+                    specs = backend.get_machine_specs()
+                    spec_reg_val = actual_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                    spec_tot_val = actual_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                    actual_df_day['高設定'] = (((actual_df_day['REG確率分母'] > 0) & (actual_df_day['REG確率分母'] <= spec_reg_val)) | ((actual_df_day['合算確率分母'] > 0) & (actual_df_day['合算確率分母'] <= spec_tot_val))).apply(lambda x: '🌟' if x else '')
+                    
                     if rank_metric == "差枚":
                         actual_df_day = actual_df_day.sort_values('差枚', ascending=False).head(10)
                     else:
@@ -1119,9 +1124,10 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
 
                 with col_pred:
                     if selected_machine != 'すべての機種':
-                        st.markdown(f"##### 🤖 AI予測ランキング ({selected_machine} Top 10)")
+                        st.markdown(f"##### 🤖 AI予測 Top10 ({selected_machine})")
                     else:
-                        st.markdown("##### 🤖 AI予測ランキング (Top 10)")
+                        st.markdown("##### 🤖 AI予測 Top10 (全体)")
+                    st.caption(f"※対象日: {selected_date}")
                     if pred_df_day.empty:
                         st.info("この日の予測ログがありません。")
                     else:
@@ -1133,7 +1139,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         # トップ10ランクインのマーク
                         pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in actual_top10_machines else '')
 
-                        display_cols_pred = ['台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母', '的中']
+                        display_cols_pred = ['的中', '台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
                         
                         def highlight_positive(row):
                             if row.get('的中', '') == '🎯':
@@ -1147,6 +1153,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         st.dataframe(
                             styled_pred_df,
                             column_config={
+                                "的中": st.column_config.TextColumn("的中", width="small"),
                                 "台番号": st.column_config.TextColumn("台番号"),
                                 "機種名": st.column_config.TextColumn("機種", width="small"),
                                 "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100),
@@ -1155,7 +1162,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                                 "結果_BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
                                 "結果_REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
                                 "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
-                                "的中": st.column_config.TextColumn("的中", width="small"),
                             },
                             hide_index=True,
                             use_container_width=True
@@ -1164,10 +1170,10 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                 with col_actual:
                     date_str_actual = actual_date.strftime('%Y-%m-%d') if pd.notna(actual_date) else "不明"
                     if selected_machine != 'すべての機種':
-                        st.markdown(f"##### 🎰 実際の{rank_metric}ランキング ({selected_machine} Top 10)")
+                        st.markdown(f"##### 🎰 実績 Top10 ({selected_machine})")
                     else:
-                        st.markdown(f"##### 🎰 実際の{rank_metric}ランキング (店全体 Top 10)")
-                    st.caption(f"※実稼働日: {date_str_actual}")
+                        st.markdown(f"##### 🎰 実績 Top10 (全体)")
+                    st.caption(f"※稼働日: {date_str_actual} ({rank_metric}順)")
                     if actual_df_day.empty:
                         st.info("条件を満たす結果データがありません。")
                         else:
@@ -1202,6 +1208,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                             st.dataframe(
                                 styled_df,
                                 column_config={
+                                    "AI推奨": st.column_config.TextColumn("予測", width="small"),
+                                    "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
                                     "順位": st.column_config.TextColumn("順位"),
                                     "台番号": st.column_config.TextColumn("台番号"),
                                     "機種名": st.column_config.TextColumn("機種", width="small"),
@@ -1210,7 +1218,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                                     "BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
                                     "REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
                                     "合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
-                                    "AI推奨": st.column_config.TextColumn("推奨", width="small"),
                                 },
                                 hide_index=True,
                                 use_container_width=True
