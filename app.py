@@ -324,8 +324,11 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     base_df[['差枚_actual', '結果_BIG', '結果_REG', '結果_累計ゲーム', '実際の稼働日']] = results
     
     # --- BIG/REG確率分母の計算 ---
-    base_df['結果_BIG確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / row.get('結果_BIG', 1) if row.get('結果_BIG', 0) > 0 else 0, axis=1)
-    base_df['結果_REG確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / row.get('結果_REG', 1) if row.get('結果_REG', 0) > 0 else 0, axis=1)
+    cum_g = pd.to_numeric(base_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+    big_c = pd.to_numeric(base_df['結果_BIG'], errors='coerce').fillna(0)
+    reg_c = pd.to_numeric(base_df['結果_REG'], errors='coerce').fillna(0)
+    base_df['結果_BIG確率分母'] = np.where(big_c > 0, cum_g / big_c, 0)
+    base_df['結果_REG確率分母'] = np.where(reg_c > 0, cum_g / reg_c, 0)
 
     # 特徴量の名前を _current から元に戻す（弱点分析などで使用するため）
     for col in base_df.columns.copy():
@@ -391,7 +394,11 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     specs = backend.get_machine_specs()
     spec_reg_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
     spec_tot_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-    merged_df['結果_合算確率分母'] = merged_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / (row.get('結果_BIG', 0) + row.get('結果_REG', 0)) if (row.get('結果_BIG', 0) + row.get('結果_REG', 0)) > 0 else 0, axis=1)
+    
+    m_cum_g = pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+    m_big_c = pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0)
+    m_reg_c = pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)
+    merged_df['結果_合算確率分母'] = np.where((m_big_c + m_reg_c) > 0, m_cum_g / (m_big_c + m_reg_c), 0)
     merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
 
     total_count = len(merged_df)
@@ -1004,9 +1011,12 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
     results = base_df.apply(get_actual_result, axis=1)
     base_df[['差枚_actual', '結果_BIG', '結果_REG', '結果_累計ゲーム', '実際の稼働日']] = results
     
-    base_df['結果_合算確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / (row.get('結果_BIG', 0) + row.get('結果_REG', 0)) if (row.get('結果_BIG', 0) + row.get('結果_REG', 0)) > 0 else 0, axis=1)
-    base_df['結果_BIG確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / row.get('結果_BIG', 1) if row.get('結果_BIG', 0) > 0 else 0, axis=1)
-    base_df['結果_REG確率分母'] = base_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / row.get('結果_REG', 1) if row.get('結果_REG', 0) > 0 else 0, axis=1)
+    cum_g = pd.to_numeric(base_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+    big_c = pd.to_numeric(base_df['結果_BIG'], errors='coerce').fillna(0)
+    reg_c = pd.to_numeric(base_df['結果_REG'], errors='coerce').fillna(0)
+    base_df['結果_合算確率分母'] = np.where((big_c + reg_c) > 0, cum_g / (big_c + reg_c), 0)
+    base_df['結果_BIG確率分母'] = np.where(big_c > 0, cum_g / big_c, 0)
+    base_df['結果_REG確率分母'] = np.where(reg_c > 0, cum_g / reg_c, 0)
 
     merged_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
 
@@ -1133,10 +1143,13 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                     if actual_df_day.empty:
                         st.info("この日の結果データがありません。")
                     else:
-                        actual_df_day['合算回数'] = actual_df_day['BIG'].fillna(0) + actual_df_day['REG'].fillna(0)
-                        actual_df_day['BIG確率分母'] = actual_df_day.apply(lambda row: int(row['累計ゲーム'] / row['BIG']) if row['BIG'] > 0 else 0, axis=1)
-                        actual_df_day['REG確率分母'] = actual_df_day.apply(lambda row: int(row['累計ゲーム'] / row['REG']) if row['REG'] > 0 else 0, axis=1)
-                        actual_df_day['合算確率分母'] = actual_df_day.apply(lambda row: int(row['累計ゲーム'] / row['合算回数']) if row['合算回数'] > 0 else 0, axis=1)
+                        act_g = pd.to_numeric(actual_df_day['累計ゲーム'], errors='coerce').fillna(0)
+                        act_b = pd.to_numeric(actual_df_day['BIG'], errors='coerce').fillna(0)
+                        act_r = pd.to_numeric(actual_df_day['REG'], errors='coerce').fillna(0)
+                        actual_df_day['合算回数'] = act_b + act_r
+                        actual_df_day['BIG確率分母'] = np.where(act_b > 0, act_g / act_b, 0).astype(int)
+                        actual_df_day['REG確率分母'] = np.where(act_r > 0, act_g / act_r, 0).astype(int)
+                        actual_df_day['合算確率分母'] = np.where(actual_df_day['合算回数'] > 0, act_g / actual_df_day['合算回数'], 0).astype(int)
                         
                         if rank_metric == "差枚":
                             actual_df_day = actual_df_day.sort_values('差枚', ascending=False).head(10)
