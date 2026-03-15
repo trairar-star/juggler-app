@@ -1176,7 +1176,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                     st.caption(f"※稼働日: {date_str_actual} ({rank_metric}順)")
                     if actual_df_day.empty:
                         st.info("条件を満たす結果データがありません。")
-                        else:
+                    else:
                             actual_df_day = actual_df_day.reset_index(drop=True)
                             actual_df_day.index = actual_df_day.index + 1
                             
