@@ -1,3 +1,7 @@
+# キャッシュファイル
+*.pkl
+
+# 認証情報ファイル (念のため)
 service_account.json
 __pycache__/
 *.pyc
