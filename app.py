@@ -1068,15 +1068,13 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
 
                 rank_metric = st.radio("📊 実際のランキング基準", ["差枚", "合算確率", "REG確率"], horizontal=True, help="合算確率とREG確率は、総ゲーム数3000G以上の台のみを対象とします。")
 
-                col_pred, col_actual = st.columns(2)
-                
-                # 左: AI予測ランキング (Top 10)
+                # AI予測ランキング (Top 10) のデータ準備
                 pred_df_day = merged_df[(merged_df['対象日付'].dt.date == selected_date) & (merged_df[shop_col] == compare_shop)].copy()
                 if selected_machine != 'すべての機種':
                     pred_df_day = pred_df_day[pred_df_day['機種名'] == selected_machine]
                 pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False).head(10)
                 
-                # 右: 実際の差枚ランキング
+                # 実際のランキング のデータ準備
                 target_ts = pd.Timestamp(selected_date)
                 actual_date = pd.NaT
                 if compare_shop in shop_operating_dates:
@@ -1122,106 +1120,115 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                             
                     actual_top10_machines = actual_df_day['台番号'].tolist()
 
-                with col_pred:
-                    if selected_machine != 'すべての機種':
-                        st.markdown(f"##### 🤖 AI予測 Top10 ({selected_machine})")
+                # --- 上段: AI予測ランキング ---
+                if selected_machine != 'すべての機種':
+                    st.markdown(f"##### 🤖 AI予測 Top10 ({selected_machine})")
+                else:
+                    st.markdown("##### 🤖 AI予測 Top10 (全体)")
+                st.caption(f"※対象日: {selected_date}")
+                if pred_df_day.empty:
+                    st.info("この日の予測ログがありません。")
+                else:
+                    if 'prediction_score' in pred_df_day.columns:
+                        pred_df_day['予想設定5以上確率'] = (pred_df_day['prediction_score'] * 100).astype(int)
                     else:
-                        st.markdown("##### 🤖 AI予測 Top10 (全体)")
-                    st.caption(f"※対象日: {selected_date}")
-                    if pred_df_day.empty:
-                        st.info("この日の予測ログがありません。")
-                    else:
-                        if 'prediction_score' in pred_df_day.columns:
-                            pred_df_day['予想設定5以上確率'] = (pred_df_day['prediction_score'] * 100).astype(int)
-                        else:
-                            pred_df_day['予想設定5以上確率'] = 0
+                        pred_df_day['予想設定5以上確率'] = 0
 
-                        # トップ10ランクインのマーク
-                        pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in actual_top10_machines else '')
+                    # トップ10ランクインのマーク
+                    pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in actual_top10_machines else '')
 
-                        display_cols_pred = ['的中', '台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
+                    # 高設定挙動のマーク
+                    specs = backend.get_machine_specs()
+                    spec_reg_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                    spec_tot_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                    pred_df_day['高設定'] = (((pred_df_day['結果_REG確率分母'] > 0) & (pred_df_day['結果_REG確率分母'] <= spec_reg_val_pred)) | ((pred_df_day['結果_合算確率分母'] > 0) & (pred_df_day['結果_合算確率分母'] <= spec_tot_val_pred))).apply(lambda x: '🌟' if x else '')
+
+                    display_cols_pred = ['的中', '高設定', '台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
+                    
+                    def highlight_positive(row):
+                        if row.get('的中', '') == '🎯':
+                            return ['background-color: rgba(255, 215, 0, 0.3)'] * len(row) # 的中なら少し強めの黄色
+                        elif pd.notna(row['差枚_actual']) and row['差枚_actual'] > 0:
+                            return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
+                        return [''] * len(row)
                         
-                        def highlight_positive(row):
-                            if row.get('的中', '') == '🎯':
-                                return ['background-color: rgba(255, 215, 0, 0.3)'] * len(row) # 的中なら少し強めの黄色
-                            elif pd.notna(row['差枚_actual']) and row['差枚_actual'] > 0:
-                                return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
-                            return [''] * len(row)
-                            
-                        styled_pred_df = pred_df_day[display_cols_pred].style.apply(highlight_positive, axis=1)
+                    styled_pred_df = pred_df_day[display_cols_pred].style.apply(highlight_positive, axis=1)
 
-                        st.dataframe(
-                            styled_pred_df,
-                            column_config={
-                                "的中": st.column_config.TextColumn("的中", width="small"),
-                                "台番号": st.column_config.TextColumn("台番号"),
-                                "機種名": st.column_config.TextColumn("機種", width="small"),
-                                "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100),
-                                "差枚_actual": st.column_config.NumberColumn("結果差枚", format="%+d"),
-                                "結果_累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
-                                "結果_BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
-                                "結果_REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
-                                "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
+                    st.dataframe(
+                        styled_pred_df,
+                        column_config={
+                            "的中": st.column_config.TextColumn("的中", width="small"),
+                            "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
+                            "台番号": st.column_config.TextColumn("台番号"),
+                            "機種名": st.column_config.TextColumn("機種", width="small"),
+                            "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100),
+                            "差枚_actual": st.column_config.NumberColumn("結果差枚", format="%+d"),
+                            "結果_累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
+                            "結果_BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
+                            "結果_REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
+                            "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
 
-                with col_actual:
-                    date_str_actual = actual_date.strftime('%Y-%m-%d') if pd.notna(actual_date) else "不明"
-                    if selected_machine != 'すべての機種':
-                        st.markdown(f"##### 🎰 実績 Top10 ({selected_machine})")
-                    else:
-                        st.markdown(f"##### 🎰 実績 Top10 (全体)")
-                    st.caption(f"※稼働日: {date_str_actual} ({rank_metric}順)")
-                    if actual_df_day.empty:
-                        st.info("条件を満たす結果データがありません。")
-                    else:
-                            actual_df_day = actual_df_day.reset_index(drop=True)
-                            actual_df_day.index = actual_df_day.index + 1
-                            
-                            def get_rank_medal(rank):
-                                if rank == 1: return '🥇 1位'
-                                elif rank == 2: return '🥈 2位'
-                                elif rank == 3: return '🥉 3位'
-                                else: return f'{rank}位'
-                                
-                            actual_df_day['順位'] = actual_df_day.index.map(get_rank_medal)
-                            
-                            # AIが推奨していた台にはマークをつける
-                            pred_machines = pred_df_day['台番号'].tolist()
-                            actual_df_day['AI推奨'] = actual_df_day['台番号'].apply(lambda x: '🎯' if x in pred_machines else '')
-                            
-                            display_cols = ['順位', '台番号', '機種名', '差枚', '累計ゲーム', 'BIG確率分母', 'REG確率分母', '合算確率分母', 'AI推奨']
-                            
-                            def highlight_top3(row):
-                                if '1位' in row['順位']:
-                                    return ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
-                                elif '2位' in row['順位']:
-                                    return ['background-color: rgba(192, 192, 192, 0.2)'] * len(row)
-                                elif '3位' in row['順位']:
-                                    return ['background-color: rgba(205, 127, 50, 0.2)'] * len(row)
-                                return [''] * len(row)
-                                
-                            styled_df = actual_df_day[display_cols].style.apply(highlight_top3, axis=1)
-                            
-                            st.dataframe(
-                                styled_df,
-                                column_config={
-                                    "AI推奨": st.column_config.TextColumn("予測", width="small"),
-                                    "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
-                                    "順位": st.column_config.TextColumn("順位"),
-                                    "台番号": st.column_config.TextColumn("台番号"),
-                                    "機種名": st.column_config.TextColumn("機種", width="small"),
-                                    "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
-                                    "累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
-                                    "BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
-                                    "REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
-                                    "合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
-                                },
-                                hide_index=True,
-                                use_container_width=True
-                            )
+                st.divider()
+
+                # --- 下段: 実績ランキング ---
+                date_str_actual = actual_date.strftime('%Y-%m-%d') if pd.notna(actual_date) else "不明"
+                if selected_machine != 'すべての機種':
+                    st.markdown(f"##### 🎰 実績 Top10 ({selected_machine})")
+                else:
+                    st.markdown(f"##### 🎰 実績 Top10 (全体)")
+                st.caption(f"※稼働日: {date_str_actual} ({rank_metric}順)")
+                if actual_df_day.empty:
+                    st.info("条件を満たす結果データがありません。")
+                else:
+                    actual_df_day = actual_df_day.reset_index(drop=True)
+                    actual_df_day.index = actual_df_day.index + 1
+                    
+                    def get_rank_medal(rank):
+                        if rank == 1: return '🥇 1位'
+                        elif rank == 2: return '🥈 2位'
+                        elif rank == 3: return '🥉 3位'
+                        else: return f'{rank}位'
+                        
+                    actual_df_day['順位'] = actual_df_day.index.map(get_rank_medal)
+                    
+                    # AIが推奨していた台にはマークをつける
+                    pred_machines = pred_df_day['台番号'].tolist()
+                    actual_df_day['AI推奨'] = actual_df_day['台番号'].apply(lambda x: '🎯' if x in pred_machines else '')
+                    
+                    display_cols = ['AI推奨', '高設定', '順位', '台番号', '機種名', '差枚', '累計ゲーム', 'BIG確率分母', 'REG確率分母', '合算確率分母']
+                    
+                    def highlight_top3(row):
+                        if '1位' in row['順位']:
+                            return ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
+                        elif '2位' in row['順位']:
+                            return ['background-color: rgba(192, 192, 192, 0.2)'] * len(row)
+                        elif '3位' in row['順位']:
+                            return ['background-color: rgba(205, 127, 50, 0.2)'] * len(row)
+                        return [''] * len(row)
+                        
+                    styled_df = actual_df_day[display_cols].style.apply(highlight_top3, axis=1)
+                    
+                    st.dataframe(
+                        styled_df,
+                        column_config={
+                            "AI推奨": st.column_config.TextColumn("予測", width="small"),
+                            "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
+                            "順位": st.column_config.TextColumn("順位"),
+                            "台番号": st.column_config.TextColumn("台番号"),
+                            "機種名": st.column_config.TextColumn("機種", width="small"),
+                            "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
+                            "累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
+                            "BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
+                            "REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
+                            "合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
 
 # --- ページ描画関数: AI学習データ分析 (勝利の法則) ---
 def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
