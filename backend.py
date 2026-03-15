@@ -180,14 +180,20 @@ def save_prediction_log(df):
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         log_sheet_name = 'prediction_log'
-        try: worksheet = sh.worksheet(log_sheet_name)
+        try: 
+            worksheet = sh.worksheet(log_sheet_name)
+            header = worksheet.row_values(1)
+            if 'ai_version' not in header:
+                worksheet.update_cell(1, len(header) + 1, 'ai_version')
         except: 
             worksheet = sh.add_worksheet(title=log_sheet_name, rows="1000", cols="20")
-            worksheet.append_row(['実行日時', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠'])
+            worksheet.append_row(['実行日時', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version'])
             
         save_df = df.copy()
         save_df['実行日時'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-        target_cols = ['実行日時', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠']
+        if 'ai_version' not in save_df.columns:
+            save_df['ai_version'] = "不明"
+        target_cols = ['実行日時', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
         valid_cols = [c for c in target_cols if c in save_df.columns]
         save_df = save_df[valid_cols]
         for col in save_df.columns:
@@ -593,7 +599,14 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     if 'BIG' in df.columns: df['next_BIG'] = df.groupby(group_keys)['BIG'].shift(-1)
     if 'REG' in df.columns: df['next_REG'] = df.groupby(group_keys)['REG'].shift(-1)
     if '累計ゲーム' in df.columns: df['next_累計ゲーム'] = df.groupby(group_keys)['累計ゲーム'].shift(-1)
-    df['target'] = (df['next_diff'] > 0).astype(int)
+    
+    # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に変更 ---
+    df['next_reg_prob'] = df['next_REG'] / df['next_累計ゲーム'].replace(0, np.nan)
+    df['next_total_prob'] = (df['next_BIG'].fillna(0) + df['next_REG'].fillna(0)) / df['next_累計ゲーム'].replace(0, np.nan)
+    specs = get_machine_specs()
+    spec_reg = df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+    spec_tot = df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+    df['target'] = ((df['next_reg_prob'] >= spec_reg) | (df['next_total_prob'] >= spec_tot)).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
     df['next_date'] = df.groupby(group_keys)['対象日付'].shift(-1)
@@ -634,9 +647,9 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     df['mean_30days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
 
     # --- 勝率安定度（一撃ノイズ排除用） ---
-    df['is_win'] = (df['差枚'] > 0).astype(int)
+    df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
+    df['is_win'] = ((df['REG確率'] >= spec_reg) | (df['total_prob'] >= spec_tot)).astype(int) # 変数名はwinのままだが、中身は高設定フラグ
     df['win_rate_7days'] = df.groupby(group_keys)['is_win'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
-    df = df.drop(columns=['is_win'])
 
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
@@ -681,13 +694,13 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         sample_weights = 0.995 ** days_diff
     
     if hyperparams is None:
-        hyperparams = {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5}
+        hyperparams = {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4}
 
     # LightGBMの初期化エラーを防ぐため、パラメータを明示的に渡す
-    n_est = hyperparams.get('n_estimators', 200)
-    lr = hyperparams.get('learning_rate', 0.05)
-    nl = hyperparams.get('num_leaves', 20)
-    md = hyperparams.get('max_depth', 5)
+    n_est = hyperparams.get('n_estimators', 300)
+    lr = hyperparams.get('learning_rate', 0.03)
+    nl = hyperparams.get('num_leaves', 15)
+    md = hyperparams.get('max_depth', 4)
 
     model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     model.fit(X, y, sample_weight=sample_weights)
@@ -833,15 +846,16 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         win_rate_7d = row.get('win_rate_7days', 0)
         diff = row.get('差枚', 0)
         reg_prob = row.get('REG確率', 0)
+        is_win_flag = row.get('is_win', 0)
 
         if mean_7d < -300:
             if diff < -1000: reasons.append(f"直近1週間(平均{int(mean_7d)}枚)と前日が大きく凹んでおり、**「不調台の反発」**の可能性が高いです。")
             else: reasons.append(f"週間成績は不調(平均{int(mean_7d)}枚)ですが、AIは**「底打ち上昇」**を予測しています。")
         elif mean_7d > 500:
-            if win_rate_7d >= 0.5 and reg_prob >= (1/300):
-                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 勝率{win_rate_7d*100:.0f}%)と好調かつ、REG確率(1/{int(1/reg_prob) if reg_prob > 0 else '-'})も優秀で、**「高設定の据え置き」**が期待できます。")
+            if win_rate_7d >= 0.5 and is_win_flag == 1:
+                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 高設定率{win_rate_7d*100:.0f}%)と好調かつ、REG確率(1/{int(1/reg_prob) if reg_prob > 0 else '-'})も優秀で、**「高設定の据え置き」**が期待できます。")
             elif win_rate_7d >= 0.5:
-                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 勝率{win_rate_7d*100:.0f}%)と安定して好調です。")
+                reasons.append(f"直近1週間(平均+{int(mean_7d)}枚, 高設定率{win_rate_7d*100:.0f}%)と安定して高設定が使われています。")
             elif diff >= 2000:
                 reasons.append(f"週間平均はプラスですが、直近の一撃(+{int(diff)}枚)による影響が大きいです。一撃後の回収に警戒が必要です。")
         
@@ -917,5 +931,6 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
         predict_df['店舗期待度'] = shop_mean.apply(get_rating)
     predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
+    predict_df['ai_version'] = "v2.0 (設定5基準)"
     
     return predict_df, train_df, feature_importances

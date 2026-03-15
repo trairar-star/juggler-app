@@ -74,14 +74,18 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 same_wd_df = history_subset[history_subset['wd'] == target_wd]
                 
                 if not same_wd_df.empty:
+                    same_wd_df['合算確率'] = (same_wd_df['BIG'] + same_wd_df['REG']) / same_wd_df['累計ゲーム'].replace(0, np.nan)
+                    spec_reg_p = 1.0 / specs[matched_spec_key].get('設定5', {"REG": 260.0})["REG"] if matched_spec_key else (1/260)
+                    spec_tot_p = 1.0 / specs[matched_spec_key].get('設定5', {"合算": 128.0})["合算"] if matched_spec_key else (1/128)
+                    
                     count = len(same_wd_df)
                     avg_diff = same_wd_df['差枚'].mean()
-                    win_rate = (same_wd_df['差枚'] > 0).mean() * 100
+                    win_rate = ((same_wd_df['REG確率'] >= spec_reg_p) | (same_wd_df['合算確率'] >= spec_tot_p)).mean() * 100
                     avg_reg = same_wd_df['REG'].mean()
                     
                     sw1, sw2 = st.columns(2)
                     with sw1: st.metric("集計回数", f"{count} 回")
-                    with sw2: st.metric("勝率", f"{win_rate:.1f} %")
+                    with sw2: st.metric("高設定率", f"{win_rate:.1f} %")
                     
                     sw3, sw4 = st.columns(2)
                     with sw3: st.metric("平均差枚", f"{int(avg_diff):+d} 枚")
@@ -229,28 +233,28 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             
             if 'is_corner' in train_shop.columns:
                 subset = train_shop[train_shop['is_corner'] == 1]
-                if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "勝率": subset['target'].mean(), "サンプル": len(subset)})
-            if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'REG確率' in train_shop.columns:
-                subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['REG確率'] >= (1/300))]
-                if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行 (高設定不発狙い)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'is_win' in train_shop.columns:
+                subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['is_win'] == 1)]
+                if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行 (高設定不発狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if '連続マイナス日数' in train_shop.columns:
                 subset = train_shop[train_shop['連続マイナス日数'] >= 3]
-                if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if '差枚' in train_shop.columns:
                 subset = train_shop[train_shop['差枚'] <= -1000]
-                if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
                 subset = train_shop[train_shop['差枚'] >= 1000]
-                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "勝率": subset['target'].mean(), "サンプル": len(subset)})
-                if 'REG確率' in train_shop.columns:
-                    subset = train_shop[(train_shop['差枚'] >= 1000) & (train_shop['REG確率'] >= (1/300))]
-                    if len(subset) >= 5: trends.append({"id": "prev_win_reg", "条件": "前日大勝ち (+1000枚以上) & REG確率1/300以上の据え置き", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+                if 'is_win' in train_shop.columns:
+                    subset = train_shop[(train_shop['差枚'] >= 1000) & (train_shop['is_win'] == 1)]
+                    if len(subset) >= 5: trends.append({"id": "prev_win_reg", "条件": "前日大勝ち (+1000枚以上) & 高設定挙動の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
                 else:
                     subset = train_shop[train_shop['差枚'] >= 1000]
-                    if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                    if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if 'target_date_end_digit' in train_shop.columns:
                 for d in [0, 5, 7]:
                     subset = train_shop[train_shop['target_date_end_digit'] == d]
-                    if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日 (予測日)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                    if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日 (予測日)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if '末尾番号' in train_shop.columns:
                 best_m, best_wr, best_count = -1, 0, 0
                 for m in range(10):
@@ -258,26 +262,26 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                     if len(subset) >= 10:
                         wr = subset['target'].mean()
                         if wr > best_wr: best_m, best_wr, best_count = m, wr, len(subset)
-                if best_m != -1: trends.append({"id": f"end_{int(best_m)}", "条件": f"末尾【{int(best_m)}】", "勝率": best_wr, "サンプル": best_count})
+                if best_m != -1: trends.append({"id": f"end_{int(best_m)}", "条件": f"末尾【{int(best_m)}】", "高設定率": best_wr, "サンプル": best_count})
 
             # --- 警戒条件の定義 ---
             if '差枚' in train_shop.columns and 'REG確率' in train_shop.columns:
                 subset = train_shop[(train_shop['差枚'] >= 2000) & (train_shop['REG確率'] < (1/350))]
-                if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if 'mean_7days_diff' in train_shop.columns and 'win_rate_7days' in train_shop.columns:
                 subset = train_shop[(train_shop['mean_7days_diff'] >= 500) & (train_shop['win_rate_7days'] < 0.5)]
-                if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 勝率50%未満)", "勝率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 高設定率50%未満)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
 
             df['店癖マッチ'] = ""
             if trends:
                 all_trends_df = pd.DataFrame(trends)
-                all_trends_df['通常時との差'] = (all_trends_df['勝率'] - base_win_rate) * 100
+                all_trends_df['通常時との差'] = (all_trends_df['高設定率'] - base_win_rate) * 100
 
                 # 勝率が高いトップ3 (プラス評価)
-                top_trends_df = all_trends_df[all_trends_df['通常時との差'] > 5].sort_values('勝率', ascending=False).head(3)
+                top_trends_df = all_trends_df[all_trends_df['通常時との差'] > 5].sort_values('高設定率', ascending=False).head(3)
                 
                 # 勝率が低いトップ2 (マイナス評価)
-                worst_trends_df = all_trends_df[all_trends_df['通常時との差'] < -5].sort_values('勝率', ascending=True).head(2)
+                worst_trends_df = all_trends_df[all_trends_df['通常時との差'] < -5].sort_values('高設定率', ascending=True).head(2)
 
                 top_ids = top_trends_df['id'].tolist()
                 worst_ids = worst_trends_df['id'].tolist()
@@ -289,7 +293,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                     if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹")
                     if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発")
                     if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え")
-                    if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('REG確率', 0) >= (1/300): matched_hot.append("高設定据え")
+                    if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え")
                     for tid in top_ids:
                         if tid.startswith("day_") and 'target_date_end_digit' in row:
                             if row['target_date_end_digit'] == int(tid.split("_")[1]): matched_hot.append(f"{int(tid.split('_')[1])}のつく日")
@@ -406,9 +410,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             shop_col: st.column_config.TextColumn("店舗", width="small"),
             "台番号": st.column_config.TextColumn("No.", width="small"),
             "機種名": st.column_config.TextColumn("機種", width="small"),
-            "店癖マッチ": st.column_config.TextColumn("店癖/警戒", width="medium"),
+            "店癖マッチ": st.column_config.TextColumn("店癖", width="medium", help="AIが検知した激アツ(🔥)や警戒(⚠️)の条件"),
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
-            "予想設定5以上確率": st.column_config.ProgressColumn("設定5以上確率", format="%d%%", min_value=0, max_value=100, width="small"),
+            "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100, width="small", help="AIが予測する設定5以上の確率"),
         },
         use_container_width=True,
         hide_index=True
@@ -443,37 +447,37 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖/警戒条件**")
             
             if top_trends_df is not None and not top_trends_df.empty:
-                st.caption("AIが過去データから見つけた、この店舗で特に翌日の勝率が高い『激アツ条件 (🔥)』です。")
+                st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りやすい『激アツ条件 (🔥)』です。")
                 top_trends_df['信頼度'] = top_trends_df['サンプル'].apply(get_confidence_indicator)
                 st.dataframe(
                     top_trends_df,
                             column_config={
-                                "条件": st.column_config.TextColumn("激アツ条件 (店癖)"),
-                                "勝率": st.column_config.ProgressColumn("条件合致時の勝率", format="%.2f", min_value=0, max_value=1),
-                                "通常時との差": st.column_config.NumberColumn("通常時との差", format="%+.1f pt"),
-                                "サンプル": st.column_config.NumberColumn("サンプル", format="%d 台"),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                                "条件": st.column_config.TextColumn("激アツ条件"),
+                                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"),
+                                "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"),
+                                "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"),
+                                "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                             },
                             hide_index=True,
                             use_container_width=True
                         )
 
             if worst_trends_df is not None and not worst_trends_df.empty:
-                st.caption("AIが過去データから見つけた、この店舗で特に翌日の勝率が低い『警戒条件 (⚠️)』です。")
+                st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りにくい『警戒条件 (⚠️)』です。")
                 worst_trends_df['信頼度'] = worst_trends_df['サンプル'].apply(get_confidence_indicator)
                 st.dataframe(
                     worst_trends_df,
                         column_config={
                             "条件": st.column_config.TextColumn("警戒条件"),
-                            "勝率": st.column_config.ProgressColumn("条件合致時の勝率", format="%.2f", min_value=0, max_value=1),
-                            "通常時との差": st.column_config.NumberColumn("通常時との差", format="%+.1f pt"),
-                            "サンプル": st.column_config.NumberColumn("サンプル", format="%d 台"),
-                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"),
+                            "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"),
+                            "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"),
+                            "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                         },
                         hide_index=True,
                         use_container_width=True
                     )
-            st.caption(f"※この店舗の通常時の平均勝率は **{base_win_rate:.1%}** です。")
+            st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1%}** です。")
         
         # スマホ対応: 縦に並べる
         if '日付要素' in df_raw_shop.columns and not df_raw_shop['日付要素'].isnull().all():
@@ -525,18 +529,26 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                 period_df = trend_df[trend_df['period'] == selected_period]
                 if not period_df.empty:
                     st.markdown(f"🎰 **{selected_period} の機種別ランキング**")
+                    
+                    specs = backend.get_machine_specs()
+                    period_df = trend_df[trend_df['period'] == selected_period].copy()
+                    period_df['合算確率'] = (period_df['BIG'] + period_df['REG']) / period_df['累計ゲーム'].replace(0, np.nan)
+                    spec_reg = period_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                    spec_tot = period_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                    period_df['高設定'] = ((period_df['REG確率'] >= spec_reg) | (period_df['合算確率'] >= spec_tot)).astype(int)
+
                     machine_rank = period_df.groupby('機種名').agg(
                         平均差枚=('差枚', 'mean'),
-                        勝率=('差枚', lambda x: (x > 0).mean()),
+                        高設定率=('高設定', 'mean'),
                         設置台数=('台番号', 'nunique')
-                    ).sort_values('平均差枚', ascending=False).reset_index()
+                    ).sort_values('高設定率', ascending=False).reset_index()
                     machine_rank['信頼度'] = machine_rank['設置台数'].apply(get_confidence_indicator)
                     
                     st.dataframe(
                         machine_rank,
                         column_config={
                             "平均差枚": st.column_config.NumberColumn(format="%+d 枚"),
-                            "勝率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
+                            "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
                             "設置台数": st.column_config.NumberColumn(format="%d 台"),
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                         },
@@ -548,7 +560,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                     if '末尾番号' in period_df.columns:
                         digit_rank = period_df.groupby('末尾番号').agg(
                             平均差枚=('差枚', 'mean'),
-                            勝率=('差枚', lambda x: (x > 0).mean()),
+                            高設定率=('高設定', 'mean'),
                             サンプル数=('差枚', 'count')
                         ).sort_index().reset_index()
                         digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
@@ -558,7 +570,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                             digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300),
                             column_config={
                                 "平均差枚": st.column_config.NumberColumn(format="%+d 枚"),
-                                "勝率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
+                                "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1),
                                 "サンプル数": st.column_config.NumberColumn(format="%d 件"),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                             },

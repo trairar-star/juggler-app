@@ -39,10 +39,10 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
         st.dataframe(
             shop_stats,
             column_config={
-                shop_col: st.column_config.TextColumn("店舗名"),
-                "平均スコア": st.column_config.ProgressColumn("平均 設定5以上確率", min_value=0, max_value=1.0, format="%.2f"),
-                "推奨台数": st.column_config.NumberColumn("高確率台数 (70%以上)", format="%d 台"),
-                "全台数": st.column_config.NumberColumn("全台数", format="%d 台"),
+                shop_col: st.column_config.TextColumn("店舗"),
+                "平均スコア": st.column_config.ProgressColumn("期待度", min_value=0, max_value=1.0, format="%.2f", help="店舗全体の平均的な設定5以上確率"),
+                "推奨台数": st.column_config.NumberColumn("推奨", format="%d台", help="AI期待度が70%以上の台数"),
+                "全台数": st.column_config.NumberColumn("全台", format="%d台"),
             },
             use_container_width=True,
             hide_index=True
@@ -102,8 +102,13 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
                 st.warning("指定した条件に一致するデータがありません。")
             else:
                 trend_df['年月'] = trend_df['対象日付'].dt.strftime('%Y-%m')
-                # REG確率が1/300 (約0.00333) 以上を高設定挙動と定義
-                trend_df['高設定'] = (trend_df['REG確率'] >= (1/300)).astype(int)
+                
+                # 機種別の設定5基準(REGまたは合算)で高設定挙動を定義
+                specs = backend.get_machine_specs()
+                spec_reg = trend_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                spec_tot = trend_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                trend_df['合算確率'] = (trend_df['BIG'] + trend_df['REG']) / trend_df['累計ゲーム'].replace(0, np.nan)
+                trend_df['高設定'] = ((trend_df['REG確率'] >= spec_reg) | (trend_df['合算確率'] >= spec_tot)).astype(int)
 
                 trend_stats = trend_df.groupby(['年月', shop_col]).agg(
                     高設定投入率=('高設定', 'mean'),
@@ -113,7 +118,7 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
 
                 trend_chart = alt.Chart(trend_stats).mark_line(point=True, strokeWidth=3).encode(
                     x=alt.X('年月', title='年月'),
-                    y=alt.Y('高設定投入率', title='高設定投入率 (REG 1/300以上)', axis=alt.Axis(format='%')),
+                    y=alt.Y('高設定投入率', title='高設定投入率 (設定5基準)', axis=alt.Axis(format='%')),
                     color=alt.Color(f'{shop_col}:N', title='店舗名'),
                     tooltip=['年月', shop_col, alt.Tooltip('高設定投入率', format='.1%'), alt.Tooltip('平均差枚', format='+.0f'), '集計台数']
                 ).interactive()
@@ -128,17 +133,17 @@ def render_summary_page(df, df_raw, shop_col, df_events=None):
                 latest_month_df = trend_df[trend_df['年月'] == latest_month]
                 latest_stats = latest_month_df.groupby(shop_col).agg(
                     平均差枚=('差枚', 'mean'),
-                    勝率=('差枚', lambda x: (x > 0).mean()),
+                    高設定率=('高設定', 'mean'),
                     集計台数=('台番号', 'count')
-                ).reset_index().sort_values('平均差枚', ascending=False)
+                ).reset_index().sort_values('高設定率', ascending=False)
                 
                 st.dataframe(
                     latest_stats,
                     column_config={
-                        shop_col: st.column_config.TextColumn("店舗名"),
-                        "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
-                        "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
-                        "集計台数": st.column_config.NumberColumn("集計台数", format="%d 台")
+                        shop_col: st.column_config.TextColumn("店舗"),
+                        "平均差枚": st.column_config.NumberColumn("差枚", format="%+d枚", help="平均差枚数"),
+                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                        "集計台数": st.column_config.NumberColumn("台数", format="%d台")
                     },
                     use_container_width=True,
                     hide_index=True
@@ -159,6 +164,38 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     if df_pred_log.empty:
         st.warning("保存された予測結果ログがありません。サイドバーの「予測結果をログ保存」ボタンから予測を保存してください。")
         return
+
+    # --- 予測ログの実行日時フィルター ---
+    if '実行日時' in df_pred_log.columns:
+        df_pred_log['実行日時'] = pd.to_datetime(df_pred_log['実行日時'], errors='coerce')
+        valid_dates = df_pred_log['実行日時'].dropna()
+        if not valid_dates.empty:
+            min_log_date = valid_dates.min().date()
+            max_log_date = valid_dates.max().date()
+            
+            with st.sidebar.expander("📅 予測保存日で絞り込み (バージョン比較)", expanded=False):
+                st.caption("AIが予測を保存した日時で絞り込みます。設定4基準時代と設定5基準時代の成績を分けて確認できます。")
+                
+                if 'ai_version' in df_pred_log.columns:
+                    df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
+                    versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
+                    selected_version = st.selectbox("AIバージョンで絞り込み", versions)
+                    if selected_version != 'すべて':
+                        df_pred_log = df_pred_log[df_pred_log['ai_version'] == selected_version]
+
+                date_range = st.date_input(
+                    "保存日の範囲",
+                    value=(min_log_date, max_log_date),
+                    min_value=min_log_date,
+                    max_value=max_log_date
+                )
+                if len(date_range) == 2:
+                    start_d, end_d = date_range
+                    df_pred_log = df_pred_log[(df_pred_log['実行日時'].dt.date >= start_d) & (df_pred_log['実行日時'].dt.date <= end_d)]
+                    
+            if df_pred_log.empty:
+                st.warning("指定された期間の予測結果ログがありません。")
+                return
 
     if df_verify.empty or 'next_diff' not in df_verify.columns:
         st.warning("分析可能な実データ（結果）がありません。")
@@ -318,9 +355,17 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         return
 
     # --- 1. 全体成績 (KPI) & 円グラフ ---
+    specs = backend.get_machine_specs()
+    spec_reg_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+    spec_tot_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+    merged_df['結果_合算確率分母'] = merged_df.apply(lambda row: row.get('結果_累計ゲーム', 0) / (row.get('結果_BIG', 0) + row.get('結果_REG', 0)) if (row.get('結果_BIG', 0) + row.get('結果_REG', 0)) > 0 else 0, axis=1)
+    merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
+
     total_count = len(merged_df)
+    high_set_count = merged_df['is_high_setting'].sum()
+    low_set_count = total_count - high_set_count
+    high_setting_rate = high_set_count / total_count if total_count > 0 else 0
     win_count = (merged_df['差枚_actual'] > 0).sum()
-    lose_count = total_count - win_count
     win_rate = win_count / total_count if total_count > 0 else 0
     avg_diff = merged_df['差枚_actual'].mean()
     total_diff = merged_df['差枚_actual'].sum()
@@ -328,9 +373,10 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     col_kpi, col_pie = st.columns([2, 1])
     
     with col_kpi:
-        k1, k2 = st.columns(2)
+        k1, k2, k5 = st.columns(3)
         k1.metric("検証台数", f"{total_count} 台")
-        k2.metric("勝率", f"{win_rate:.1%}")
+        k2.metric("高設定率", f"{high_setting_rate:.1%}")
+        k5.metric("勝率(差枚)", f"{win_rate:.1%}")
         
         k3, k4 = st.columns(2)
         k3.metric("平均差枚", f"{int(avg_diff):+d} 枚")
@@ -339,15 +385,15 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     with col_pie:
         # 勝敗円グラフ (Altair)
         pie_data = pd.DataFrame({
-            'Category': ['Win', 'Lose'],
-            'Count': [win_count, lose_count]
+            'Category': ['高設定', '低設定'],
+            'Count': [high_set_count, low_set_count]
         })
         
         pie_chart = alt.Chart(pie_data).mark_arc(innerRadius=35).encode(
             theta=alt.Theta(field="Count", type="quantitative"),
             color=alt.Color(field="Category", type="nominal", 
-                            scale=alt.Scale(domain=['Win', 'Lose'], range=['#FF4B4B', '#4B4BFF']),
-                            legend=alt.Legend(title="勝敗", orient="bottom")),
+                            scale=alt.Scale(domain=['高設定', '低設定'], range=['#FF4B4B', '#4B4BFF']),
+                            legend=alt.Legend(title="設定挙動", orient="bottom")),
             tooltip=['Category', 'Count']
         ).properties(height=200)
         
@@ -413,7 +459,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.subheader("📈 日別の推移")
     
     daily_stats = merged_df.groupby('対象日付').agg(
-        win_rate=('差枚_actual', lambda x: (x > 0).mean()),
+        high_setting_rate=('is_high_setting', 'mean'),
         total_profit=('差枚_actual', 'sum'),
         avg_s5_score=('設定5近似度', 'mean'),
         count=('台番号', 'count')
@@ -422,23 +468,57 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     if not daily_stats.empty:
         daily_stats['date_str'] = daily_stats['対象日付'].dt.strftime('%m/%d')
         
-        tab_prof, tab_s5 = st.tabs(["💰 勝率・収支推移", "🎯 設定5近似度 推移"])
+        tab_prof, tab_s5, tab_ver = st.tabs(["💰 高設定率・収支推移", "🎯 設定5近似度 推移", "📅 予測保存日ごとの精度推移"])
         with tab_prof:
-            base_chart = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='日付', sort=None))
+            base_chart = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='対象日付', sort=None))
             bar_chart = base_chart.mark_bar(opacity=0.6).encode(
                 y=alt.Y('total_profit', title='日別収支 (枚)'), color=alt.condition(alt.datum.total_profit > 0, alt.value("#FF4B4B"), alt.value("#4B4BFF")), tooltip=['date_str', alt.Tooltip('total_profit', format='+d'), 'count']
             )
             line_chart = base_chart.mark_line(point=True, color='#FFA726', strokeWidth=3).encode(
-                y=alt.Y('win_rate', title='勝率 (%)', axis=alt.Axis(format='%')), tooltip=['date_str', alt.Tooltip('win_rate', format='.1%')]
+                y=alt.Y('high_setting_rate', title='高設定率 (%)', axis=alt.Axis(format='%')), tooltip=['date_str', alt.Tooltip('high_setting_rate', format='.1%')]
             )
             st.altair_chart(alt.layer(bar_chart, line_chart).resolve_scale(y='independent'), use_container_width=True)
         with tab_s5:
-            base_chart_s5 = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='日付', sort=None))
+            base_chart_s5 = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='対象日付', sort=None))
             line_s5 = base_chart_s5.mark_line(point=True, color='#AB47BC', strokeWidth=3).encode(
                 y=alt.Y('avg_s5_score', title='設定5近似度 (平均点)', scale=alt.Scale(domain=[0, 100])), tooltip=['date_str', alt.Tooltip('avg_s5_score', format='.1f', title='設定5近似度'), 'count']
             )
             st.altair_chart(line_s5, use_container_width=True)
-            st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。")
+            st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。(対象日付ベース)")
+            
+        with tab_ver:
+            if '実行日時' in merged_df.columns:
+                merged_df['実行日時'] = pd.to_datetime(merged_df['実行日時'], errors='coerce')
+                merged_df['実行日'] = merged_df['実行日時'].dt.date
+                exec_stats = merged_df.groupby('実行日').agg(
+                    avg_s5_score=('設定5近似度', 'mean'),
+                    high_setting_rate=('is_high_setting', 'mean'),
+                    count=('台番号', 'count')
+                ).reset_index().dropna(subset=['実行日'])
+                
+                if not exec_stats.empty:
+                    exec_stats['exec_date_str'] = exec_stats['実行日'].apply(lambda x: x.strftime('%m/%d'))
+                    
+                    base_chart_exec = alt.Chart(exec_stats).encode(x=alt.X('exec_date_str', title='予測保存日 (実行日)', sort=None))
+                    
+                    # 棒グラフ: 高設定率 (左軸)
+                    bar_exec = base_chart_exec.mark_bar(opacity=0.6, color='#42A5F5').encode(
+                        y=alt.Y('high_setting_rate', title='高設定率 (%)', axis=alt.Axis(format='%')),
+                        tooltip=['exec_date_str', alt.Tooltip('high_setting_rate', format='.1%'), 'count']
+                    )
+                    
+                    # 折れ線: 設定5近似度 (右軸)
+                    line_exec = base_chart_exec.mark_line(point=True, color='#AB47BC', strokeWidth=3).encode(
+                        y=alt.Y('avg_s5_score', title='設定5近似度 (平均点)', scale=alt.Scale(domain=[0, 100])),
+                        tooltip=['exec_date_str', alt.Tooltip('avg_s5_score', format='.1f', title='設定5近似度'), 'count']
+                    )
+                    
+                    st.altair_chart(alt.layer(bar_exec, line_exec).resolve_scale(y='independent'), use_container_width=True)
+                    st.caption("※ AIが予測を保存した「実行日」ごとの精度推移です。AIの設定変更(設定4基準→設定5基準など)による成長を確認できます。")
+                else:
+                    st.info("予測保存日のデータがありません。")
+            else:
+                st.info("実行日時のデータがありません。")
 
     # --- 2. 確率帯別 精度分析 ---
     st.subheader("📈 確率帯別 精度分析")
@@ -454,6 +534,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         
         rank_stats = merged_df.groupby('確率帯').agg(
             台数=('台番号', 'count'),
+            高設定率=('is_high_setting', 'mean'),
             勝率=('差枚_actual', lambda x: (x > 0).mean()),
             平均差枚=('差枚_actual', 'mean'),
             合計差枚=('差枚_actual', 'sum')
@@ -468,11 +549,12 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         st.dataframe(
             rank_stats,
             column_config={
-                "確率帯": st.column_config.TextColumn("予想設定5以上確率"),
-                "台数": st.column_config.NumberColumn("検証数", format="%d 台"),
-                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
-                "平均差枚": st.column_config.NumberColumn("平均結果", format="%+d 枚"),
-                "合計差枚": st.column_config.NumberColumn("合計収支", format="%+d 枚"),
+                "確率帯": st.column_config.TextColumn("期待度"),
+                "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
+                "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
             },
             use_container_width=True,
@@ -500,7 +582,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             'REG分母': "前日: REG確率(分母)",
             '差枚': "前日: 差枚",
             'mean_7days_diff': "台: 過去7日平均差枚",
-            'win_rate_7days': "台: 過去7日勝率",
+            'win_rate_7days': "台: 過去7日高設定率",
             '連続マイナス日数': "台: 連続マイナス日数",
             'neighbor_avg_diff': "配置: 両隣の平均差枚",
             'is_corner': "配置: 角台の割合",
@@ -596,16 +678,16 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
     cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母', 'REG不足分']
     config_dict = {
-        "対象日付": st.column_config.DateColumn("予測日", format="MM/DD"),
-        "予想設定5以上確率": st.column_config.ProgressColumn("AI期待度", format="%d%%", min_value=0, max_value=100),
-        "設定5近似度": st.column_config.ProgressColumn("5近似度", format="%d点", min_value=0, max_value=100),
+        "対象日付": st.column_config.DateColumn("日付", format="MM/DD"),
+        "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100, help="AIが予測する設定5以上の確率"),
+        "設定5近似度": st.column_config.ProgressColumn("近似度", format="%d点", min_value=0, max_value=100, help="設定5近似度"),
         "差枚_actual": st.column_config.NumberColumn("差枚", format="%+d"),
         "結果_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
         "結果_BIG": st.column_config.NumberColumn("BIG", format="%d"),
         "結果_BIG確率分母": st.column_config.NumberColumn("B確率", format="1/%d"),
         "結果_REG": st.column_config.NumberColumn("REG", format="%d"),
         "結果_REG確率分母": st.column_config.NumberColumn("R確率", format="1/%d"),
-        "REG不足分": st.column_config.NumberColumn("R過不足", format="%+.1f"),
+        "REG不足分": st.column_config.NumberColumn("R不足", format="%+.1f", help="REG過不足"),
     }
 
     if 'prediction_score' in merged_df.columns:
@@ -635,7 +717,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     )
 
 # --- ページ描画関数: AI学習データ分析 (勝利の法則) ---
-def render_feature_analysis_page(df_train, df_importance=None):
+def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
     base_analysis_df = df_train.copy()
 
     if base_analysis_df.empty:
@@ -652,11 +734,11 @@ def render_feature_analysis_page(df_train, df_importance=None):
     if selected_shop == '全店舗':
         analysis_df = base_analysis_df.copy()
         st.header("🔬 AI学習データ分析 (勝利の法則) - 全店舗")
-        st.caption("過去の全データから、「勝った台（翌日プラス差枚）」と「負けた台」の傾向を分析し、勝ちやすい台の特徴を可視化します。")
+        st.caption("過去の全データから、「翌日高設定挙動になった台」の傾向を分析し、高設定が入りやすい台の特徴を可視化します。")
     else:
         analysis_df = base_analysis_df[base_analysis_df[shop_col] == selected_shop].copy()
         st.header(f"🔬 AI学習データ分析 (勝利の法則) - {selected_shop}")
-        st.caption(f"【{selected_shop}】の過去データから、「勝った台」と「負けた台」の傾向を分析し、この店で勝ちやすい台の特徴を可視化します。")
+        st.caption(f"【{selected_shop}】の過去データから、この店で高設定が入りやすい台の特徴を可視化します。")
 
     if analysis_df.empty:
         st.warning("選択された店舗の分析データがありません。")
@@ -665,9 +747,9 @@ def render_feature_analysis_page(df_train, df_importance=None):
     # REG確率分母を計算 (0除算回避)
     analysis_df['REG分母'] = analysis_df['REG確率'].apply(lambda x: int(1/x) if x > 0 else 9999)
     
-    # --- 1. REG確率別の勝率 (最重要) ---
-    st.subheader("📊 REG確率と勝率の関係")
-    st.caption("「REG確率が良い台は本当に翌日勝てるのか？」を検証します。回転数が少ないと確率がブレてノイズになるため、最低回転数で絞り込めます。")
+    # --- 1. REG確率別の翌日高設定率 (最重要) ---
+    st.subheader("📊 REG確率と高設定据え置きの関係")
+    st.caption("「前日のREG確率が良い台は、翌日も高設定のまま（据え置き）になるのか？」を検証します。")
     
     # ノイズ除去用のゲーム数フィルター
     min_g = st.slider("集計対象の最低回転数", min_value=0, max_value=8000, value=3000, step=500, help="指定した回転数以上回っている台のみを集計します。")
@@ -684,7 +766,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
         reg_df['REG区間'] = pd.cut(reg_df['REG分母'], bins=bins, labels=labels)
         
         reg_stats = reg_df.groupby('REG区間', observed=True).agg(
-            勝率=('target', 'mean'),
+            高設定率=('target', 'mean'),
             平均翌日差枚=('next_diff', 'mean'),
             サンプル数=('target', 'count')
         ).reset_index()
@@ -694,8 +776,8 @@ def render_feature_analysis_page(df_train, df_importance=None):
         base = alt.Chart(reg_stats).encode(x=alt.X('REG区間', title='前日のREG確率区分'))
         
         bar = base.mark_bar(color='#66BB6A', opacity=0.7).encode(
-            y=alt.Y('勝率', axis=alt.Axis(format='%', title='勝率')),
-            tooltip=['REG区間', alt.Tooltip('勝率', format='.1%'), 'サンプル数', '信頼度']
+            y=alt.Y('高設定率', axis=alt.Axis(format='%', title='高設定率')),
+            tooltip=['REG区間', alt.Tooltip('高設定率', format='.1%'), 'サンプル数', '信頼度']
         )
         
         line = base.mark_line(color='#FF7043', point=True).encode(
@@ -725,9 +807,9 @@ def render_feature_analysis_page(df_train, df_importance=None):
         )
         st.altair_chart(chart_g, use_container_width=True)
 
-    # --- 3. 前日差枚の影響 (上げ狙い vs 据え置き) ---
+    # --- 3. 前日差枚と高設定率 ---
     with col2:
-        st.markdown("**📉 前日差枚と翌日の勝率**")
+        st.markdown("**📉 前日差枚と翌日の高設定率**")
         # 差枚をビン分割
         d_bins = [-10000, -2000, -500, 500, 2000, 10000]
         d_labels = ['大負け', '負け', 'トントン', '勝ち', '大勝ち']
@@ -737,7 +819,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
         
         chart_d = alt.Chart(d_stats).mark_bar(color='#FFA726').encode(
             x=alt.X('差枚区間', title='前日の結果', sort=None),
-            y=alt.Y('target', title='翌日勝率', axis=alt.Axis(format='%'))
+            y=alt.Y('target', title='翌日高設定率', axis=alt.Axis(format='%'))
         )
         st.altair_chart(chart_d, use_container_width=True)
 
@@ -746,13 +828,24 @@ def render_feature_analysis_page(df_train, df_importance=None):
     st.subheader("🎉 イベントランク別の設定投入傾向")
     st.caption(f"指定した回転数（{min_g}G）以上回っている台のうち、「REG確率が1/300より良い台（高設定挙動）」の割合をイベントの強さごとに比較します。")
     
-    if 'イベントランク' in reg_df.columns:
+    if df_events is not None and not df_events.empty and shop_col in reg_df.columns:
         event_df = reg_df.copy()
+        
+        # 既存の 'イベントランク' カラムがある場合は翌日用のものなので削除
+        if 'イベントランク' in event_df.columns:
+            event_df = event_df.drop(columns=['イベントランク'])
+            
+        events_unique = df_events.drop_duplicates(subset=['店名', 'イベント日付'], keep='last').copy()
+        if 'イベントランク' in events_unique.columns:
+            event_df = pd.merge(event_df, events_unique[['店名', 'イベント日付', 'イベントランク']], left_on=[shop_col, '対象日付'], right_on=['店名', 'イベント日付'], how='left')
+        else:
+            event_df['イベントランク'] = np.nan
+            
         # NaNや空文字を「通常日」として扱う
         event_df['イベントランク'] = event_df['イベントランク'].fillna('通常日').replace('', '通常日')
         
-        # REG分母が300以下の台を高設定挙動とみなす
-        event_df['高設定挙動'] = (event_df['REG分母'] <= 300).astype(int)
+        # 機種別基準を適用した 'is_win' を高設定フラグとして利用
+        event_df['高設定挙動'] = event_df.get('is_win', (event_df['REG分母'] <= 260).astype(int))
         
         event_stats = event_df.groupby('イベントランク').agg(
             高設定投入率=('高設定挙動', 'mean'),
@@ -771,7 +864,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
             with col_e1:
                 chart_e = alt.Chart(event_stats).mark_bar(color='#AB47BC', opacity=0.8).encode(
                     x=alt.X('イベントランク', sort=[k for k in rank_order.keys()], title='イベントの強さ'),
-                    y=alt.Y('高設定投入率', axis=alt.Axis(format='%', title='REG 1/300以上の割合')),
+                    y=alt.Y('高設定投入率', axis=alt.Axis(format='%', title='高設定(設定5基準)の割合')),
                     tooltip=['イベントランク', alt.Tooltip('高設定投入率', format='.1%'), 'サンプル数', '信頼度']
                 ).interactive()
                 st.altair_chart(chart_e, use_container_width=True)
@@ -791,7 +884,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
         else:
             st.info("イベントランクが登録されたデータがまだありません。サイドバーからイベントを登録すると傾向が表示されます。")
     else:
-        st.info("イベントデータが結合されていません。")
+        st.info("イベントデータが登録されていないか、結合に失敗しました。")
 
     # --- 5. 予測日ベースの曜日・末尾別の傾向 ---
     st.divider()
@@ -808,7 +901,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 wd_df['曜日'] = wd_df['target_weekday'].map(weekdays_map)
 
                 wd_stats = wd_df.groupby(['target_weekday', '曜日']).agg(
-                    勝率=('target', 'mean'),
+                    高設定率=('target', 'mean'),
                     平均翌日差枚=('next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('target_weekday')
@@ -821,14 +914,14 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         x=alt.X('曜日', sort=[weekdays_map[i] for i in range(7)], title='予測日の曜日'),
                         y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                         color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                        tooltip=['曜日', alt.Tooltip('勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                        tooltip=['曜日', alt.Tooltip('高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_wd, use_container_width=True)
                 with col_w2:
                     st.dataframe(
-                        wd_stats[['曜日', '勝率', '平均翌日差枚', 'サンプル数', '信頼度']],
+                        wd_stats[['曜日', '高設定率', '平均翌日差枚', 'サンプル数', '信頼度']],
                         column_config={
-                            "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
                             "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                         },
                         hide_index=True,
@@ -841,7 +934,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
             if '末尾番号' in reg_df.columns:
                 end_df = reg_df.dropna(subset=['末尾番号']).copy()
                 end_stats = end_df.groupby('末尾番号').agg(
-                    勝率=('target', 'mean'),
+                    高設定率=('target', 'mean'),
                     平均翌日差枚=('next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('末尾番号')
@@ -855,14 +948,14 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         x=alt.X('末尾番号', title='末尾番号', sort=None),
                         y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                         color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                        tooltip=['末尾番号', alt.Tooltip('勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                        tooltip=['末尾番号', alt.Tooltip('高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_end, use_container_width=True)
                 with col_e2:
                     st.dataframe(
-                        end_stats[['末尾番号', '勝率', '平均翌日差枚', 'サンプル数', '信頼度']],
+                        end_stats[['末尾番号', '高設定率', '平均翌日差枚', 'サンプル数', '信頼度']],
                         column_config={
-                            "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
                             "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                         },
                         hide_index=True,
@@ -884,17 +977,17 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 reg_lead_df = reg_df.copy()
                 def classify_reg_lead(row):
                     if row['REG'] > row['BIG']:
-                        if row.get('REG分母', 9999) <= 300:
-                            return "REG先行 & REG確率1/300以上 (高設定不発候補)"
+                        if row.get('is_win', 0) == 1:
+                            return "REG先行 & 機種別高設定基準クリア (高設定不発候補)"
                         else:
-                            return "REG先行 & REG確率1/300未満"
+                            return "REG先行 & 基準未達"
                     else:
                         return "BIG先行 または 同数"
                 
                 reg_lead_df['REG先行分類'] = reg_lead_df.apply(classify_reg_lead, axis=1)
                 
                 rl_stats = reg_lead_df.groupby('REG先行分類').agg(
-                    翌日勝率=('target', 'mean'),
+                    翌日高設定率=('target', 'mean'),
                     平均翌日差枚=('next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index()
@@ -904,7 +997,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 st.dataframe(
                     rl_stats,
                     column_config={
-                        "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                         "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                         "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                     },
@@ -914,12 +1007,12 @@ def render_feature_analysis_page(df_train, df_importance=None):
 
                 if shop_col:
                     st.divider()
-                    st.markdown("**🏬 店舗別: 高設定不発候補 (REG先行&1/300以上) の翌日成績**")
+                    st.markdown("**🏬 店舗別: 高設定不発候補 (REG先行&高設定基準) の翌日成績**")
                     st.caption("このパターンが発生したとき、どの店舗が一番底上げ（上げ狙い成功）しやすいかを比較します。")
-                    target_reg_df = reg_lead_df[reg_lead_df['REG先行分類'] == "REG先行 & REG確率1/300以上 (高設定不発候補)"]
+                    target_reg_df = reg_lead_df[reg_lead_df['REG先行分類'] == "REG先行 & 機種別高設定基準クリア (高設定不発候補)"]
                     if not target_reg_df.empty:
                         shop_reg_stats = target_reg_df.groupby(shop_col).agg(
-                            翌日勝率=('target', 'mean'),
+                            翌日高設定率=('target', 'mean'),
                             平均翌日差枚=('next_diff', 'mean'),
                             サンプル数=('target', 'count')
                         ).reset_index().sort_values('平均翌日差枚', ascending=False)
@@ -929,7 +1022,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                             shop_reg_stats,
                             column_config={
                                 shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
@@ -955,7 +1048,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
             diff_pat_df['前日結果'] = diff_pat_df['差枚'].apply(classify_diff_pat)
             
             dp_stats = diff_pat_df.groupby('前日結果').agg(
-                翌日勝率=('target', 'mean'),
+                翌日高設定率=('target', 'mean'),
                 平均翌日差枚=('next_diff', 'mean'),
                 サンプル数=('target', 'count')
             ).reset_index().sort_values('前日結果')
@@ -967,7 +1060,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                     dp_stats,
                     column_config={
                         "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                        "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                         "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                     },
                     hide_index=True,
@@ -978,7 +1071,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                     x=alt.X('前日結果', title='前日差枚'),
                     y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                     color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                    tooltip=['前日結果', alt.Tooltip('翌日勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    tooltip=['前日結果', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                 ).interactive()
                 st.altair_chart(chart_dp, use_container_width=True)
 
@@ -996,7 +1089,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 target_dp_df = diff_pat_df[diff_pat_df['前日結果'] == selected_pattern]
                 if not target_dp_df.empty:
                     shop_dp_stats = target_dp_df.groupby(shop_col).agg(
-                        翌日勝率=('target', 'mean'),
+                        翌日高設定率=('target', 'mean'),
                         平均翌日差枚=('next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('平均翌日差枚', ascending=False)
@@ -1006,7 +1099,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         shop_dp_stats,
                         column_config={
                             shop_col: st.column_config.TextColumn("店舗名"),
-                            "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                             "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
@@ -1017,7 +1110,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
 
         with tab3:
             st.markdown("**🔍 2日間の差枚トレンド (連勝・連敗・V字回復)**")
-            st.caption("前々日と前日の差枚パターンから、翌日の勝率（反発しやすいか、据え置かれやすいか）を検証します。")
+            st.caption("前々日と前日の差枚パターンから、翌日の高設定投入率（反発しやすいか、据え置かれやすいか）を検証します。")
             
             if 'prev_差枚' in reg_df.columns and '差枚' in reg_df.columns:
                 trend2d_df = reg_df.dropna(subset=['prev_差枚']).copy()
@@ -1044,7 +1137,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 trend2d_df['2日間トレンド'] = trend2d_df.apply(classify_2days_trend, axis=1)
                 
                 t2_stats = trend2d_df.groupby('2日間トレンド').agg(
-                    翌日勝率=('target', 'mean'),
+                    翌日高設定率=('target', 'mean'),
                     平均翌日差枚=('next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('2日間トレンド')
@@ -1056,7 +1149,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         t2_stats,
                         column_config={
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                            "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                             "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                         },
                         hide_index=True,
@@ -1067,7 +1160,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         x=alt.X('2日間トレンド', title='2日間の成績パターン'),
                         y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                         color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                        tooltip=['2日間トレンド', alt.Tooltip('翌日勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                        tooltip=['2日間トレンド', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_t2, use_container_width=True)
 
@@ -1086,7 +1179,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                     target_t2_df = trend2d_df[trend2d_df['2日間トレンド'] == selected_t2_pattern]
                     if not target_t2_df.empty:
                         shop_t2_stats = target_t2_df.groupby(shop_col).agg(
-                            翌日勝率=('target', 'mean'),
+                            翌日高設定率=('target', 'mean'),
                             平均翌日差枚=('next_diff', 'mean'),
                             サンプル数=('target', 'count')
                         ).reset_index().sort_values('平均翌日差枚', ascending=False)
@@ -1096,7 +1189,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                             shop_t2_stats,
                             column_config={
                                 shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                                 "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
@@ -1126,7 +1219,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 reset_df['マイナス継続状況'] = reset_df['連続マイナス日数'].apply(classify_cons_minus)
                 
                 r_stats = reset_df.groupby('マイナス継続状況').agg(
-                    翌日勝率=('target', 'mean'),
+                    翌日高設定率=('target', 'mean'),
                     平均翌日差枚=('next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('マイナス継続状況')
@@ -1135,7 +1228,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 st.dataframe(
                     r_stats,
                     column_config={
-                        "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                        "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                         "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                         "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                     },
@@ -1150,17 +1243,17 @@ def render_feature_analysis_page(df_train, df_importance=None):
                     target_reset_df = reset_df[reset_df['連続マイナス日数'] >= 3]
                     if not target_reset_df.empty:
                         shop_reset_stats = target_reset_df.groupby(shop_col).agg(
-                            翌日勝率=('target', 'mean'),
+                            翌日高設定率=('target', 'mean'),
                             平均翌日差枚=('next_diff', 'mean'),
                             サンプル数=('target', 'count')
-                        ).reset_index().sort_values('翌日勝率', ascending=False)
+                        ).reset_index().sort_values('翌日高設定率', ascending=False)
                         shop_reset_stats['信頼度'] = shop_reset_stats['サンプル数'].apply(get_confidence_indicator)
                         
                         st.dataframe(
                             shop_reset_stats,
                             column_config={
                                 shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日勝率": st.column_config.ProgressColumn("リセット(上げ)期待度", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("リセット(上げ)期待度", format="%.1f%%", min_value=0, max_value=1),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                                 "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
@@ -1175,7 +1268,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
 
         with tab5:
             st.markdown("**🔍 「安定台」vs「一撃荒波台」の翌日成績**")
-            st.caption("週間平均差枚がプラスの好調台について、「毎日コツコツ勝っている台（安定台）」と「まぐれで一撃出ただけの台（一撃台）」で翌日の勝率に差があるか検証します。")
+            st.caption("週間平均差枚がプラスの好調台について、「毎日コツコツ高設定挙動の台（安定台）」と「まぐれで一撃出ただけの台（一撃台）」で翌日の高設定率に差があるか検証します。")
             
             if 'mean_7days_diff' in reg_df.columns and 'win_rate_7days' in reg_df.columns:
                 stab_df = reg_df.copy()
@@ -1186,9 +1279,9 @@ def render_feature_analysis_page(df_train, df_importance=None):
                     
                     if mean_7d >= 500:
                         if wr >= 0.5:
-                            return "① 安定・優秀台 (週間+500枚以上 & 勝率50%以上)"
+                            return "① 安定・優秀台 (週間+500枚以上 & 高設定率50%以上)"
                         else:
-                            return "② 一撃・荒波台 (週間+500枚以上 & 勝率50%未満)"
+                            return "② 一撃・荒波台 (週間+500枚以上 & 高設定率50%未満)"
                     elif mean_7d >= 0:
                         return "③ チョイ浮き台 (週間0〜+499枚)"
                     elif mean_7d >= -500:
@@ -1199,7 +1292,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 stab_df['安定度分類'] = stab_df.apply(classify_stability, axis=1)
                 
                 stab_stats = stab_df.groupby('安定度分類').agg(
-                    翌日勝率=('target', 'mean'),
+                    翌日高設定率=('target', 'mean'),
                     平均翌日差枚=('next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('安定度分類')
@@ -1211,7 +1304,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         stab_stats,
                         column_config={
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                            "翌日勝率": st.column_config.ProgressColumn("翌日勝率", format="%.1f%%", min_value=0, max_value=1),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
                             "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                         },
                         hide_index=True,
@@ -1222,7 +1315,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                         x=alt.X('安定度分類', title='台の性質'),
                         y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                         color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                        tooltip=['安定度分類', alt.Tooltip('翌日勝率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                        tooltip=['安定度分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_stab, use_container_width=True)
 
@@ -1231,20 +1324,20 @@ def render_feature_analysis_page(df_train, df_importance=None):
                     st.markdown("**🏬 店舗別: 「一撃・荒波台」の翌日成績（据え置きか回収か）**")
                     st.caption("一撃で出た台をそのまま据え置く店か、しっかり回収する店かを比較します。")
                     
-                    target_stab_df = stab_df[stab_df['安定度分類'] == "② 一撃・荒波台 (週間+500枚以上 & 勝率50%未満)"]
+                    target_stab_df = stab_df[stab_df['安定度分類'] == "② 一撃・荒波台 (週間+500枚以上 & 高設定率50%未満)"]
                     if not target_stab_df.empty:
                         shop_stab_stats = target_stab_df.groupby(shop_col).agg(
-                            翌日勝率=('target', 'mean'),
+                            翌日高設定率=('target', 'mean'),
                             平均翌日差枚=('next_diff', 'mean'),
                             サンプル数=('target', 'count')
-                        ).reset_index().sort_values('翌日勝率', ascending=False)
+                        ).reset_index().sort_values('翌日高設定率', ascending=False)
                         shop_stab_stats['信頼度'] = shop_stab_stats['サンプル数'].apply(get_confidence_indicator)
                         
                         st.dataframe(
                             shop_stab_stats,
                             column_config={
                                 shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日勝率": st.column_config.ProgressColumn("据え置き(勝ち)期待度", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("据え置き期待度", format="%.1f%%", min_value=0, max_value=1),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                                 "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
@@ -1285,7 +1378,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
                 'mean_7days_diff': '台: 直近7日平均差枚',
                 'mean_14days_diff': '台: 直近14日平均差枚',
                 'mean_30days_diff': '台: 直近30日平均差枚',
-                'win_rate_7days': '台: 直近7日間勝率 (一撃排除用)',
+                'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
                 '連続マイナス日数': '台: 連続マイナス日数',
                 'machine_code': '機種',
                 'shop_code': '店舗',
@@ -1307,7 +1400,7 @@ def render_feature_analysis_page(df_train, df_importance=None):
             
             chart_imp = alt.Chart(display_importance).mark_bar(color='#AB47BC').encode(
                 x=alt.X('importance:Q', title='重要度スコア'),
-                y=alt.Y('特徴量名:N', title='特徴量', sort='-x'),
+                y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
                 tooltip=['特徴量名', 'importance']
             ).properties(height=500).interactive()
             
@@ -1875,10 +1968,10 @@ def main():
 
     # --- ハイパーパラメータ調整 (サイドバー) ---
     with st.sidebar.expander("⚙️ AIモデル設定 (調整)", expanded=False):
-        hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, 200, step=50, help="値を大きくすると学習量が増えますが、時間がかかり過学習のリスクもあります。")
-        hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.05, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
-        hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, 20, step=1, help="モデルの複雑さ。スロットのようなノイズが多いデータは小さめ(15〜20)がおすすめです。")
-        hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, 5, step=1, help="木の深さの上限。ノイズ対策として3〜7程度に制限するのがおすすめです。-1は無制限。")
+        hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, 300, step=50, help="値を大きくすると学習量が増えますが、時間がかかり過学習のリスクもあります。")
+        hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.03, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
+        hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, 15, step=1, help="モデルの複雑さ。スロットのようなノイズが多いデータは小さめ(15〜20)がおすすめです。")
+        hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, 4, step=1, help="木の深さの上限。ノイズ対策として3〜7程度に制限するのがおすすめです。-1は無制限。")
         
         hyperparams = {
             'n_estimators': hp_n_estimators,
@@ -1914,21 +2007,22 @@ def main():
         backend.save_prediction_log(df)
         st.session_state['save_requested'] = False
 
-    if page == "全店分析サマリー":
-        render_summary_page(df, df_raw, shop_col, df_events)
-    elif page == "精度検証 (答え合わせ)":
-        df_pred_log = backend.load_prediction_log()
-        render_verification_page(df_pred_log, df_verify, df, df_raw)
-    elif page == "AI傾向分析 (勝利の法則)":
-        render_feature_analysis_page(df_verify, df_importance)
-    elif page == "島マスター管理":
-        render_island_master_page(df_raw)
-    elif page == "イベント管理":
-        render_event_management_page()
-    elif page == "💰 マイ収支管理":
-        render_my_balance_page(df_raw)
-    else:
-        shop_detail_page.render_shop_detail_page(df, df_raw, shop_col, df_events, df_verify)
+    with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
+        if page == "全店分析サマリー":
+            render_summary_page(df, df_raw, shop_col, df_events)
+        elif page == "精度検証 (答え合わせ)":
+            df_pred_log = backend.load_prediction_log()
+            render_verification_page(df_pred_log, df_verify, df, df_raw)
+        elif page == "AI傾向分析 (勝利の法則)":
+            render_feature_analysis_page(df_verify, df_importance, df_events)
+        elif page == "島マスター管理":
+            render_island_master_page(df_raw)
+        elif page == "イベント管理":
+            render_event_management_page()
+        elif page == "💰 マイ収支管理":
+            render_my_balance_page(df_raw)
+        else:
+            shop_detail_page.render_shop_detail_page(df, df_raw, shop_col, df_events, df_verify)
 
 if __name__ == "__main__":
     main()
