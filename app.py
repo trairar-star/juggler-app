@@ -1095,6 +1095,28 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                 else:
                     actual_df_day = pd.DataFrame()
 
+                # --- 実際のランキングTop10を事前に計算 (照合用) ---
+                actual_top10_machines = []
+                if not actual_df_day.empty:
+                    act_g = pd.to_numeric(actual_df_day['累計ゲーム'], errors='coerce').fillna(0)
+                    act_b = pd.to_numeric(actual_df_day['BIG'], errors='coerce').fillna(0)
+                    act_r = pd.to_numeric(actual_df_day['REG'], errors='coerce').fillna(0)
+                    actual_df_day['合算回数'] = act_b + act_r
+                    actual_df_day['BIG確率分母'] = np.where(act_b > 0, act_g / act_b, 0).astype(int)
+                    actual_df_day['REG確率分母'] = np.where(act_r > 0, act_g / act_r, 0).astype(int)
+                    actual_df_day['合算確率分母'] = np.where(actual_df_day['合算回数'] > 0, act_g / actual_df_day['合算回数'], 0).astype(int)
+                    
+                    if rank_metric == "差枚":
+                        actual_df_day = actual_df_day.sort_values('差枚', ascending=False).head(10)
+                    else:
+                        actual_df_day = actual_df_day[actual_df_day['累計ゲーム'] >= 3000]
+                        if rank_metric == "合算確率":
+                            actual_df_day = actual_df_day[actual_df_day['合算確率分母'] > 0].sort_values('合算確率分母', ascending=True).head(10)
+                        else:
+                            actual_df_day = actual_df_day[actual_df_day['REG確率分母'] > 0].sort_values('REG確率分母', ascending=True).head(10)
+                            
+                    actual_top10_machines = actual_df_day['台番号'].tolist()
+
                 with col_pred:
                     if selected_machine != 'すべての機種':
                         st.markdown(f"##### 🤖 AI予測ランキング ({selected_machine} Top 10)")
@@ -1108,10 +1130,15 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         else:
                             pred_df_day['予想設定5以上確率'] = 0
 
-                        display_cols_pred = ['台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
+                        # トップ10ランクインのマーク
+                        pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in actual_top10_machines else '')
+
+                        display_cols_pred = ['台番号', '機種名', '予想設定5以上確率', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母', '的中']
                         
                         def highlight_positive(row):
-                            if pd.notna(row['差枚_actual']) and row['差枚_actual'] > 0:
+                            if row.get('的中', '') == '🎯':
+                                return ['background-color: rgba(255, 215, 0, 0.3)'] * len(row) # 的中なら少し強めの黄色
+                            elif pd.notna(row['差枚_actual']) and row['差枚_actual'] > 0:
                                 return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
                             return [''] * len(row)
                             
@@ -1128,6 +1155,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                                 "結果_BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
                                 "結果_REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
                                 "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
+                                "的中": st.column_config.TextColumn("的中", width="small"),
                             },
                             hide_index=True,
                             use_container_width=True
@@ -1141,27 +1169,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         st.markdown(f"##### 🎰 実際の{rank_metric}ランキング (店全体 Top 10)")
                     st.caption(f"※実稼働日: {date_str_actual}")
                     if actual_df_day.empty:
-                        st.info("この日の結果データがありません。")
-                    else:
-                        act_g = pd.to_numeric(actual_df_day['累計ゲーム'], errors='coerce').fillna(0)
-                        act_b = pd.to_numeric(actual_df_day['BIG'], errors='coerce').fillna(0)
-                        act_r = pd.to_numeric(actual_df_day['REG'], errors='coerce').fillna(0)
-                        actual_df_day['合算回数'] = act_b + act_r
-                        actual_df_day['BIG確率分母'] = np.where(act_b > 0, act_g / act_b, 0).astype(int)
-                        actual_df_day['REG確率分母'] = np.where(act_r > 0, act_g / act_r, 0).astype(int)
-                        actual_df_day['合算確率分母'] = np.where(actual_df_day['合算回数'] > 0, act_g / actual_df_day['合算回数'], 0).astype(int)
-                        
-                        if rank_metric == "差枚":
-                            actual_df_day = actual_df_day.sort_values('差枚', ascending=False).head(10)
-                        else:
-                            actual_df_day = actual_df_day[actual_df_day['累計ゲーム'] >= 3000]
-                            if rank_metric == "合算確率":
-                                actual_df_day = actual_df_day[actual_df_day['合算確率分母'] > 0].sort_values('合算確率分母', ascending=True).head(10)
-                            else:
-                                actual_df_day = actual_df_day[actual_df_day['REG確率分母'] > 0].sort_values('REG確率分母', ascending=True).head(10)
-
-                        if actual_df_day.empty:
-                            st.info(f"条件(3000G以上など)を満たす台がありません。")
+                        st.info("条件を満たす結果データがありません。")
                         else:
                             actual_df_day = actual_df_day.reset_index(drop=True)
                             actual_df_day.index = actual_df_day.index + 1
