@@ -19,142 +19,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- ページ描画関数: 全店分析サマリー ---
-def render_summary_page(df, df_raw, shop_col, df_events=None):
-    st.header("📊 全店分析サマリー")
-    
-    if shop_col in df.columns:
-        st.subheader("🏬 店舗別 期待度ランキング")
-        
-        # 店舗ごとの集計
-        shop_stats = df.groupby(shop_col).agg(
-            平均スコア=('prediction_score', 'mean'),
-            推奨台数=('prediction_score', lambda x: (x >= 0.70).sum()),
-            全台数=('台番号', 'nunique')
-        ).reset_index()
-        
-        # 平均スコアが高い順にソート
-        shop_stats = shop_stats.sort_values('平均スコア', ascending=False)
-        
-        st.dataframe(
-            shop_stats,
-            column_config={
-                shop_col: st.column_config.TextColumn("店舗"),
-                "平均スコア": st.column_config.ProgressColumn("期待度", min_value=0, max_value=1.0, format="%.2f", help="店舗全体の平均的な設定5以上確率"),
-                "推奨台数": st.column_config.NumberColumn("推奨", format="%d台", help="AI期待度が70%以上の台数"),
-                "全台数": st.column_config.NumberColumn("全台", format="%d台"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        st.divider()
-        
-        # --- 店舗の質 vs 量 分析 (散布図) ---
-        st.subheader("📊 店舗の質 vs 量 分析")
-        st.caption("横軸が「推奨台数（量）」、縦軸が「平均設定5以上確率（質）」です。右上に位置するほど優良店と判断できます。")
-
-        if not shop_stats.empty:
-            # 散布図用に店舗名をインデックスに設定
-            chart_data = shop_stats.set_index(shop_col)
-            st.scatter_chart(
-                chart_data,
-                x='推奨台数',
-                y='平均スコア',
-                size='全台数',
-                color="#FF4B4B" # Red color for bubbles
-            )
-        st.divider()
-        
-        # --- 月間トレンド分析 (全店比較) ---
-        if not df_raw.empty and '対象日付' in df_raw.columns:
-            st.subheader("📈 店舗別の強さ推移 (月間トレンド)")
-            st.caption("各店舗の「高設定挙動台（REG確率 1/300以上）」の投入割合が、月ごとにどう変化しているかを分析します。最近勢いのある店舗を見つけるのに役立ちます。")
-
-            trend_df = df_raw.copy()
-            
-            # --- 絞り込みフィルターUI ---
-            f_col1, f_col2 = st.columns(2)
-            filter_type = f_col1.selectbox("集計対象の絞り込み", ["すべて", "曜日で絞る", "イベント日で絞る"])
-            
-            if filter_type == "曜日で絞る":
-                day_options = ["平日 (月〜金)", "週末 (土・日)", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]
-                selected_day = f_col2.selectbox("曜日を選択", day_options)
-                trend_df['weekday'] = trend_df['対象日付'].dt.dayofweek
-                if selected_day == "平日 (月〜金)": trend_df = trend_df[trend_df['weekday'] < 5]
-                elif selected_day == "週末 (土・日)": trend_df = trend_df[trend_df['weekday'] >= 5]
-                else:
-                    day_idx = ["月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"].index(selected_day)
-                    trend_df = trend_df[trend_df['weekday'] == day_idx]
-                    
-            elif filter_type == "イベント日で絞る":
-                if df_events is not None and not df_events.empty:
-                    rank_options = ["すべてのイベント"] + [r for r in ["S", "A", "B", "C"] if r in df_events['イベントランク'].values]
-                    selected_rank = f_col2.selectbox("イベントランク", rank_options)
-                    events_subset = df_events.drop_duplicates(subset=['店名', 'イベント日付']).copy()
-                    if selected_rank != "すべてのイベント":
-                        events_subset = events_subset[events_subset['イベントランク'] == selected_rank]
-                    trend_df = pd.merge(trend_df, events_subset[['店名', 'イベント日付']], left_on=[shop_col, '対象日付'], right_on=['店名', 'イベント日付'], how='inner')
-                else:
-                    f_col2.info("登録されたイベントがありません")
-                    trend_df = pd.DataFrame()
-
-            if trend_df.empty:
-                st.warning("指定した条件に一致するデータがありません。")
-            else:
-                # --- 低回転ノイズの除外 ---
-                # 分母が膨らんで確率が下がるのを防ぐため、1000G未満の未稼働・即ヤメ台は集計から除外する
-                trend_df = trend_df[trend_df['累計ゲーム'] >= 1000].copy()
-                
-                trend_df['年月'] = trend_df['対象日付'].dt.strftime('%Y-%m')
-                
-                # 機種別の設定5基準(REGまたは合算)で高設定挙動を定義
-                specs = backend.get_machine_specs()
-                spec_reg = trend_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-                spec_tot = trend_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                trend_df['合算確率'] = (trend_df['BIG'] + trend_df['REG']) / trend_df['累計ゲーム'].replace(0, np.nan)
-                
-                # 高設定の判定には「3000G以上回っていること」を条件に加え、低回転での上振れノイズを排除
-                trend_df['高設定'] = ((trend_df['累計ゲーム'] >= 3000) & ((trend_df['REG確率'] >= spec_reg) | (trend_df['合算確率'] >= spec_tot))).astype(int)
-
-                trend_stats = trend_df.groupby(['年月', shop_col]).agg(
-                    高設定投入率=('高設定', 'mean'),
-                    平均差枚=('差枚', 'mean'),
-                    集計台数=('台番号', 'count')
-                ).reset_index()
-
-                trend_chart = alt.Chart(trend_stats).mark_line(point=True, strokeWidth=3).encode(
-                    x=alt.X('年月', title='年月'),
-                    y=alt.Y('高設定投入率', title='高設定投入率 (設定5基準)', axis=alt.Axis(format='%')),
-                    color=alt.Color(f'{shop_col}:N', title='店舗名'),
-                    tooltip=['年月', shop_col, alt.Tooltip('高設定投入率', format='.1%'), alt.Tooltip('平均差枚', format='+.0f'), '集計台数']
-                ).interactive()
-
-                st.altair_chart(trend_chart, use_container_width=True)
-                
-                # --- 最新月の店舗別成績一覧 ---
-                st.divider()
-                latest_month = trend_df['年月'].max()
-                st.markdown(f"**🏅 {latest_month} の店舗別成績 (絞り込み適用)**")
-                
-                latest_month_df = trend_df[trend_df['年月'] == latest_month]
-                latest_stats = latest_month_df.groupby(shop_col).agg(
-                    平均差枚=('差枚', 'mean'),
-                    高設定率=('高設定', 'mean'),
-                    集計台数=('台番号', 'count')
-                ).reset_index().sort_values('高設定率', ascending=False)
-                
-                st.dataframe(
-                    latest_stats,
-                    column_config={
-                        shop_col: st.column_config.TextColumn("店舗"),
-                        "平均差枚": st.column_config.NumberColumn("差枚", format="%+d枚", help="平均差枚数"),
-                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
-                        "集計台数": st.column_config.NumberColumn("台数", format="%d台")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-
 # --- ページ描画関数: 精度検証 (答え合わせ) ---
 def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.header("✅ 精度検証 (保存データの答え合わせ)")
@@ -361,9 +225,24 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         score_b = max(0, 20 + (diff_b * penalty_big if diff_b < 0 else 0))
         
         total_score = score_r + score_b
-        # 極端な低稼働（1000G未満）の場合のみ指定の減点率を適用
+        
+        # --- 回転数（ゲーム数）による信頼度補正（いい塩梅の調整） ---
+        # 1. 稼働が十分でない（5000G未満）場合：まぐれ上振れの可能性を考慮し、最大20%の範囲で徐々に割り引く
+        if g < 5000:
+            # 例: 1000Gで約0.84倍、3000Gで約0.92倍、5000Gで1.0倍
+            multiplier = 0.80 + (g / 5000.0) * 0.20
+            total_score *= multiplier
+            
+        # 2. 極端な低稼働（1000G未満）：サイドバーの設定（low_g_penalty）をさらに強力に適用
         if g < 1000:
-            total_score *= (1 - ((1000 - g) / 1000) * (low_g_penalty / 100.0))
+            total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
+            
+        # 3. 超高稼働（7000G以上）：本物の高設定の証拠として、不足が少ない優秀台にボーナス加点
+        if g >= 7000 and diff_r >= -1.0: # REGが極端に不足していなければ加点対象
+            # 7000Gで+0点、8000Gで+2点、9500G以上で最大+5点のボーナス
+            bonus = min(5.0, (g - 7000) / 500.0)
+            total_score = min(100.0, total_score + bonus)
+            
         return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r])
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
@@ -377,7 +256,16 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     selected_shop = '全店舗'
     if shop_col in base_df.columns:
         shops = ['全店舗'] + sorted(list(base_df[shop_col].unique()))
-        selected_shop = st.selectbox("分析対象の店舗を選択", shops)
+        
+        default_index = 0
+        saved_shop = st.session_state.get("global_selected_shop", "全店舗")
+        if saved_shop in ["全て", "店舗を選択してください"]:
+            saved_shop = "全店舗"
+        if saved_shop in shops:
+            default_index = shops.index(saved_shop)
+            
+        selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="verification_shop")
+        st.session_state["global_selected_shop"] = selected_shop
 
     if selected_shop == '全店舗':
         merged_df = base_df.copy()
@@ -1031,7 +919,13 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
             
             shops_in_date = sorted(merged_df[merged_df['対象日付'].dt.date == selected_date][shop_col].unique())
             if shops_in_date:
-                compare_shop = st.selectbox("🏬 比較する店舗を選択", shops_in_date, key="compare_shop")
+                default_index = 0
+                saved_shop = st.session_state.get("global_selected_shop", "")
+                if saved_shop in shops_in_date:
+                    default_index = shops_in_date.index(saved_shop)
+                    
+                compare_shop = st.selectbox("🏬 比較する店舗を選択", shops_in_date, index=default_index, key="compare_shop")
+                st.session_state["global_selected_shop"] = compare_shop
             else:
                 compare_shop = None
             
@@ -1583,32 +1477,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                     ).interactive()
                     st.altair_chart(chart_rl, use_container_width=True)
 
-                if shop_col and selected_shop == '全店舗':
-                    st.divider()
-                    st.markdown("**🏬 店舗別: 完全不発台 (REG先行&BB欠損マイナス) の翌日成績**")
-                    st.caption("このパターンが発生したとき、どの店舗が一番底上げ（上げ狙い成功）しやすいかを比較します。")
-                    target_reg_df = reg_lead_df[reg_lead_df['REG先行分類'] == "① REG先行 & 差枚マイナス (BB欠損・完全不発)"]
-                    if not target_reg_df.empty:
-                        shop_reg_stats = target_reg_df.groupby(shop_col).agg(
-                            翌日高設定率=('target', 'mean'),
-                            平均翌日差枚=('next_diff', 'mean'),
-                            サンプル数=('target', 'count')
-                        ).reset_index().sort_values('平均翌日差枚', ascending=False)
-                        shop_reg_stats['信頼度'] = shop_reg_stats['サンプル数'].apply(get_confidence_indicator)
-                        
-                        st.dataframe(
-                            shop_reg_stats,
-                            column_config={
-                                shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("現在、該当するパターンのデータはありません。")
             else:
                 st.info("BIG/REG回数のデータがありません。")
 
@@ -1655,41 +1523,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                 ).interactive()
                 st.altair_chart(chart_dp, use_container_width=True)
 
-            if shop_col and selected_shop == '全店舗':
-                st.divider()
-                st.markdown("**🏬 店舗別: パターン別翌日成績の比較**")
-                
-                patterns = sorted(diff_pat_df['前日結果'].unique())
-                selected_pattern = st.selectbox(
-                    "比較する前日パターンを選択して、店舗ごとの扱いを確認",
-                    patterns,
-                    index=0
-                )
-                
-                target_dp_df = diff_pat_df[diff_pat_df['前日結果'] == selected_pattern]
-                if not target_dp_df.empty:
-                    shop_dp_stats = target_dp_df.groupby(shop_col).agg(
-                        翌日高設定率=('target', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
-                        サンプル数=('target', 'count')
-                    ).reset_index().sort_values('平均翌日差枚', ascending=False)
-                    shop_dp_stats['信頼度'] = shop_dp_stats['サンプル数'].apply(get_confidence_indicator)
-                    
-                    st.dataframe(
-                        shop_dp_stats,
-                        column_config={
-                            shop_col: st.column_config.TextColumn("店舗名"),
-                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                            "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
-                else:
-                    st.info("現在、該当するパターンのデータはありません。")
-
             st.divider()
             st.markdown("**📉 大凹み台の「総ゲーム数」別 反発期待度**")
             st.caption("前日大きく凹んだ(-1000枚以下)台について、あまり回されずに放置された台と、タコ粘りされて凹んだ台で翌日の反発(上げ)期待度がどう違うか検証します。")
@@ -1728,35 +1561,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                         tooltip=['G数区間', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_bl, use_container_width=True)
-                
-                if shop_col and selected_shop == '全店舗':
-                    st.divider()
-                    st.markdown("**🏬 店舗別: タコ粘り大凹み台 (7000G~ & -1000枚以下) の翌日成績**")
-                    st.caption("たくさん回されて大きく負けた台に対して、翌日しっかり「お詫び（上げ・据え置き）」をしてくれる店舗を比較します。")
-                    
-                    target_bl_df = big_lose_df[big_lose_df['G数区間'] == '④ 7000G~ (タコ粘り)']
-                    if not target_bl_df.empty:
-                        shop_bl_stats = target_bl_df.groupby(shop_col).agg(
-                            翌日高設定率=('target', 'mean'),
-                            平均翌日差枚=('next_diff', 'mean'),
-                            サンプル数=('target', 'count')
-                        ).reset_index().sort_values('翌日高設定率', ascending=False)
-                        shop_bl_stats['信頼度'] = shop_bl_stats['サンプル数'].apply(get_confidence_indicator)
-                        
-                        st.dataframe(
-                            shop_bl_stats,
-                            column_config={
-                                shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("現在、該当するパターンのデータはありません。")
             else:
                 st.info("大凹み（-1000枚以下）のデータがありません。")
 
@@ -1816,41 +1620,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                     ).interactive()
                     st.altair_chart(chart_t2, use_container_width=True)
 
-                if shop_col and selected_shop == '全店舗':
-                    st.divider()
-                    st.markdown("**🏬 店舗別: 2日間トレンド別 翌日成績の比較**")
-                    
-                    t2_patterns = sorted(trend2d_df['2日間トレンド'].unique())
-                    selected_t2_pattern = st.selectbox(
-                        "比較する2日間のパターンを選択",
-                        t2_patterns,
-                        index=0,
-                        key="select_t2_pattern"
-                    )
-                    
-                    target_t2_df = trend2d_df[trend2d_df['2日間トレンド'] == selected_t2_pattern]
-                    if not target_t2_df.empty:
-                        shop_t2_stats = target_t2_df.groupby(shop_col).agg(
-                            翌日高設定率=('target', 'mean'),
-                            平均翌日差枚=('next_diff', 'mean'),
-                            サンプル数=('target', 'count')
-                        ).reset_index().sort_values('平均翌日差枚', ascending=False)
-                        shop_t2_stats['信頼度'] = shop_t2_stats['サンプル数'].apply(get_confidence_indicator)
-                        
-                        st.dataframe(
-                            shop_t2_stats,
-                            column_config={
-                                shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("現在、該当するパターンのデータはありません。")
             else:
                 st.info("前々日の差枚データが不足しています。")
 
@@ -1900,33 +1669,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                     ).interactive()
                     st.altair_chart(chart_r, use_container_width=True)
 
-                if shop_col and selected_shop == '全店舗':
-                    st.divider()
-                    st.markdown("**🏬 店舗別: 3日以上連続マイナス台の『上げリセット期待度』**")
-                    
-                    target_reset_df = reset_df[reset_df['連続マイナス日数'] >= 3]
-                    if not target_reset_df.empty:
-                        shop_reset_stats = target_reset_df.groupby(shop_col).agg(
-                            翌日高設定率=('target', 'mean'),
-                            平均翌日差枚=('next_diff', 'mean'),
-                            サンプル数=('target', 'count')
-                        ).reset_index().sort_values('翌日高設定率', ascending=False)
-                        shop_reset_stats['信頼度'] = shop_reset_stats['サンプル数'].apply(get_confidence_indicator)
-                        
-                        st.dataframe(
-                            shop_reset_stats,
-                            column_config={
-                                shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日高設定率": st.column_config.ProgressColumn("リセット(上げ)期待度", format="%.1f%%", min_value=0, max_value=1),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("3日以上連続マイナスのデータがまだありません。")
             else:
                 st.info("連続マイナス日数のデータがありません。")
 
@@ -1983,34 +1725,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                     ).interactive()
                     st.altair_chart(chart_stab, use_container_width=True)
 
-                if shop_col and selected_shop == '全店舗':
-                    st.divider()
-                    st.markdown("**🏬 店舗別: 「一撃・荒波台」の翌日成績（据え置きか回収か）**")
-                    st.caption("一撃で出た台をそのまま据え置く店か、しっかり回収する店かを比較します。")
-                    
-                    target_stab_df = stab_df[stab_df['安定度分類'] == "② 一撃・荒波台 (週間+500枚以上 & 高設定率50%未満)"]
-                    if not target_stab_df.empty:
-                        shop_stab_stats = target_stab_df.groupby(shop_col).agg(
-                            翌日高設定率=('target', 'mean'),
-                            平均翌日差枚=('next_diff', 'mean'),
-                            サンプル数=('target', 'count')
-                        ).reset_index().sort_values('翌日高設定率', ascending=False)
-                        shop_stab_stats['信頼度'] = shop_stab_stats['サンプル数'].apply(get_confidence_indicator)
-                        
-                        st.dataframe(
-                            shop_stab_stats,
-                            column_config={
-                                shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日高設定率": st.column_config.ProgressColumn("据え置き期待度", format="%.1f%%", min_value=0, max_value=1),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("該当するデータがありません。")
             else:
                 st.info("週間勝率や平均差枚のデータがありません。")
 
@@ -2069,34 +1783,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
                     ).interactive()
                     st.altair_chart(chart_bb, use_container_width=True)
 
-                if shop_col and selected_shop == '全店舗':
-                    st.divider()
-                    st.markdown("**🏬 店舗別: 超不発台 (BIG 1/400以下 & REG高設定基準) の翌日成績**")
-                    st.caption("BIGが全く引けなかった高設定挙動台に対して、翌日どの店舗が一番上げ(または据え置き)をしてくれるかを比較します。")
-                    
-                    target_bb_df = bb_def_df[bb_def_df['BB欠損分類'] == "① BIG 1/400以下 & REGは高設定基準 (超不発台)"]
-                    if not target_bb_df.empty:
-                        shop_bb_stats = target_bb_df.groupby(shop_col).agg(
-                            翌日高設定率=('target', 'mean'),
-                            平均翌日差枚=('next_diff', 'mean'),
-                            サンプル数=('target', 'count')
-                        ).reset_index().sort_values('平均翌日差枚', ascending=False)
-                        shop_bb_stats['信頼度'] = shop_bb_stats['サンプル数'].apply(get_confidence_indicator)
-                        
-                        st.dataframe(
-                            shop_bb_stats,
-                            column_config={
-                                shop_col: st.column_config.TextColumn("店舗名"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
-                                "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
-                                "サンプル数": st.column_config.NumberColumn("サンプル数", format="%d 台")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                    else:
-                        st.info("現在、該当するパターンのデータはありません。")
             else:
                 st.info("BIG確率のデータがありません。")
 
@@ -2105,16 +1791,13 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
         if 'shop_name' in df_importance.columns:
             display_importance = df_importance[df_importance['shop_name'] == selected_shop].copy()
         else:
-            display_importance = df_importance.copy() if selected_shop == '全店舗' else pd.DataFrame()
+            display_importance = pd.DataFrame()
             
         if not display_importance.empty:
             display_importance = display_importance.sort_values('importance', ascending=False)
             st.divider()
             st.subheader("🧠 AIが重視したポイント (特徴量重要度)")
-            if selected_shop == '全店舗':
-                st.caption("AIが対象日の勝敗を予測する上で、どのデータ（特徴量）を一番重要視したかを示します。（全店舗共通のモデル）")
-            else:
-                st.caption(f"AIが【{selected_shop}】の台を予測する際に、どのデータを一番重要視しているかを示します。（店舗専用の分析モデル）")
+            st.caption(f"AIが【{selected_shop}】の台を予測する際に、どのデータを一番重要視しているかを示します。（店舗専用の分析モデル）")
             
             feature_name_map = {
                 '累計ゲーム': '前日: 累計ゲーム数',
@@ -2155,63 +1838,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
             ).properties(height=500).interactive()
             
             st.altair_chart(chart_imp, use_container_width=True)
-
-            # 多角的 重視ポイント比較表 (全店舗選択時のみ表示)
-            if selected_shop == '全店舗' and 'shop_name' in df_importance.columns:
-                st.divider()
-                st.subheader("🏢 多角的 AI重視ポイント比較表")
-                st.caption("様々な切り口（店舗別・曜日別・イベント有無別）で、AIがどのデータを重視しているか（上位5つ）を一覧で比較します。")
-                
-                tab_shop, tab_wd, tab_ev = st.tabs(["🏬 店舗別", "📅 曜日別", "🎉 イベント有無別"])
-                
-                with tab_shop:
-                    if 'category' in df_importance.columns:
-                        shop_imp_df = df_importance[df_importance['category'] == '店舗'].copy()
-                    else:
-                        shop_imp_df = df_importance[df_importance['shop_name'] != '全店舗'].copy()
-                        
-                    if not shop_imp_df.empty:
-                        shop_imp_df['特徴量名'] = shop_imp_df['feature'].map(lambda x: feature_name_map.get(x, x))
-                        shop_imp_df['rank'] = shop_imp_df.groupby('shop_name')['importance'].rank(method='first', ascending=False)
-                        top5_df = shop_imp_df[shop_imp_df['rank'] <= 5].copy()
-                        pivot_df = top5_df.pivot(index='rank', columns='shop_name', values='特徴量名')
-                        pivot_df.index = [f"第{int(i)}位" for i in pivot_df.index]
-                        pivot_df.columns.name = None
-                        st.dataframe(pivot_df, use_container_width=True)
-                    else:
-                        st.info("店舗別の比較データがありません。")
-
-                with tab_wd:
-                    if 'category' in df_importance.columns:
-                        wd_imp_df = df_importance[df_importance['category'] == '曜日'].copy()
-                        if not wd_imp_df.empty:
-                            wd_imp_df['特徴量名'] = wd_imp_df['feature'].map(lambda x: feature_name_map.get(x, x))
-                            wd_imp_df['rank'] = wd_imp_df.groupby('shop_name')['importance'].rank(method='first', ascending=False)
-                            top5_wd_df = wd_imp_df[wd_imp_df['rank'] <= 5].copy()
-                            pivot_wd_df = top5_wd_df.pivot(index='rank', columns='shop_name', values='特徴量名')
-                            pivot_wd_df.index = [f"第{int(i)}位" for i in pivot_wd_df.index]
-                            pivot_wd_df.columns.name = None
-                            
-                            # カラムを月曜から順に並び替え
-                            wd_order = ['月曜', '火曜', '水曜', '木曜', '金曜', '土曜', '日曜']
-                            cols = [c for c in wd_order if c in pivot_wd_df.columns]
-                            st.dataframe(pivot_wd_df[cols], use_container_width=True)
-                        else:
-                            st.info("曜日別の比較データがありません。")
-
-                with tab_ev:
-                    if 'category' in df_importance.columns:
-                        ev_imp_df = df_importance[df_importance['category'] == 'イベント'].copy()
-                        if not ev_imp_df.empty:
-                            ev_imp_df['特徴量名'] = ev_imp_df['feature'].map(lambda x: feature_name_map.get(x, x))
-                            ev_imp_df['rank'] = ev_imp_df.groupby('shop_name')['importance'].rank(method='first', ascending=False)
-                            top5_ev_df = ev_imp_df[ev_imp_df['rank'] <= 5].copy()
-                            pivot_ev_df = top5_ev_df.pivot(index='rank', columns='shop_name', values='特徴量名')
-                            pivot_ev_df.index = [f"第{int(i)}位" for i in pivot_ev_df.index]
-                            pivot_ev_df.columns.name = None
-                            st.dataframe(pivot_ev_df, use_container_width=True)
-                        else:
-                            st.info("イベント有無別の比較データがありません。")
 
 # --- ページ描画関数: イベント管理 ---
 def render_event_management_page():
@@ -2627,7 +2253,10 @@ def main():
     if "current_page" not in st.session_state:
         st.session_state["current_page"] = "店舗別詳細データ"
         
-    pages = ["店舗別詳細データ", "全店分析サマリー", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "🏆 予測 vs 実際 ランキング", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    if "global_selected_shop" not in st.session_state:
+        st.session_state["global_selected_shop"] = "全て"
+        
+    pages = ["店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "🏆 予測 vs 実際 ランキング", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -2760,9 +2389,7 @@ def main():
         st.session_state['save_requested'] = False
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
-        if page == "全店分析サマリー":
-            render_summary_page(df, df_raw, shop_col, df_events)
-        elif page == "精度検証 (答え合わせ)":
+        if page == "精度検証 (答え合わせ)":
             df_pred_log = backend.load_prediction_log()
             render_verification_page(df_pred_log, df_verify, df, df_raw)
         elif page == "🏆 予測 vs 実際 ランキング":

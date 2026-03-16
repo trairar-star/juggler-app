@@ -55,6 +55,34 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         spec_df = pd.DataFrame(specs[matched_spec_key]).T
         st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
     
+    # --- 打ち時判断アドバイス ---
+    score = float(row.get('prediction_score', 0))
+    games = float(row.get('累計ゲーム', 0))
+    reg_prob = float(row.get('REG確率', 0))
+
+    # AIの期待度が中程度（0.3以上0.75未満）で、ある程度回っている場合にアドバイスを表示
+    if matched_spec_key and games >= 2000 and 0.3 <= score < 0.75:
+        ms = specs[matched_spec_key]
+        # 設定4のREG確率を継続判断の基準とする
+        set4_reg_prob = 1.0 / ms.get("設定4", {"REG": 300.0})["REG"]
+        
+        advice_message = ""
+        if reg_prob < set4_reg_prob * 0.7: # REG確率が設定4基準よりかなり悪い場合
+            stop_games = int(games + 500) # 短めの追加ゲーム数で判断
+            advice_message = (
+                f"現在のAI期待度 ({score*100:.1f}%) とREG確率 (1/{int(1/reg_prob) if reg_prob > 0 else '-'}) から、この台は**続行に注意が必要**です。\n\n"
+                f"**総ゲーム数 {stop_games}G** 時点、または**現在のREG確率が1/{int(1/set4_reg_prob)}に達していなかったら**、一旦終了することをお勧めします。"
+            )
+        elif reg_prob < set4_reg_prob * 1.0: # REG確率が設定4基準より少し悪いか同程度の場合
+            stop_games = int(games + 1000) # やや長めの追加ゲーム数で判断
+            advice_message = (
+                f"現在のAI期待度 ({score*100:.1f}%) とREG確率 (1/{int(1/reg_prob) if reg_prob > 0 else '-'}) から、この台は**様子見が必要**です。\n\n"
+                f"**総ゲーム数 {stop_games}G** 時点、または**現在のREG確率が1/{int(1/set4_reg_prob)}に達していなかったら**、続行を再検討することをお勧めします。"
+            )
+        
+        if advice_message:
+            st.warning(f"⚠️ **打ち時判断アドバイス:**\n\n{advice_message}")
+
     # --- 過去の同曜日成績 ---
     target_wd = row.get('target_weekday', row.get('weekday', -1))
     try: target_wd = int(target_wd)
@@ -202,7 +230,16 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     selected_shop = '全て'
     if shop_col in df.columns:
         shops = ['全て'] + list(df[shop_col].unique())
-        selected_shop = col_filter1.selectbox("店舗名を選択", shops)
+        
+        default_index = 0
+        saved_shop = st.session_state.get("global_selected_shop", "全て")
+        if saved_shop in ["全店舗", "店舗を選択してください"]:
+            saved_shop = "全て"
+        if saved_shop in shops:
+            default_index = shops.index(saved_shop)
+            
+        selected_shop = col_filter1.selectbox("店舗名を選択", shops, index=default_index, key="shop_detail_shop")
+        st.session_state["global_selected_shop"] = selected_shop
         
         if selected_shop != '全て':
             df = df[df[shop_col] == selected_shop]
@@ -230,12 +267,17 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
 
     # --- 店癖トップ5の抽出と明日の候補台へのマッピング ---
     top_trends_df = None
-    worst_trends_df = None # 警戒条件用DFを追加
+    worst_trends_df = None
     base_win_rate = 0
-    if df_train is not None and not df_train.empty and selected_shop != '全て':
-        train_shop = df_train[df_train[shop_col] == selected_shop]
-        if len(train_shop) > 0:
-            base_win_rate = train_shop['target'].mean()
+    
+    if df_train is not None and not df_train.empty and shop_col in df_train.columns:
+        all_trends_dict = {}
+        # 1. 各店舗の店癖を全店舗分計算しておく
+        for s in df_train[shop_col].unique():
+            train_shop = df_train[df_train[shop_col] == s]
+            if len(train_shop) == 0: continue
+            
+            s_base_win_rate = train_shop['target'].mean()
             trends = []
             
             if 'is_corner' in train_shop.columns:
@@ -286,134 +328,147 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                         if wr > best_wr: best_m, best_wr, best_count = m, wr, len(subset)
                 if best_m != -1: trends.append({"id": f"end_{int(best_m)}", "条件": f"末尾【{int(best_m)}】", "高設定率": best_wr, "サンプル": best_count})
 
-            # --- 警戒条件の定義 ---
             if '差枚' in train_shop.columns and 'REG確率' in train_shop.columns:
                 subset = train_shop[(train_shop['差枚'] >= 2000) & (train_shop['REG確率'] < (1/350))]
                 if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
             if 'mean_7days_diff' in train_shop.columns and 'win_rate_7days' in train_shop.columns:
                 subset = train_shop[(train_shop['mean_7days_diff'] >= 500) & (train_shop['win_rate_7days'] < 0.5)]
                 if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 高設定率50%未満)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
-
-            df['店癖マッチ'] = ""
+            
+            s_top_trends_df = None
+            s_worst_trends_df = None
             if trends:
                 all_trends_df = pd.DataFrame(trends)
-                all_trends_df['通常時との差'] = (all_trends_df['高設定率'] - base_win_rate) * 100
+                all_trends_df['通常時との差'] = (all_trends_df['高設定率'] - s_base_win_rate) * 100
+                s_top_trends_df = all_trends_df[all_trends_df['通常時との差'] > 5].sort_values('高設定率', ascending=False).head(3)
+                s_worst_trends_df = all_trends_df[all_trends_df['通常時との差'] < -5].sort_values('高設定率', ascending=True).head(2)
 
-                # 勝率が高いトップ3 (プラス評価)
-                top_trends_df = all_trends_df[all_trends_df['通常時との差'] > 5].sort_values('高設定率', ascending=False).head(3)
+            all_trends_dict[s] = {
+                'base_win_rate': s_base_win_rate,
+                'top_ids': s_top_trends_df['id'].tolist() if s_top_trends_df is not None else [],
+                'worst_ids': s_worst_trends_df['id'].tolist() if s_worst_trends_df is not None else [],
+                'top_df': s_top_trends_df,
+                'worst_df': s_worst_trends_df
+            }
+
+        # 画面表示用変数の設定 (選択された店舗がある場合)
+        if selected_shop != '全て' and selected_shop in all_trends_dict:
+            base_win_rate = all_trends_dict[selected_shop]['base_win_rate']
+            top_trends_df = all_trends_dict[selected_shop]['top_df']
+            worst_trends_df = all_trends_dict[selected_shop]['worst_df']
+
+        # 2. 対象データ (df) に対して店癖マッチとスコア補正を全店舗適用する
+        def apply_trends_to_row(row):
+            s = row.get(shop_col)
+            if s not in all_trends_dict:
+                row['店癖マッチ'] = ""
+                return row
                 
-                # 勝率が低いトップ2 (マイナス評価)
-                worst_trends_df = all_trends_df[all_trends_df['通常時との差'] < -5].sort_values('高設定率', ascending=True).head(2)
+            t_info = all_trends_dict[s]
+            top_ids = t_info['top_ids']
+            worst_ids = t_info['worst_ids']
+            
+            matched_hot = []
+            if "corner" in top_ids and row.get('is_corner') == 1: matched_hot.append("角")
+            if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0): matched_hot.append("BB欠損・不発")
+            if "bb_deficit" in top_ids:
+                b_p = row.get('BIG確率', 0)
+                b_d = 1 / b_p if b_p > 0 else 9999
+                sp_r5 = 1.0 / specs[backend.get_matched_spec_key(row.get('機種名', ''), specs)].get('設定5', {"REG": 260.0})["REG"]
+                if b_d >= 400 and row.get('REG確率', 0) >= sp_r5: matched_hot.append("超不発")
+            if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹")
+            if "taco_lose" in top_ids and row.get('差枚', 0) <= -1000 and row.get('累計ゲーム', 0) >= 7000: matched_hot.append("タコ粘りお詫び")
+            if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発")
+            if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え")
+            if "v_recovery" in top_ids and row.get('prev_差枚', 0) < 0 and row.get('差枚', -1) >= 0: matched_hot.append("V字反発")
+            if "cont_big_lose" in top_ids and row.get('prev_差枚', 0) <= -1000 and row.get('差枚', 0) <= -1000: matched_hot.append("連大凹み")
+            if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え")
+            for tid in top_ids:
+                if tid.startswith("day_") and 'target_date_end_digit' in row:
+                    if row['target_date_end_digit'] == int(tid.split("_")[1]): matched_hot.append(f"{int(tid.split('_')[1])}のつく日")
+                elif tid.startswith("end_") and row.get('末尾番号') == int(tid.split("_")[1]): matched_hot.append(f"末尾{int(tid.split('_')[1])}")
+            
+            matched_cold = []
+            if "big_win_reaction" in worst_ids and row.get('差枚', 0) >= 2000 and row.get('REG確率', 1) < (1/350): matched_cold.append("大勝反動")
+            if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動")
 
-                top_ids = top_trends_df['id'].tolist()
-                worst_ids = worst_trends_df['id'].tolist()
+            hot_str = "🔥" + " ".join(matched_hot) if matched_hot else ""
+            cold_str = "⚠️" + " ".join(matched_cold) if matched_cold else ""
+            
+            match_str = f"{hot_str} {cold_str}".strip()
+            row['店癖マッチ'] = match_str
+            
+            # スコアの再計算
+            score = row.get('prediction_score', 0)
+            if '🔥' in match_str:
+                hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
+                bonus = 0.02 * len(hot_part.split())
+                bonus = min(0.10, bonus) # ボーナスの最大値を +0.10 (10%) に制限
+                score = min(1.0, score + bonus) # 上限は1.0 (100%)
+            if '⚠️' in match_str:
+                cold_part = match_str.split('⚠️')[1].strip()
+                penalty = 0.05 * len(cold_part.split()) # ペナルティは少し重く
+                penalty = min(0.15, penalty) # ペナルティの最大値を -0.15 (15%) に制限
+                score = max(0.0, score - penalty) # 下限は0.0 (0%)
+            row['prediction_score'] = score
+            
+            # 根拠の追記
+            reason = str(row.get('根拠', ''))
+            add_reasons = []
+            if '🔥' in match_str:
+                hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
+                for h in hot_part.split():
+                    if h.startswith("末尾"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で特に勝率が高い『{h}』に合致しています。")
+                    elif h.endswith("のつく日"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗が還元している『{h}』に合致しています。")
+                    elif h == "角": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で設定が入りやすい『角台』に合致しています。")
+                    elif h == "BB欠損・不発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています。")
+                    elif h == "超不発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています。")
+                    elif h == "連凹": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています。")
+                    elif h == "タコ粘りお詫び": add_reasons.append("【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています。")
+                    elif h == "負反発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています。")
+                    elif h == "勝据え": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています。")
+                    elif h == "V字反発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています。")
+                    elif h == "連大凹み": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています。")
+                    elif h == "高設定据え": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています。")
+            if '⚠️' in match_str:
+                cold_part = match_str.split('⚠️')[1].strip()
+                for c in cold_part.split():
+                    if c == "大勝反動": add_reasons.append("【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください。")
+                    elif c == "一撃反動": add_reasons.append("【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください。")
+            
+            if add_reasons:
+                row['根拠'] = (reason + " " + " ".join(add_reasons)).strip()
                 
-                def get_matched_trends(row):
-                    matched_hot = []
-                    if "corner" in top_ids and row.get('is_corner') == 1: matched_hot.append("角")
-                    if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0): matched_hot.append("BB欠損・不発")
-                    if "bb_deficit" in top_ids:
-                        b_p = row.get('BIG確率', 0)
-                        b_d = 1 / b_p if b_p > 0 else 9999
-                        sp_r5 = 1.0 / specs[backend.get_matched_spec_key(row.get('機種名', ''), specs)].get('設定5', {"REG": 260.0})["REG"]
-                        if b_d >= 400 and row.get('REG確率', 0) >= sp_r5: matched_hot.append("超不発")
-                    if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹")
-                    if "taco_lose" in top_ids and row.get('差枚', 0) <= -1000 and row.get('累計ゲーム', 0) >= 7000: matched_hot.append("タコ粘りお詫び")
-                    if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発")
-                    if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え")
-                    if "v_recovery" in top_ids and row.get('prev_差枚', 0) < 0 and row.get('差枚', -1) >= 0: matched_hot.append("V字反発")
-                    if "cont_big_lose" in top_ids and row.get('prev_差枚', 0) <= -1000 and row.get('差枚', 0) <= -1000: matched_hot.append("連大凹み")
-                    if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え")
-                    for tid in top_ids:
-                        if tid.startswith("day_") and 'target_date_end_digit' in row:
-                            if row['target_date_end_digit'] == int(tid.split("_")[1]): matched_hot.append(f"{int(tid.split('_')[1])}のつく日")
-                        elif tid.startswith("end_") and row.get('末尾番号') == int(tid.split("_")[1]): matched_hot.append(f"末尾{int(tid.split('_')[1])}")
-                    
-                    matched_cold = []
-                    if "big_win_reaction" in worst_ids and row.get('差枚', 0) >= 2000 and row.get('REG確率', 1) < (1/350): matched_cold.append("大勝反動")
-                    if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動")
+            return row
 
-                    hot_str = "🔥" + " ".join(matched_hot) if matched_hot else ""
-                    cold_str = "⚠️" + " ".join(matched_cold) if matched_cold else ""
-                    
-                    return f"{hot_str} {cold_str}".strip()
-                df['店癖マッチ'] = df.apply(get_matched_trends, axis=1)
+        df = df.apply(apply_trends_to_row, axis=1)
 
-                # --- 激アツ/警戒条件によるスコア加減算 ---
-                def apply_bonus_penalty(row):
-                    score = row.get('prediction_score', 0)
-                    match_str = row.get('店癖マッチ', '')
-                    
-                    if '🔥' in match_str:
-                        hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
-                        bonus = 0.02 * len(hot_part.split())
-                        bonus = min(0.10, bonus) # ボーナスの最大値を +0.10 (10%) に制限
-                        score = min(1.0, score + bonus) # 上限は1.0 (100%)
-                    
-                    if '⚠️' in match_str:
-                        cold_part = match_str.split('⚠️')[1].strip()
-                        penalty = 0.05 * len(cold_part.split()) # ペナルティは少し重く
-                        penalty = min(0.15, penalty) # ペナルティの最大値を -0.15 (15%) に制限
-                        score = max(0.0, score - penalty) # 下限は0.0 (0%)
-
-                    return score
-                
-                if 'prediction_score' in df.columns:
-                    df['prediction_score'] = df.apply(apply_bonus_penalty, axis=1)
-
-                # --- 根拠に店舗固有の店癖（末尾や特定日など）を追記 ---
-                def append_trend_reasons(row):
-                    reason = row.get('根拠', '')
-                    if pd.isna(reason): reason = ""
-                    else: reason = str(reason)
-                    
-                    match_str = row.get('店癖マッチ', '')
-                    if pd.isna(match_str): match_str = ""
-                    else: match_str = str(match_str)
-                    
-                    add_reasons = []
-                    if '🔥' in match_str:
-                        hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
-                        for h in hot_part.split():
-                            if h.startswith("末尾"):
-                                add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で特に勝率が高い『{h}』に合致しています。")
-                            elif h.endswith("のつく日"):
-                                add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗が還元している『{h}』に合致しています。")
-                            elif h == "角":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で設定が入りやすい『角台』に合致しています。")
-                            elif h == "BB欠損・不発":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています。")
-                            elif h == "超不発":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています。")
-                            elif h == "連凹":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています。")
-                            elif h == "タコ粘りお詫び":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています。")
-                            elif h == "負反発":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています。")
-                            elif h == "勝据え":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています。")
-                            elif h == "V字反発":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています。")
-                            elif h == "連大凹み":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています。")
-                            elif h == "高設定据え":
-                                add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています。")
-                                
-                    if '⚠️' in match_str:
-                        cold_part = match_str.split('⚠️')[1].strip()
-                        for c in cold_part.split():
-                            if c == "大勝反動":
-                                add_reasons.append("【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください。")
-                            elif c == "一撃反動":
-                                add_reasons.append("【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください。")
-                                
-                    if add_reasons:
-                        return (reason + " " + " ".join(add_reasons)).strip()
-                    return reason
-                
-                if '根拠' in df.columns:
-                    df['根拠'] = df.apply(append_trend_reasons, axis=1)
+    # --- 店舗別 期待度ランキング (追加) ---
+    if selected_shop == '全て' and shop_col in df.columns:
+        st.subheader("🏬 店舗別 期待度ランキング")
+        
+        # 店舗ごとの集計
+        shop_stats = df.groupby(shop_col).agg(
+            平均スコア=('prediction_score', 'mean'),
+            推奨台数=('prediction_score', lambda x: (x >= 0.70).sum()),
+            全台数=('台番号', 'nunique')
+        ).reset_index()
+        
+        # 平均スコアが高い順にソート
+        shop_stats = shop_stats.sort_values('平均スコア', ascending=False)
+        
+        st.dataframe(
+            shop_stats,
+            column_config={
+                shop_col: st.column_config.TextColumn("店舗"),
+                "平均スコア": st.column_config.ProgressColumn("期待度", min_value=0, max_value=1.0, format="%.2f", help="店舗全体の平均的な設定5以上確率"),
+                "推奨台数": st.column_config.NumberColumn("推奨", format="%d台", help="AI期待度が70%以上の台数"),
+                "全台数": st.column_config.NumberColumn("全台", format="%d台"),
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+        st.divider()
 
     # --- メインコンテンツ: ランキング表示 (上部に配置) ---
     st.subheader("🏆 予測期待度ランキング (Top 10)")
@@ -678,16 +733,3 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
             day_stats = trend_df.groupby('day')[y_col].mean()
             st.bar_chart(day_stats, color="#00E676" if chart_metric_shop == "平均差枚" else "#AB47BC")
-
-    # --- 視覚化: 機種ごとの分析 ---
-    st.divider()
-    st.subheader("📊 機種別 平均設定5以上確率")
-    
-    if '機種名' in df.columns and 'prediction_score' in df.columns:
-        # 機種ごとの平均設定5以上確率(%)を算出
-        machine_stats = (df.groupby("機種名")["prediction_score"].mean() * 100).sort_values(ascending=False)
-        
-        # 棒グラフで表示
-        st.bar_chart(machine_stats, color="#FF4B4B")
-        
-        st.caption("※ 各機種の予想設定5以上確率の平均値です")
