@@ -88,6 +88,7 @@ def get_matched_spec_key(machine_name, specs):
 # ---------------------------------------------------------
 # データ読み込み・保存関数 (Model / Logic)
 # ---------------------------------------------------------
+@st.cache_resource(ttl=3300)
 def _get_gspread_client():
     """認証クライアントを取得する共通関数"""
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -531,18 +532,13 @@ def delete_my_balance(target_timestamp):
         st.error(f"収支削除エラー: {e}")
         return False
 
-# ---------------------------------------------------------
-# 分析・予測ロジック
-# ---------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_date=None):
-    if df.empty: return df, pd.DataFrame(), pd.DataFrame()
-
+# --- 内部関数: 特徴量作成 ---
+def _generate_features(df, df_events, df_island, target_date):
     if target_date is not None:
         target_ts = pd.to_datetime(target_date)
         df = df[df['対象日付'] < target_ts].copy()
 
-    if df.empty: return df, pd.DataFrame(), pd.DataFrame()
+    if df.empty: return df, []
 
     shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
     
@@ -749,27 +745,12 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
         if f in df.columns: features.append(f)
 
-    train_df = df.dropna(subset=['next_diff']).copy()
-    predict_df = df[df['next_diff'].isna()].copy()
+    return df, features
+
+# --- 内部関数: モデル学習 ---
+def _train_models(train_df, features, hyperparams):
+    shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     
-    # --- 学習データの期間絞り込み（直近データのみ使用） ---
-    train_months = hyperparams.get('train_months', 3) if hyperparams else 3
-    if '対象日付' in train_df.columns and not train_df.empty:
-        max_train_date = train_df['対象日付'].max()
-        cutoff_date = max_train_date - pd.DateOffset(months=train_months)
-        train_df = train_df[train_df['対象日付'] >= cutoff_date]
-
-    if '対象日付' in predict_df.columns and not predict_df.empty:
-        if shop_col:
-            latest_dates = predict_df.groupby(shop_col)['対象日付'].transform('max')
-            predict_df = predict_df[predict_df['対象日付'] == latest_dates]
-        else:
-            max_date = predict_df['対象日付'].max()
-            predict_df = predict_df[predict_df['対象日付'] == max_date]
-        
-    if len(train_df) < 10 or len(predict_df) == 0:
-        return predict_df, pd.DataFrame(), pd.DataFrame()
-
     X, y = train_df[features], train_df['target']
     sample_weights = None
     if '対象日付' in train_df.columns:
@@ -777,10 +758,6 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
         days_diff = (max_date - train_df['対象日付']).dt.days
         sample_weights = 0.995 ** days_diff
     
-    if hyperparams is None:
-        hyperparams = {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4}
-
-    # LightGBMの初期化エラーを防ぐため、パラメータを明示的に渡す
     n_est = hyperparams.get('n_estimators', 300)
     lr = hyperparams.get('learning_rate', 0.03)
     nl = hyperparams.get('num_leaves', 15)
@@ -788,8 +765,6 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
 
     model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     model.fit(X, y, sample_weight=sample_weights)
-    
-    predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
     
     feature_importances_list = []
     feature_importances_list.append(pd.DataFrame({
@@ -865,13 +840,13 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     
     reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
     reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
-    predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
 
-    train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
-    train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
+    return model, reg_model, feature_importances
 
-    # --- 設定5以上の挙動台をスコア加算して常におすすめ抽出されやすくする ---
+# --- 内部関数: 予測の後処理 ---
+def _postprocess_predictions(predict_df, train_df, hyperparams):
     specs = get_machine_specs()
+    
     def apply_setting5_boost(row):
         score = row.get('prediction_score', 0)
         machine_name = row.get('機種名', '')
@@ -892,7 +867,6 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     if not predict_df.empty: predict_df['prediction_score'] = predict_df.apply(apply_setting5_boost, axis=1)
     if not train_df.empty: train_df['prediction_score'] = train_df.apply(apply_setting5_boost, axis=1)
 
-    # --- 予測スコアに信頼度（過去データ量）によるペナルティを付与 ---
     def apply_reliability_penalty(row):
         score = row.get('prediction_score', 0)
         hc = row.get('history_count', 1)
@@ -1031,19 +1005,73 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
             else: comments.append("特筆すべき強い根拠はありません。")
         return " ".join(comments)
 
-    predict_df['おすすめ度'] = predict_df['prediction_score'].apply(get_rating)
-    train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
-    if '店名' in predict_df.columns:
-        shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
-        predict_df['店舗期待度'] = shop_mean.apply(get_rating)
-    predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
+    if not predict_df.empty:
+        predict_df['おすすめ度'] = predict_df['prediction_score'].apply(get_rating)
+        if '店名' in predict_df.columns:
+            shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
+            predict_df['店舗期待度'] = shop_mean.apply(get_rating)
+        predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
+        
+    if not train_df.empty:
+        train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
     
-    # --- AIバージョンの動的生成 ---
     t_m = hyperparams.get('train_months', 3) if hyperparams else 3
     n_est = hyperparams.get('n_estimators', 300) if hyperparams else 300
     nl = hyperparams.get('num_leaves', 15) if hyperparams else 15
     lr = hyperparams.get('learning_rate', 0.03) if hyperparams else 0.03
-    # バージョン名にハイパーパラメータを組み込むことで、後から精度比較を可能にする
-    predict_df['ai_version'] = f"v2.1_設定5(m{t_m}_n{n_est}_l{nl}_lr{lr})"
+    if not predict_df.empty: 
+        predict_df['ai_version'] = f"v2.1_設定5(m{t_m}_n{n_est}_l{nl}_lr{lr})"
     
+    return predict_df, train_df
+
+# ---------------------------------------------------------
+# 分析・予測ロジック (メイン関数)
+# ---------------------------------------------------------
+@st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
+def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_date=None):
+    if df.empty: return df, pd.DataFrame(), pd.DataFrame()
+
+    if hyperparams is None:
+        hyperparams = {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4}
+
+    # 1. 特徴量エンジニアリング
+    df, features = _generate_features(df, df_events, df_island, target_date)
+    if df.empty: return df, pd.DataFrame(), pd.DataFrame()
+
+    train_df = df.dropna(subset=['next_diff']).copy()
+    predict_df = df[df['next_diff'].isna()].copy()
+    
+    # 2. 学習データの期間絞り込み
+    train_months = hyperparams.get('train_months', 3)
+    if '対象日付' in train_df.columns and not train_df.empty:
+        max_train_date = train_df['対象日付'].max()
+        cutoff_date = max_train_date - pd.DateOffset(months=train_months)
+        train_df = train_df[train_df['対象日付'] >= cutoff_date]
+
+    # 3. 予測データを最新日に絞り込み
+    shop_col = '店名' if '店名' in predict_df.columns else ('店舗名' if '店舗名' in predict_df.columns else None)
+    if '対象日付' in predict_df.columns and not predict_df.empty:
+        if shop_col:
+            latest_dates = predict_df.groupby(shop_col)['対象日付'].transform('max')
+            predict_df = predict_df[predict_df['対象日付'] == latest_dates]
+        else:
+            max_date = predict_df['対象日付'].max()
+            predict_df = predict_df[predict_df['対象日付'] == max_date]
+        
+    if len(train_df) < 10 or len(predict_df) == 0:
+        return predict_df, pd.DataFrame(), pd.DataFrame()
+
+    # 4. モデル学習
+    model, reg_model, feature_importances = _train_models(train_df, features, hyperparams)
+
+    # 5. 推論 (スコア付与)
+    predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
+    predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
+
+    train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
+    train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
+
+    # 6. 後処理 (スコア補正、根拠の自然言語生成)
+    predict_df, train_df = _postprocess_predictions(predict_df, train_df, hyperparams)
+
     return predict_df, train_df, feature_importances
