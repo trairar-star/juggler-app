@@ -231,13 +231,15 @@ def main():
         hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.03, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
         hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, 15, step=1, help="モデルの複雑さ。スロットのようなノイズが多いデータは小さめ(15〜20)がおすすめです。")
         hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, 4, step=1, help="木の深さの上限。ノイズ対策として3〜7程度に制限するのがおすすめです。-1は無制限。")
+        hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, 50, step=10, help="1つの条件を法則と認めるために必要な最低データ数。過学習を防ぐため、スロットでは50前後を推奨します。")
         
         hyperparams = {
             'train_months': hp_train_months,
             'n_estimators': hp_n_estimators,
             'learning_rate': hp_learning_rate,
             'num_leaves': hp_num_leaves,
-            'max_depth': hp_max_depth
+            'max_depth': hp_max_depth,
+            'min_child_samples': hp_min_child_samples
         }
 
     # 分析実行

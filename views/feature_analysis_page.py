@@ -34,17 +34,29 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
     
     # --- 店舗フィルター ---
     shop_col = '店名' if '店名' in base_analysis_df.columns else ('店舗名' if '店舗名' in base_analysis_df.columns else None)
-    selected_shop = '全店舗'
-    if shop_col:
-        shops = ['全店舗'] + sorted(list(base_analysis_df[shop_col].unique()))
-        selected_shop = st.selectbox("分析対象の店舗を選択", shops)
+    
+    if not shop_col:
+        st.warning("店舗データがありません。")
+        return
 
-    if selected_shop == '全店舗':
-        analysis_df = base_analysis_df.copy()
-        st.caption("過去の全データから、「翌日高設定挙動になった台」の傾向を分析し、高設定が入りやすい台の特徴を可視化します。")
-    else:
-        analysis_df = base_analysis_df[base_analysis_df[shop_col] == selected_shop].copy()
-        st.caption(f"【{selected_shop}】の過去データから、この店で高設定が入りやすい台の特徴を可視化します。")
+    shops = ["店舗を選択してください"] + sorted(list(base_analysis_df[shop_col].unique()))
+    
+    default_index = 0
+    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
+    if saved_shop in shops:
+        default_index = shops.index(saved_shop)
+
+    selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="feature_analysis_shop")
+    
+    if selected_shop != "店舗を選択してください":
+        st.session_state["global_selected_shop"] = selected_shop
+
+    if selected_shop == "店舗を選択してください":
+        st.info("👆 分析対象の店舗を選択してください。店舗ごとの傾向や勝利の法則を分析します。")
+        return
+
+    analysis_df = base_analysis_df[base_analysis_df[shop_col] == selected_shop].copy()
+    st.caption(f"【{selected_shop}】の過去データから、この店で高設定が入りやすい台の特徴を可視化します。")
 
     # --- 曜日フィルター ---
     if 'target_weekday' in analysis_df.columns:

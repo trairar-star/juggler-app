@@ -239,26 +239,28 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         return
 
     # --- 店舗フィルター ---
-    selected_shop = '全店舗'
-    if shop_col in base_df.columns:
-        shops = ['全店舗'] + sorted(list(base_df[shop_col].unique()))
+    if shop_col not in base_df.columns:
+        st.warning("店舗データがありません。")
+        return
+
+    shops = ["店舗を選択してください"] + sorted(list(base_df[shop_col].unique()))
+    
+    default_index = 0
+    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
+    if saved_shop in shops:
+        default_index = shops.index(saved_shop)
         
-        default_index = 0
-        saved_shop = st.session_state.get("global_selected_shop", "全店舗")
-        if saved_shop in ["全て", "店舗を選択してください"]:
-            saved_shop = "全店舗"
-        if saved_shop in shops:
-            default_index = shops.index(saved_shop)
-            
-        selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="verification_shop")
+    selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="verification_shop")
+    
+    if selected_shop != "店舗を選択してください":
         st.session_state["global_selected_shop"] = selected_shop
 
-    if selected_shop == '全店舗':
-        merged_df = base_df.copy()
-        st.subheader("📊 AIモデル バックテスト通算成績 (全店舗)")
-    else:
-        merged_df = base_df[base_df[shop_col] == selected_shop].copy()
-        st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop})")
+    if selected_shop == "店舗を選択してください":
+        st.info("👆 分析対象の店舗を選択してください。店舗ごとの精度やバックテスト成績を表示します。")
+        return
+
+    merged_df = base_df[base_df[shop_col] == selected_shop].copy()
+    st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop})")
 
     if merged_df.empty:
         st.info("選択された店舗の分析データがありません。")
@@ -604,10 +606,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     # --- 4. AIの弱点分析 (騙された台の共通点) ---
     st.divider()
     st.subheader("🧠 AIの弱点分析 (騙された台の共通点)")
-    if selected_shop == '全店舗':
-        st.caption("AIが予測を大きく外した「期待はずれ台」と「逃したお宝台」が、どのような特徴を持っていたかを全体平均と比較して分析します。AIのクセや弱点を把握するのに役立ちます。")
-    else:
-        st.caption(f"【{selected_shop}】において、AIが予測を大きく外した台の特徴を店舗平均と比較して分析します。店舗ごとのAIのクセや弱点を把握するのに役立ちます。")
+    st.caption(f"【{selected_shop}】において、AIが予測を大きく外した台の特徴を店舗平均と比較して分析します。店舗ごとのAIのクセや弱点を把握するのに役立ちます。")
 
     display_df = merged_df.copy() # このセクションで使うDF
     bad_pred_df = display_df[(display_df['prediction_score'] >= 0.70) & (display_df['差枚_actual'] <= -1000)].copy()

@@ -675,8 +675,14 @@ def _generate_features(df, df_events, df_island, target_date):
     df['next_reg_prob'] = df['next_REG'] / df['next_累計ゲーム'].replace(0, np.nan)
     df['next_total_prob'] = (df['next_BIG'].fillna(0) + df['next_REG'].fillna(0)) / df['next_累計ゲーム'].replace(0, np.nan)
     specs = get_machine_specs()
-    spec_reg = df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-    spec_tot = df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+    
+    # 【高速化】機種スペックのマッピングをapplyから辞書マッピングに変更
+    unique_machines = df['機種名'].unique()
+    reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
+    tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
+    spec_reg = df['機種名'].map(reg_map)
+    spec_tot = df['機種名'].map(tot_map)
+    
     # ターゲット判定時も「翌日3000G以上回ったか」を条件に入れ、上振れノイズを学習しないようにする
     df['target'] = ((df['next_累計ゲーム'] >= 3000) & ((df['next_reg_prob'] >= spec_reg) | (df['next_total_prob'] >= spec_tot))).astype(int)
     
@@ -707,22 +713,33 @@ def _generate_features(df, df_events, df_island, target_date):
             rank_map = {'S': 5, 'A': 4, 'B': 3, 'C': 2}
             df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
 
-    df = df.sort_values('対象日付')
+    # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更
+    df = df.sort_values('対象日付').reset_index(drop=True)
     df['weekday'] = df['対象日付'].dt.dayofweek
-    df['weekday_avg_diff'] = df.groupby('weekday')['差枚'].transform(lambda x: x.shift(1).expanding().mean()).fillna(0)
+    df['shifted_diff_wd'] = df.groupby('weekday')['差枚'].shift(1)
+    df['weekday_avg_diff'] = df.groupby('weekday')['shifted_diff_wd'].expanding().mean().reset_index(level=0, drop=True).fillna(0)
+    
     if '日付要素' in df.columns:
-        df['event_avg_diff'] = df.groupby('日付要素')['差枚'].transform(lambda x: x.shift(1).expanding().mean()).fillna(0)
+        df['shifted_diff_ev'] = df.groupby('日付要素')['差枚'].shift(1)
+        df['event_avg_diff'] = df.groupby('日付要素')['shifted_diff_ev'].expanding().mean().reset_index(level=0, drop=True).fillna(0)
 
-    df = df.sort_values(sort_keys)
-    df['mean_7days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
-    df['mean_14days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=14, min_periods=1).mean()).fillna(0)
-    df['mean_30days_diff'] = df.groupby(group_keys)['差枚'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
+    df = df.sort_values(sort_keys).reset_index(drop=True)
+    df['shifted_diff'] = df.groupby(group_keys)['差枚'].shift(1)
+    group_levels = list(range(len(group_keys))) # インデックス操作用
+    
+    df['mean_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+    df['mean_14days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=14, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+    df['mean_30days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=30, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
 
     # --- 勝率安定度（一撃ノイズ排除用） ---
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
     # 高設定フラグにも「3000G以上回っている」条件を加え、信頼性の高い実績だけを評価する
     df['is_win'] = ((df['累計ゲーム'] >= 3000) & ((df['REG確率'] >= spec_reg) | (df['total_prob'] >= spec_tot))).astype(int)
-    df['win_rate_7days'] = df.groupby(group_keys)['is_win'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
+    df['shifted_is_win'] = df.groupby(group_keys)['is_win'].shift(1)
+    df['win_rate_7days'] = df.groupby(group_keys)['shifted_is_win'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+    
+    # 一時的に作成した不要な列を削除
+    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win'], errors='ignore')
 
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
@@ -762,8 +779,9 @@ def _train_models(train_df, features, hyperparams):
     lr = hyperparams.get('learning_rate', 0.03)
     nl = hyperparams.get('num_leaves', 15)
     md = hyperparams.get('max_depth', 4)
+    mcs = hyperparams.get('min_child_samples', 50) # 追加: デフォルト50件
 
-    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
     model.fit(X, y, sample_weight=sample_weights)
     
     feature_importances_list = []
@@ -782,7 +800,7 @@ def _train_models(train_df, features, hyperparams):
                 y_shop = shop_train['target']
                 sw_shop = sample_weights.loc[shop_train.index] if sample_weights is not None else None
                 
-                shop_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+                shop_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
                 try:
                     shop_model.fit(X_shop, y_shop, sample_weight=sw_shop)
                     feature_importances_list.append(pd.DataFrame({
@@ -803,7 +821,7 @@ def _train_models(train_df, features, hyperparams):
                 y_wd = wd_train['target']
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None else None
                 
-                wd_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+                wd_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd)
                     feature_importances_list.append(pd.DataFrame({
@@ -825,7 +843,7 @@ def _train_models(train_df, features, hyperparams):
                 y_ev = ev_train['target']
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None else None
                 
-                ev_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+                ev_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev)
                     feature_importances_list.append(pd.DataFrame({
@@ -838,7 +856,7 @@ def _train_models(train_df, features, hyperparams):
 
     feature_importances = pd.concat(feature_importances_list, ignore_index=True) if feature_importances_list else pd.DataFrame()
     
-    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md)
+    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
     reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
 
     return model, reg_model, feature_importances
@@ -1032,7 +1050,7 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     if hyperparams is None:
-        hyperparams = {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4}
+        hyperparams = {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}
 
     # 1. 特徴量エンジニアリング
     df, features = _generate_features(df, df_events, df_island, target_date)

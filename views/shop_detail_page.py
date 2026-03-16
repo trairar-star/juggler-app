@@ -54,33 +54,36 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         spec_df = pd.DataFrame(specs[matched_spec_key]).T
         st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
     
-    # --- 打ち時判断アドバイス ---
+    # --- AIのやめどきアドバイス ---
     score = float(row.get('prediction_score', 0))
-    games = float(row.get('累計ゲーム', 0))
-    reg_prob = float(row.get('REG確率', 0))
+    reliability = row.get('予測信頼度', '🔸中')
+    
+    base_budget = 10000
+    base_hamari = 250
+    
+    if score >= 0.8:
+        base_budget += 15000; base_hamari += 250
+    elif score >= 0.6:
+        base_budget += 10000; base_hamari += 150
+    elif score >= 0.4:
+        base_budget += 5000; base_hamari += 50
+        
+    if '高' in reliability:
+        base_budget += 5000; base_hamari += 100
+    elif '低' in reliability:
+        base_budget -= 5000; base_hamari -= 50
+        
+    base_budget = max(5000, min(40000, base_budget))
+    base_hamari = max(150, min(600, base_hamari))
+    
+    reg_threshold = 300.0
+    if matched_spec_key and "設定4" in specs[matched_spec_key]:
+        reg_threshold = specs[matched_spec_key]["設定4"].get("REG", 300.0)
 
-    # AIの期待度が中程度（0.3以上0.75未満）で、ある程度回っている場合にアドバイスを表示
-    if matched_spec_key and games >= 2000 and 0.3 <= score < 0.75:
-        ms = specs[matched_spec_key]
-        # 設定4のREG確率を継続判断の基準とする
-        set4_reg_prob = 1.0 / ms.get("設定4", {"REG": 300.0})["REG"]
-        
-        advice_message = ""
-        if reg_prob < set4_reg_prob * 0.7: # REG確率が設定4基準よりかなり悪い場合
-            stop_games = int(games + 500) # 短めの追加ゲーム数で判断
-            advice_message = (
-                f"現在のAI期待度 ({score*100:.1f}%) とREG確率 (1/{int(1/reg_prob) if reg_prob > 0 else '-'}) から、この台は**続行に注意が必要**です。\n\n"
-                f"**総ゲーム数 {stop_games}G** 時点、または**現在のREG確率が1/{int(1/set4_reg_prob)}に達していなかったら**、一旦終了することをお勧めします。"
-            )
-        elif reg_prob < set4_reg_prob * 1.0: # REG確率が設定4基準より少し悪いか同程度の場合
-            stop_games = int(games + 1000) # やや長めの追加ゲーム数で判断
-            advice_message = (
-                f"現在のAI期待度 ({score*100:.1f}%) とREG確率 (1/{int(1/reg_prob) if reg_prob > 0 else '-'}) から、この台は**様子見が必要**です。\n\n"
-                f"**総ゲーム数 {stop_games}G** 時点、または**現在のREG確率が1/{int(1/set4_reg_prob)}に達していなかったら**、続行を再検討することをお勧めします。"
-            )
-        
-        if advice_message:
-            st.warning(f"⚠️ **打ち時判断アドバイス:**\n\n{advice_message}")
+    st.info(f"**🤖 当日の稼働・やめどきアドバイス**\n\n"
+            f"- **おすすめ予算**: 約 **{base_budget:,} 円**\n"
+            f"- **ヤメ時ハマり目安**: **{base_hamari} G** ハマったら一旦冷静に。\n"
+            f"- **REG確率の目安**: 当日の総回転数 1000G〜1500G の時点で、REG確率が **1/{int(reg_threshold * 1.15)}** より悪ければ撤退を推奨します。")
 
     # --- 過去の同曜日成績 ---
     target_wd = row.get('target_weekday', row.get('weekday', -1))
@@ -440,7 +443,7 @@ def _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col):
                 if '末尾番号' in period_df.columns:
                     digit_rank = period_df.groupby('末尾番号').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定', 'mean'), サンプル数=('差枚', 'count')).sort_index().reset_index()
                     digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
-                    st.bar_chart(digit_rank.set_index('末尾番号')[y_col], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                    st.bar_chart(digit_rank.set_index('末尾番号')[chart_metric_shop], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#AB47BC")
                     st.dataframe(digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, use_container_width=True)
                     
                 st.markdown(f"📅 **{selected_period} の曜日別傾向**")
@@ -450,14 +453,14 @@ def _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col):
                     wd_rank['sort'] = wd_rank['曜日'].map(day_order).fillna(99)
                     wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
                     wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
-                    st.bar_chart(wd_rank.set_index('曜日')[y_col], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                    st.bar_chart(wd_rank.set_index('曜日')[chart_metric_shop], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC")
                     st.dataframe(wd_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, use_container_width=True)
 
                 if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
                     st.markdown(f"🔥 **{selected_period} のイベント別傾向**")
-                    ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(y_col, ascending=False)
+                    ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(chart_metric_shop, ascending=False)
                     ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
-                    st.bar_chart(ev_rank.set_index('日付要素')[y_col], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                    st.bar_chart(ev_rank.set_index('日付要素')[chart_metric_shop], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC")
                     st.dataframe(ev_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, use_container_width=True)
 
         st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
@@ -581,16 +584,56 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             全台数=('台番号', 'nunique')
         ).reset_index()
         
-        # 平均スコアが高い順にソート
-        shop_stats = shop_stats.sort_values('平均スコア', ascending=False)
+        # --- AI正答率の計算 ---
+        ai_accuracy_map = {}
+        ai_win_rate_map = {}
+        if df_train is not None and not df_train.empty and shop_col in df_train.columns and 'prediction_score' in df_train.columns and 'target' in df_train.columns:
+            # 過去データから、期待度70%以上だった推奨台を抽出
+            high_expect_df = df_train[df_train['prediction_score'] >= 0.70]
+            
+            if 'next_diff' in high_expect_df.columns:
+                acc_stats = high_expect_df.groupby(shop_col).agg(
+                    正答率=('target', 'mean'), # 推奨台のうち、実際に高設定(target=1)だった割合
+                    勝率=('next_diff', lambda x: (x > 0).mean()) # 推奨台のうち、差枚がプラスだった割合
+                ).reset_index()
+                ai_win_rate_map = dict(zip(acc_stats[shop_col], acc_stats['勝率']))
+            else:
+                acc_stats = high_expect_df.groupby(shop_col).agg(
+                    正答率=('target', 'mean') # 推奨台のうち、実際に高設定(target=1)だった割合
+                ).reset_index()
+                
+            ai_accuracy_map = dict(zip(acc_stats[shop_col], acc_stats['正答率']))
+            
+        shop_stats['AI正答率'] = shop_stats[shop_col].map(ai_accuracy_map).fillna(0.0) * 100
+        shop_stats['AI推奨台勝率'] = shop_stats[shop_col].map(ai_win_rate_map).fillna(0.0) * 100
         
+        # --- AI実績に基づくペナルティ計算 ---
+        def calc_sort_score(row):
+            score = row['平均スコア']
+            # 過去データがない(0%)場合はペナルティの対象外
+            if row['AI正答率'] > 0:
+                if row['AI正答率'] < 30: score -= 0.15  # 30%未満なら重いペナルティ
+                elif row['AI正答率'] < 40: score -= 0.05  # 40%未満なら軽いペナルティ
+            if row['AI推奨台勝率'] > 0:
+                if row['AI推奨台勝率'] < 30: score -= 0.15
+                elif row['AI推奨台勝率'] < 40: score -= 0.05
+            return score
+
+        shop_stats['ソート用スコア'] = shop_stats.apply(calc_sort_score, axis=1)
+        
+        # ソート用スコア（ペナルティ適用後）が高い順にソート
+        shop_stats = shop_stats.sort_values('ソート用スコア', ascending=False)
+        
+        st.caption("※過去の「AI正答率」や「推奨台勝率」が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い）と判断し、ランキング順位を自動的に下げるペナルティを適用しています。")
         st.dataframe(
             shop_stats,
             column_config={
                 shop_col: st.column_config.TextColumn("店舗"),
-                "平均スコア": st.column_config.ProgressColumn("期待度", min_value=0, max_value=1.0, format="%.2f", help="店舗全体の平均的な設定5以上確率"),
+                "平均スコア": st.column_config.ProgressColumn("明日の期待度", min_value=0, max_value=1.0, format="%.2f", help="明日の店舗全体の平均的な設定5以上確率"),
                 "推奨台数": st.column_config.NumberColumn("推奨", format="%d台", help="AI期待度が70%以上の台数"),
                 "全台数": st.column_config.NumberColumn("全台", format="%d台"),
+                "AI正答率": st.column_config.ProgressColumn("過去のAI正答率", format="%d%%", min_value=0, max_value=100, help="過去にAIが推奨(期待度70%以上)した台が、実際に高設定挙動だった割合。この店でAIの予測がどれくらい通用するかを示します。"),
+                "AI推奨台勝率": st.column_config.ProgressColumn("推奨台勝率", format="%d%%", min_value=0, max_value=100, help="過去にAIが推奨(期待度70%以上)した台が、実際に差枚プラスで終わった割合(勝率)です。"),
             },
             use_container_width=True,
             hide_index=True
@@ -639,21 +682,22 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     )
 
     # --- 詳細分析: 上位台の根拠とスペック ---
-    st.divider()
-    st.subheader("🧐 上位台の詳細データ・根拠")
-    st.caption("ランキング上位10台について、AIの判断根拠と詳細数値を表示します。")
+    if selected_shop != '全て':
+        st.divider()
+        st.subheader("🧐 上位台の詳細データ・根拠")
+        st.caption("ランキング上位10台について、AIの判断根拠と詳細数値を表示します。")
 
-    for i, row in df_top10.iterrows():
-        shop_name = row.get(shop_col, '')
-        machine_no = row.get('台番号', 'Unknown')
-        machine_name = row.get('機種名', '')
-        prob_val = row.get('予想設定5以上確率', 0)
-        
-        label_prefix = f"【{shop_name}】 " if selected_shop == '全て' else ""
-        label = f"{label_prefix}#{machine_no} {machine_name} (設定5以上確率: {prob_val}%)"
-        
-        with st.expander(label, expanded=(i == 0)):
-            _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs)
+        for i, row in df_top10.iterrows():
+            shop_name = row.get(shop_col, '')
+            machine_no = row.get('台番号', 'Unknown')
+            machine_name = row.get('機種名', '')
+            prob_val = row.get('予想設定5以上確率', 0)
+            
+            label_prefix = f"【{shop_name}】 " if selected_shop == '全て' else ""
+            label = f"{label_prefix}#{machine_no} {machine_name} (設定5以上確率: {prob_val}%)"
+            
+            with st.expander(label, expanded=(i == 0)):
+                _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs)
 
     # --- 店舗別 傾向分析 (下部に移動) ---
     if selected_shop != '全て' and not df_raw_shop.empty:
