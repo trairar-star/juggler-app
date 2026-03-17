@@ -887,23 +887,37 @@ def _generate_features(df, df_events, df_island, target_date):
 
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
+        # 店舗の平均稼働に対する自台の稼働割合（相対的な粘られ度）
+        df['shop_avg_games'] = df.groupby([shop_col, '対象日付'])['累計ゲーム'].transform('mean').replace(0, np.nan)
+        df['relative_games_ratio'] = (df['累計ゲーム'] / df['shop_avg_games']).fillna(1.0)
+        df = df.drop(columns=['shop_avg_games'])
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
 
     # --- 上げリセット（設定変更）検知用の特徴量 ---
-    # 差枚が0以上になったらリセットされるグループを作成し、マイナスの連続日数をカウントする
-    df['is_positive'] = (df['差枚'] >= 0).astype(int)
-    df['temp_reset_group'] = df.groupby(group_keys)['is_positive'].cumsum()
+    # 差枚が+500枚以上になったら「設定が入り放出された」とみなしリセット
+    df['is_released'] = (df['差枚'] >= 500).astype(int)
+    df['temp_reset_group'] = df.groupby(group_keys)['is_released'].cumsum()
     
-    df['is_negative'] = (df['差枚'] < 0).astype(int)
-    df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_negative'].cumsum()
-    df = df.drop(columns=['temp_reset_group', 'is_positive', 'is_negative'])
+    # 差枚が+500枚未満の日はすべて「実質マイナス（回収・不発）」としてカウントを継続
+    df['is_not_released'] = (df['差枚'] < 500).astype(int)
+    df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_not_released'].cumsum()
+    df = df.drop(columns=['temp_reset_group', 'is_released', 'is_not_released'])
+
+    # --- 連続低稼働日数のカウント（テコ入れ狙い） ---
+    UTILIZATION_THRESHOLD = 1500
+    df['is_low_utilization'] = (df['累計ゲーム'] < UTILIZATION_THRESHOLD).astype(int)
+    df['is_active'] = (df['累計ゲーム'] >= UTILIZATION_THRESHOLD).astype(int)
+    df['low_util_reset_group'] = df.groupby(group_keys)['is_active'].cumsum()
+    
+    df['連続低稼働日数'] = df.groupby(group_keys + ['low_util_reset_group'])['is_low_utilization'].cumsum()
+    df = df.drop(columns=['is_low_utilization', 'is_active', 'low_util_reset_group'])
 
     # 台ごとの過去データ件数（履歴の長さ）を計算し、信頼度の指標とする
     df['history_count'] = df.groupby(group_keys).cumcount() + 1
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'mean_14days_diff', 'mean_30days_diff', 'win_rate_7days', '連続マイナス日数']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'prev_最終ゲーム', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff']:
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio']:
         if f in df.columns: features.append(f)
 
     return df, features
@@ -959,7 +973,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             s_mcs = shop_hp.get('min_child_samples', 50)
             
             shop_train = train_df[train_df[shop_col] == shop]
-            if len(shop_train) >= 50: # サンプル数が少なすぎる場合は除外
+            if len(shop_train) >= 150: # ノイズ過学習防止のため、最低サンプル数を引き上げ
                 X_shop = shop_train[features]
                 y_shop = shop_train['target']
                 sw_shop = sample_weights.loc[shop_train.index] if sample_weights is not None else None
@@ -996,7 +1010,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     if 'target_weekday' in train_df.columns:
         for wd in sorted(train_df['target_weekday'].unique()):
             wd_train = train_df[train_df['target_weekday'] == wd]
-            if len(wd_train) >= 50:
+            if len(wd_train) >= 150:
                 X_wd = wd_train[features]
                 y_wd = wd_train['target']
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None else None
@@ -1018,7 +1032,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         train_df_ev['is_event'] = train_df_ev['イベント名'].apply(lambda x: '通常日' if x == '通常' else 'イベント日')
         for ev_type in ['通常日', 'イベント日']:
             ev_train = train_df_ev[train_df_ev['is_event'] == ev_type]
-            if len(ev_train) >= 50:
+            if len(ev_train) >= 150:
                 X_ev = ev_train[features]
                 y_ev = ev_train['target']
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None else None
@@ -1134,6 +1148,11 @@ def _postprocess_predictions(predict_df, train_df):
         cons_minus = row.get('連続マイナス日数', 0)
         if cons_minus >= 3:
             reasons.append(f"【特殊】現在{int(cons_minus)}日連続マイナス中です。店舗の「上げリセット(底上げ)」ターゲットになる可能性が高いです。")
+
+        # 連続低稼働のテコ入れ狙い
+        cons_low_util = row.get('連続低稼働日数', 0)
+        if cons_low_util >= 3:
+            reasons.append(f"【特殊】現在{int(cons_low_util)}日連続で放置(1500G未満)されています。店側の「稼働喚起のテコ入れ(見せ台)」のターゲットになる可能性があります。")
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)

@@ -309,7 +309,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
         y_axis = alt.Axis(format=y_format, title=y_title) if y_format else alt.Axis(title=y_title)
         color_cond = alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")) if chart_metric == "平均翌日差枚" else alt.value("#AB47BC")
 
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃", "BB極端欠損"])
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃", "BB極端欠損", "相対稼働率"])
         
         with tab1:
             if 'BIG' in reg_df.columns and 'REG' in reg_df.columns and 'REG確率' in reg_df.columns and 'BIG確率' in reg_df.columns:
@@ -517,18 +517,18 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
 
         with tab4:
             st.markdown("**🔍 連続マイナス台の「上げリセット」検証**")
-            st.caption("何日間マイナスが続くと「上げリセット（設定変更）」されやすくなるのか、店舗ごとの見切りラインを検証します。")
+            st.caption("何日間「実質マイナス（差枚+500枚未満）」が続くと「上げリセット（設定変更）」されやすくなるのか、店舗ごとの見切りラインを検証します。")
             
             if '連続マイナス日数' in reg_df.columns:
                 reset_df = reg_df.copy()
                 
                 def classify_cons_minus(d):
                     d = int(d)
-                    if d == 0: return "① 0日 (前日プラス)"
-                    elif d == 1: return "② 1日マイナス"
-                    elif d == 2: return "③ 2日連続マイナス"
-                    elif d == 3: return "④ 3日連続マイナス"
-                    elif d >= 4: return "⑤ 4日以上連続マイナス"
+                    if d == 0: return "① 0日 (前日放出: +500枚以上)"
+                    elif d == 1: return "② 1日 実質マイナス"
+                    elif d == 2: return "③ 2日連続 実質マイナス"
+                    elif d == 3: return "④ 3日連続 実質マイナス"
+                    elif d >= 4: return "⑤ 4日以上連続 実質マイナス"
                     return "不明"
                     
                 reset_df['マイナス継続状況'] = reset_df['連続マイナス日数'].apply(classify_cons_minus)
@@ -678,6 +678,51 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
             else:
                 st.info("BIG確率のデータがありません。")
 
+        with tab7:
+            st.markdown("**🔍 相対的な粘られ度 (店舗平均との比較)**")
+            st.caption("その日の店舗平均稼働に対して、どれくらい回されていたか（放置されたか、タコ粘りされたか）による翌日の反発・据え置き期待度を検証します。")
+            
+            if 'relative_games_ratio' in reg_df.columns:
+                rel_df = reg_df.copy()
+                
+                # ビン分割
+                rel_bins = [0, 0.5, 0.8, 1.2, 1.5, 10.0]
+                rel_labels = ['① 0.5倍未満 (完全放置)', '② 0.5〜0.8倍 (早め見切り)', '③ 0.8〜1.2倍 (平均的)', '④ 1.2〜1.5倍 (よく粘られた)', '⑤ 1.5倍以上 (タコ粘り)']
+                
+                rel_df['相対稼働率'] = pd.cut(rel_df['relative_games_ratio'], bins=rel_bins, labels=rel_labels)
+                
+                rel_stats = rel_df.groupby('相対稼働率', observed=True).agg(
+                    翌日高設定率=('target', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('相対稼働率')
+                
+                rel_stats['信頼度'] = rel_stats['サンプル数'].apply(get_confidence_indicator)
+                
+                col_rel1, col_rel2 = st.columns([1, 1.2])
+                with col_rel1:
+                    st.dataframe(
+                        rel_stats,
+                        column_config={
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                with col_rel2:
+                    chart_rel = alt.Chart(rel_stats).mark_bar().encode(
+                        x=alt.X('相対稼働率', title='店舗平均に対する稼働割合'),
+                        y=alt.Y(y_field, axis=y_axis),
+                        color=color_cond,
+                        tooltip=['相対稼働率', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_rel, use_container_width=True)
+
+            else:
+                st.info("相対稼働率のデータがありません。")
+
     # --- 7. 特徴量重要度 (Feature Importance) ---
     if df_importance is not None and not df_importance.empty:
         st.divider()
@@ -687,14 +732,14 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
             '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
             '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
             'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚',
-            'mean_7days_diff': '台: 直近7日平均差枚', 'mean_14days_diff': '台: 直近14日平均差枚',
-            'mean_30days_diff': '台: 直近30日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
-            '連続マイナス日数': '台: 連続マイナス日数', 'machine_code': '機種', 'shop_code': '店舗',
+            'mean_7days_diff': '台: 直近7日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
+            '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
             'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'neighbor_avg_diff': '配置: 両隣の平均差枚',
-            'event_avg_diff': 'イベント: 平均差枚', 'prev_最終ゲーム': '前々日: 最終ゲーム数',
+            'event_avg_diff': 'イベント: 平均差枚',
             'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
             'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
-            'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚'
+            'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
+            'relative_games_ratio': '台: 相対稼働率(店舗平均比)'
         }
 
         # 全店舗の重要度データを準備
