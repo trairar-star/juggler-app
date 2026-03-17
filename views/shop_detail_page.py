@@ -41,9 +41,19 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     with c3: st.metric("BIG", format_val(row.get('BIG', '-')))
     with c4: st.metric("REG", format_val(row.get('REG', '-')))
     
-    c5, c6 = st.columns(2)
-    with c5: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
-    with c6: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
+    c5, c6, c7 = st.columns(3)
+    
+    try:
+        games_val = float(row.get('累計ゲーム', 0))
+        big_val = float(row.get('BIG', 0))
+        reg_val = float(row.get('REG', 0))
+        total_prob = (big_val + reg_val) / games_val if games_val > 0 else 0
+    except:
+        total_prob = 0
+        
+    with c5: st.metric("合算確率", format_prob(total_prob))
+    with c6: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
+    with c7: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
     
     matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
     

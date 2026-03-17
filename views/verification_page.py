@@ -21,21 +21,25 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             st.session_state.penalty_reg = 10
             st.session_state.penalty_big = 2
             st.session_state.low_g_penalty = 20
+            st.session_state.min_g_filter = 0
         if c2.button("⚖️ 標準", help="REGを重視するバランス型（推奨）"):
             st.session_state.penalty_reg = 15
             st.session_state.penalty_big = 5
             st.session_state.low_g_penalty = 30
+            st.session_state.min_g_filter = 0
         if c3.button("🌶️ 辛め", help="REG不足に厳しく、低稼働を許さない設定"):
             st.session_state.penalty_reg = 20
             st.session_state.penalty_big = 8
             st.session_state.low_g_penalty = 50
+            st.session_state.min_g_filter = 1000
             
         penalty_reg = st.slider("REG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_reg', 15), 1, key="penalty_reg")
         penalty_big = st.slider("BIG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_big', 5), 1, key="penalty_big")
         low_g_penalty = st.slider("低稼働(1000G未満)の最大減点率(%)", 0, 100, st.session_state.get('low_g_penalty', 30), 5, key="low_g_penalty")
+        min_g_filter = st.slider("検証から除外する最低ゲーム数", 0, 3000, st.session_state.get('min_g_filter', 0), 100, key="min_g_filter", help="客層に合わせて、指定したG数未満しか回されなかった台を採点対象から除外します。※ただし、確率的に高設定が極めて薄い（500Gノーボナ等）と判断できる「明らかな見切り台」はハズレとして減点対象に残ります。")
 
     if df_pred_log.empty:
-        st.warning("保存された予測結果ログがありません。サイドバーの「予測結果をログ保存」ボタンから予測を保存してください。")
+        st.warning("保存された予測結果ログがありません。日々の予測結果は、ログイン時に自動で保存されます。")
         return
 
     # --- 予測ログの実行日時フィルター ---
@@ -249,6 +253,16 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             bonus = min(5.0, (g - 7000) / 500.0)
             total_score = min(100.0, total_score + bonus)
             
+        # 4. 明らかな「見切り台（確率的に高設定が極めて薄い）」への追加ペナルティ
+        is_abandoned = False
+        tot_b_r = act_b + act_r
+        if g >= 500 and tot_b_r == 0: is_abandoned = True
+        elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
+        elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
+        
+        if is_abandoned:
+            total_score *= 0.5 # 高設定の可能性が著しく低いため点数半減
+            
         return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r])
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
@@ -257,6 +271,25 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     if base_df.empty:
         st.info("まだ結果が判明している予測がありません。")
         return
+
+    # --- 低稼働台のフィルタリング (ノーカウント処理) ---
+    if min_g_filter > 0:
+        # 指定G数以上回されている台
+        cond_g_enough = base_df['結果_累計ゲーム'] >= min_g_filter
+        
+        # 指定G数未満だが、確率的に高設定が極めて薄い「明らかな見切り台」
+        g_val = base_df['結果_累計ゲーム']
+        p_val = base_df['結果_合算確率分母']
+        
+        cond_500 = (g_val >= 500) & (p_val == 0)
+        cond_1000 = (g_val >= 1000) & (p_val >= 400)
+        cond_1500 = (g_val >= 1500) & (p_val >= 300)
+        cond_abandoned = cond_500 | cond_1000 | cond_1500
+        
+        base_df = base_df[cond_g_enough | cond_abandoned].copy()
+        if base_df.empty:
+            st.warning(f"検証対象となるデータがありません。（指定G数以上の台、または明らかな見切り台が存在しません）")
+            return
 
     # --- 店舗フィルター ---
     if shop_col not in base_df.columns:

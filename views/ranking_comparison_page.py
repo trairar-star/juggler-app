@@ -8,7 +8,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
     st.caption("指定した日付・店舗における「AIの予測ランキング」と「実際の店のランキング」を比較します。AIの推奨台が実際のランキングにどれくらい食い込んでいるかを確認できます。")
 
     if df_pred_log.empty:
-        st.warning("保存された予測結果ログがありません。サイドバーの「予測結果をログ保存」ボタンから予測を保存してください。")
+        st.warning("保存された予測結果ログがありません。日々の予測結果は、ログイン時に自動で保存されます。")
         return
 
     if df_verify.empty or 'next_diff' not in df_verify.columns:
