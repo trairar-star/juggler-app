@@ -824,11 +824,19 @@ def _generate_features(df, df_events, df_island, target_date):
     unique_machines = df['機種名'].unique()
     reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
     tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
+    reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
     spec_reg = df['機種名'].map(reg_map)
     spec_tot = df['機種名'].map(tot_map)
+    spec_reg3 = df['機種名'].map(reg3_map)
     
     # ターゲット判定時も「翌日3000G以上回ったか」を条件に入れ、上振れノイズを学習しないようにする
-    df['target'] = ((df['next_累計ゲーム'] >= 3000) & ((df['next_reg_prob'] >= spec_reg) | (df['next_total_prob'] >= spec_tot))).astype(int)
+    df['target'] = (
+        (df['next_累計ゲーム'] >= 3000) & 
+        (
+            (df['next_reg_prob'] >= spec_reg) | 
+            ((df['next_total_prob'] >= spec_tot) & (df['next_reg_prob'] >= spec_reg3))
+        )
+    ).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
     df['next_date'] = df.groupby(group_keys)['対象日付'].shift(-1)
@@ -878,7 +886,13 @@ def _generate_features(df, df_events, df_island, target_date):
     # --- 勝率安定度（一撃ノイズ排除用） ---
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
     # 高設定フラグにも「3000G以上回っている」条件を加え、信頼性の高い実績だけを評価する
-    df['is_win'] = ((df['累計ゲーム'] >= 3000) & ((df['REG確率'] >= spec_reg) | (df['total_prob'] >= spec_tot))).astype(int)
+    df['is_win'] = (
+        (df['累計ゲーム'] >= 3000) & 
+        (
+            (df['REG確率'] >= spec_reg) | 
+            ((df['total_prob'] >= spec_tot) & (df['REG確率'] >= spec_reg3))
+        )
+    ).astype(int)
     df['shifted_is_win'] = df.groupby(group_keys)['is_win'].shift(1)
     df['win_rate_7days'] = df.groupby(group_keys)['shifted_is_win'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     
@@ -916,7 +930,17 @@ def _generate_features(df, df_events, df_island, target_date):
     # 台ごとの過去データ件数（履歴の長さ）を計算し、信頼度の指標とする
     df['history_count'] = df.groupby(group_keys).cumcount() + 1
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数']
+    # --- 新台・配置変更の正確な検知 ---
+    if shop_col:
+        # その日時点での、その店舗の最大データ蓄積日数を取得
+        df['shop_date_max_history'] = df.groupby([shop_col, '対象日付'])['history_count'].transform('max')
+        # 店舗として14日以上データがある状態（取得開始直後ではない）で、その台の履歴が7日以下のものを新台とみなす
+        df['is_new_machine'] = ((df['shop_date_max_history'] >= 14) & (df['history_count'] <= 7)).astype(int)
+        df = df.drop(columns=['shop_date_max_history'])
+    else:
+        df['is_new_machine'] = 0
+
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio']:
         if f in df.columns: features.append(f)
 
@@ -940,11 +964,22 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     md = default_hp.get('max_depth', 4)
     mcs = default_hp.get('min_child_samples', 50)
 
+    # カテゴリ変数として扱う特徴量のリストを定義
+    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in features]
+
     # --- 全店舗共通モデルの学習と推論 ---
-    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
-    model.fit(X, y, sample_weight=sample_weights)
-    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
-    reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
+    model = lgb.LGBMClassifier(
+        objective='binary', random_state=42, verbose=-1, 
+        n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+    )
+    model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
+    reg_model = lgb.LGBMRegressor(
+        random_state=42, verbose=-1, 
+        n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+    )
+    reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
     
     if not predict_df.empty:
         predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
@@ -978,12 +1013,20 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 y_shop = shop_train['target']
                 sw_shop = sample_weights.loc[shop_train.index] if sample_weights is not None else None
                 
-                shop_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs)
-                shop_reg = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs)
+                shop_model = lgb.LGBMClassifier(
+                    objective='binary', random_state=42, verbose=-1, 
+                    n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                )
+                shop_reg = lgb.LGBMRegressor(
+                    random_state=42, verbose=-1, 
+                    n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                )
                 
                 try:
-                    shop_model.fit(X_shop, y_shop, sample_weight=sw_shop)
-                    shop_reg.fit(X_shop, shop_train['next_diff'], sample_weight=sw_shop)
+                    shop_model.fit(X_shop, y_shop, sample_weight=sw_shop, categorical_feature=cat_features)
+                    shop_reg.fit(X_shop, shop_train['next_diff'], sample_weight=sw_shop, categorical_feature=cat_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': shop,
                         'category': '店舗',
@@ -1015,9 +1058,13 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 y_wd = wd_train['target']
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None else None
                 
-                wd_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
+                wd_model = lgb.LGBMClassifier(
+                    objective='binary', random_state=42, verbose=-1, 
+                    n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                )
                 try:
-                    wd_model.fit(X_wd, y_wd, sample_weight=sw_wd)
+                    wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': weekdays_map.get(wd, f"曜日{wd}"),
                         'category': '曜日',
@@ -1037,9 +1084,13 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 y_ev = ev_train['target']
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None else None
                 
-                ev_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
+                ev_model = lgb.LGBMClassifier(
+                    objective='binary', random_state=42, verbose=-1, 
+                    n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                )
                 try:
-                    ev_model.fit(X_ev, y_ev, sample_weight=sw_ev)
+                    ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': ev_type,
                         'category': 'イベント',
@@ -1094,7 +1145,6 @@ def _postprocess_predictions(predict_df, train_df):
         predict_df['prediction_score'] = predict_df.apply(apply_reliability_penalty, axis=1)
         predict_df['予測信頼度'] = predict_df.apply(get_reliability_mark, axis=1)
     if not train_df.empty: 
-        train_df['prediction_score'] = train_df.apply(apply_reliability_penalty, axis=1)
         train_df['予測信頼度'] = train_df.apply(get_reliability_mark, axis=1)
 
     def get_rating(score):
@@ -1153,6 +1203,9 @@ def _postprocess_predictions(predict_df, train_df):
         cons_low_util = row.get('連続低稼働日数', 0)
         if cons_low_util >= 3:
             reasons.append(f"【特殊】現在{int(cons_low_util)}日連続で放置(1500G未満)されています。店側の「稼働喚起のテコ入れ(見せ台)」のターゲットになる可能性があります。")
+
+        if row.get('is_new_machine', 0) == 1:
+            reasons.append("【新台/移動】新台導入または配置変更から1週間以内のため、店側のアピール(高設定投入)が期待できます。")
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)

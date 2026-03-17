@@ -739,7 +739,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
             'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
             'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
             'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
-            'relative_games_ratio': '台: 相対稼働率(店舗平均比)'
+            'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
+            'is_new_machine': '台: 新台/配置変更(導入7日以内)'
         }
 
         # 全店舗の重要度データを準備
