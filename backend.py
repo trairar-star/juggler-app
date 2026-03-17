@@ -12,7 +12,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVICE_ACCOUNT_FILE = os.path.join(BASE_DIR, 'service_account.json')
 SPREADSHEET_KEY = '1ylt9mdIkKKk6YRcZh4O05O7fPF4d2BU6VXzboP_vs5s'
 SHEET_NAME = 'juggler_raw'
-HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.pkl')
+HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -142,7 +142,7 @@ def load_data():
         history_df = pd.DataFrame()
         if os.path.exists(HISTORY_CACHE_FILE):
             try:
-                history_df = pd.read_pickle(HISTORY_CACHE_FILE)
+                history_df = pd.read_parquet(HISTORY_CACHE_FILE, engine='pyarrow')
                 # キャッシュ内のデータが古すぎる/新しすぎる場合を考慮し、確定済み範囲のみ残す
                 if date_col in history_df.columns:
                     history_df = history_df[history_df[date_col] < freeze_threshold]
@@ -202,11 +202,17 @@ def load_data():
         else:
             df = target_raw_df
 
+        # --- データ型のダウンキャストによるメモリ最適化 ---
+        for col in df.select_dtypes(include=['float64']).columns:
+            df[col] = df[col].astype('float32')
+        for col in df.select_dtypes(include=['int64']).columns:
+            df[col] = df[col].astype('int32')
+
         # 次回のために、確定済みデータをキャッシュファイルに保存
         frozen_df = df[df[date_col] < freeze_threshold]
         if not frozen_df.empty:
             try:
-                frozen_df.to_pickle(HISTORY_CACHE_FILE)
+                frozen_df.to_parquet(HISTORY_CACHE_FILE, engine='pyarrow')
             except Exception:
                 pass # 保存エラーは無視（Streamlit Cloud環境等への配慮）
             

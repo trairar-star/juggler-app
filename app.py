@@ -202,7 +202,18 @@ def main():
         min_str = min_date.strftime('%Y-%m-%d') if pd.notna(min_date) else "不明"
         max_str = max_date.strftime('%Y-%m-%d') if pd.notna(max_date) else "不明"
         
-        st.sidebar.info(f"📚 **学習データ統計**\n\n期間: {min_str} 〜 {max_str}\n総数: {total_records:,} 件")
+        # --- スプレッドシートの容量（セル数）監視と警告 ---
+        estimated_cells = total_records * len(df_raw.columns)
+        max_cells = 10000000 # Googleスプレッドシートの物理上限 (1000万セル)
+        usage_percent = (estimated_cells / max_cells) * 100
+        
+        capacity_warning = ""
+        if usage_percent >= 90:
+            capacity_warning = f"\n\n🚨 **容量警告**: スプレッドシートの限界（{usage_percent:.1f}%）に近づいています！バッチ処理等で古いデータを削除してください。"
+        elif usage_percent >= 75:
+            capacity_warning = f"\n\n⚠️ **容量注意**: スプレッドシートの容量を {usage_percent:.1f}% 使用しています。そろそろ古いデータの整理を検討してください。"
+
+        st.sidebar.info(f"📚 **学習データ統計**\n\n期間: {min_str} 〜 {max_str}\n総数: {total_records:,} 件{capacity_warning}")
 
     # 分析実行
     with st.spinner("AIがデータを分析し、予測を生成しています..."):
