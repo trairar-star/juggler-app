@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st # type: ignore
 import altair as alt # type: ignore
+import math
 
 import backend
 from utils import get_confidence_indicator
@@ -219,7 +220,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         g = row.get('結果_累計ゲーム', 0)
         act_b = row.get('結果_BIG', 0)
         act_r = row.get('結果_REG', 0)
-        if pd.isna(g) or g <= 0: return pd.Series([0, 0, 0, 0, 0])
+        if pd.isna(g) or g <= 0: return pd.Series([0, 0, 0, 0, 0, 0])
         machine = row.get('機種名', '')
         matched_spec = backend.get_matched_spec_key(machine, specs)
         p_b, p_r = 1/259.0, 1/255.0 # デフォルト
@@ -230,9 +231,55 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         exp_b, exp_r = g * p_b, g * p_r
         diff_b, diff_r = act_b - exp_b, act_r - exp_r
         
-        # 期待回数からの「不足回数」をベースに減点する方式
-        score_r = max(0, 80 + (diff_r * penalty_reg if diff_r < 0 else 0))
-        score_b = max(0, 20 + (diff_b * penalty_big if diff_b < 0 else 0))
+        # --- 1. 真の確率（ベイズ推定）による結果ベース設定5以上確率の計算 ---
+        prob_5_over = 0.0
+        if matched_spec:
+            ms = specs[matched_spec]
+            s1 = ms.get("設定1", {"BIG": 280.0, "REG": 400.0})
+            s4 = ms.get("設定4", {"BIG": 260.0, "REG": 300.0})
+            s5 = ms.get("設定5", s4)
+            s6 = ms.get("設定6", s5)
+            
+            full_specs = {1: s1, 4: s4, 5: s5, 6: s6}
+            for s in [2, 3]:
+                full_specs[s] = {}
+                for k in ["BIG", "REG"]:
+                    p1_val = 1.0 / s1.get(k, 300.0)
+                    p4_val = 1.0 / s4.get(k, 300.0)
+                    p_s = p1_val + (p4_val - p1_val) * (s - 1) / 3.0
+                    full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
+            
+            log_L = []
+            for i in range(1, 7):
+                p_big_i = 1.0 / full_specs[i].get("BIG", 300.0)
+                p_reg_i = 1.0 / full_specs[i].get("REG", 300.0)
+                exp_big_i = g * p_big_i
+                exp_reg_i = g * p_reg_i
+                ll_big = act_b * math.log(exp_big_i) - exp_big_i if exp_big_i > 0 else 0
+                ll_reg = act_r * math.log(exp_reg_i) - exp_reg_i if exp_reg_i > 0 else 0
+                log_L.append(ll_big + ll_reg)
+                
+            max_ll = max(log_L)
+            likelihoods = [math.exp(ll - max_ll) for ll in log_L]
+            sum_L = sum(likelihoods)
+            if sum_L > 0:
+                prob_5_over = (likelihoods[4] + likelihoods[5]) / sum_L
+                
+        prob_5_over_pct = int(prob_5_over * 100)
+        
+        # --- 2. 点数（設定5近似度）の確率論的な調整 ---
+        # 標準偏差(σ)を計算し、「確率的なブレ（0.5σ）」の範囲内ならペナルティを免除する
+        sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
+        sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
+        
+        deficit_r = max(0, exp_r - act_r)
+        adjusted_deficit_r = max(0, deficit_r - (sigma_r * 0.5)) # 0.5σ分の下振れは許容
+        
+        deficit_b = max(0, exp_b - act_b)
+        adjusted_deficit_b = max(0, deficit_b - (sigma_b * 0.5)) # 0.5σ分の下振れは許容
+        
+        score_r = max(0, 80 - (adjusted_deficit_r * penalty_reg))
+        score_b = max(0, 20 - (adjusted_deficit_b * penalty_big))
         
         total_score = score_r + score_b
         
@@ -248,7 +295,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
             
         # 3. 超高稼働（7000G以上）：本物の高設定の証拠として、不足が少ない優秀台にボーナス加点
-        if g >= 7000 and diff_r >= -1.0: # REGが極端に不足していなければ加点対象
+        if g >= 7000 and adjusted_deficit_r <= 0: # 確率的に全く不足していない場合
             # 7000Gで+0点、8000Gで+2点、9500G以上で最大+5点のボーナス
             bonus = min(5.0, (g - 7000) / 500.0)
             total_score = min(100.0, total_score + bonus)
@@ -263,10 +310,10 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         if is_abandoned:
             total_score *= 0.5 # 高設定の可能性が著しく低いため点数半減
             
-        return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r])
+        return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r, prob_5_over_pct])
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
-    base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分']] = eval_df
+    base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分', '結果_設定5以上確率']] = eval_df
     
     if base_df.empty:
         st.info("まだ結果が判明している予測がありません。")
@@ -328,6 +375,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             高設定率=('is_high_setting', 'mean'),
             勝率=('差枚_actual', lambda x: (x > 0).mean()),
             平均差枚=('差枚_actual', 'mean'),
+            平均事後確率=('結果_設定5以上確率', 'mean'),
             設定5近似度=('設定5近似度', 'mean')
         ).reset_index().sort_values('設定5近似度', ascending=False)
         
@@ -339,6 +387,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
                 "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                "平均事後確率": st.column_config.NumberColumn("平均事後確率", format="%.1f%%", help="結果から算出した設定5以上確率の平均"),
                 "設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
             },
             hide_index=True,
@@ -531,8 +580,9 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 g = row.get('結果_累計ゲーム', 0)
                 r = row.get('結果_REG', 0)
                 b = row.get('結果_BIG', 0)
+                post_prob = int(row.get('結果_設定5以上確率', 0))
                 date_str = row['対象日付'].strftime('%m/%d') if pd.notna(row.get('対象日付')) else ""
-                st.markdown(f"- **{score:.1f}点** : {date_str} {shop} #{m_num} {m_name} ({int(g)}G BIG{int(b)} REG{int(r)} / {int(diff):+d}枚)")
+                st.markdown(f"- **{score:.1f}点 (事後確率: {post_prob}%)** : {date_str} {shop} #{m_num} {m_name} ({int(g)}G BIG{int(b)} REG{int(r)} / {int(diff):+d}枚)")
 
     # --- 2. 時系列推移 (勝率 & 収支) ---
     st.subheader("📈 日別の推移")
@@ -909,18 +959,18 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     else:
         display_df['予想設定5以上確率'] = 0
 
-    cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母', 'REG不足分']
+    cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '結果_設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母']
     config_dict = {
         "対象日付": st.column_config.DateColumn("予測対象日", format="MM/DD"),
-        "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100, help="AIが予測する設定5以上の確率"),
-        "設定5近似度": st.column_config.ProgressColumn("近似度", format="%d点", min_value=0, max_value=100, help="設定5近似度"),
+        "予想設定5以上確率": st.column_config.NumberColumn("事前AI期待度", format="%d%%", help="AIが事前に予測した設定5以上の確率"),
+        "結果_設定5以上確率": st.column_config.ProgressColumn("結果(事後確率)", format="%d%%", min_value=0, max_value=100, help="実際の結果(BIG/REG回数)から統計的に逆算した、本当に設定5以上だった確率"),
+        "設定5近似度": st.column_config.NumberColumn("近似度スコア", format="%d点", help="設定5近似度"),
         "差枚_actual": st.column_config.NumberColumn("差枚", format="%+d"),
         "結果_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
         "結果_BIG": st.column_config.NumberColumn("BIG", format="%d"),
         "結果_BIG確率分母": st.column_config.NumberColumn("B確率", format="1/%d"),
         "結果_REG": st.column_config.NumberColumn("REG", format="%d"),
         "結果_REG確率分母": st.column_config.NumberColumn("R確率", format="1/%d"),
-        "REG不足分": st.column_config.NumberColumn("R不足", format="%+.1f", help="REG過不足"),
     }
 
     if 'prediction_score' in merged_df.columns:
