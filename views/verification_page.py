@@ -14,10 +14,25 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
     # --- 検証・評価設定 ---
     with st.expander("🎯 検証・評価設定", expanded=False):
-        st.caption("設定5近似度を計算する際の減点ルールを調整できます。")
-        penalty_reg = st.slider("REG 1回不足ごとの減点", min_value=0, max_value=50, value=15, step=1)
-        penalty_big = st.slider("BIG 1回不足ごとの減点", min_value=0, max_value=50, value=5, step=1)
-        low_g_penalty = st.slider("低稼働(1000G未満)の最大減点率(%)", min_value=0, max_value=100, value=30, step=5)
+        st.caption("「設定5近似度」を計算する際の減点ルールを調整できます。よく分からなければ「標準」のままがおすすめです。")
+        
+        c1, c2, c3 = st.columns(3)
+        if c1.button("🍭 甘め", help="BIGのヒキ強も評価する設定"):
+            st.session_state.penalty_reg = 10
+            st.session_state.penalty_big = 2
+            st.session_state.low_g_penalty = 20
+        if c2.button("⚖️ 標準", help="REGを重視するバランス型（推奨）"):
+            st.session_state.penalty_reg = 15
+            st.session_state.penalty_big = 5
+            st.session_state.low_g_penalty = 30
+        if c3.button("🌶️ 辛め", help="REG不足に厳しく、低稼働を許さない設定"):
+            st.session_state.penalty_reg = 20
+            st.session_state.penalty_big = 8
+            st.session_state.low_g_penalty = 50
+            
+        penalty_reg = st.slider("REG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_reg', 15), 1, key="penalty_reg")
+        penalty_big = st.slider("BIG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_big', 5), 1, key="penalty_big")
+        low_g_penalty = st.slider("低稼働(1000G未満)の最大減点率(%)", 0, 100, st.session_state.get('low_g_penalty', 30), 5, key="low_g_penalty")
 
     if df_pred_log.empty:
         st.warning("保存された予測結果ログがありません。サイドバーの「予測結果をログ保存」ボタンから予測を保存してください。")
@@ -36,8 +51,11 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 
                 if 'ai_version' in df_pred_log.columns:
                     df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
+                    # 実行日時が一番新しいログのバージョンをデフォルトにする
+                    latest_version = df_pred_log.sort_values('実行日時', ascending=False)['ai_version'].iloc[0] if not df_pred_log.empty else 'すべて'
                     versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
-                    selected_version = st.selectbox("AIバージョンで絞り込み", versions)
+                    default_idx = versions.index(latest_version) if latest_version in versions else 0
+                    selected_version = st.selectbox("AIバージョンで絞り込み", versions, index=default_idx)
                     if selected_version != 'すべて':
                         df_pred_log = df_pred_log[df_pred_log['ai_version'] == selected_version]
 
@@ -268,6 +286,32 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         st.info("選択された店舗の分析データがありません。")
         return
 
+    # --- バージョン別成績比較表 (「すべて」選択時のみ表示) ---
+    if selected_version == 'すべて' and 'ai_version' in merged_df.columns:
+        st.markdown("##### 🔍 バージョン別 成績比較")
+        st.caption("過去に試したAI設定ごとの成績一覧です。どの設定が最も優秀だったかを比較できます。")
+        ver_stats = merged_df.groupby('ai_version').agg(
+            検証台数=('台番号', 'count'),
+            高設定率=('is_high_setting', 'mean'),
+            勝率=('差枚_actual', lambda x: (x > 0).mean()),
+            平均差枚=('差枚_actual', 'mean'),
+            設定5近似度=('設定5近似度', 'mean')
+        ).reset_index().sort_values('設定5近似度', ascending=False)
+        
+        st.dataframe(
+            ver_stats,
+            column_config={
+                "ai_version": st.column_config.TextColumn("バージョン設定"),
+                "検証台数": st.column_config.NumberColumn("台数", format="%d台"),
+                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
+                "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                "設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+
     # --- 1. 全体成績 (KPI) & 円グラフ ---
     specs = backend.get_machine_specs()
     spec_reg_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
@@ -317,31 +361,6 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         
         st.altair_chart(pie_chart, use_container_width=True)
 
-    # --- バージョン別成績比較表 (「すべて」選択時のみ表示) ---
-    if selected_version == 'すべて' and 'ai_version' in merged_df.columns:
-        st.markdown("##### 🔍 バージョン別 成績比較")
-        ver_stats = merged_df.groupby('ai_version').agg(
-            検証台数=('台番号', 'count'),
-            高設定率=('is_high_setting', 'mean'),
-            勝率=('差枚_actual', lambda x: (x > 0).mean()),
-            平均差枚=('差枚_actual', 'mean'),
-            設定5近似度=('設定5近似度', 'mean')
-        ).reset_index().sort_values('検証台数', ascending=False)
-        
-        st.dataframe(
-            ver_stats,
-            column_config={
-                "ai_version": st.column_config.TextColumn("バージョン設定"),
-                "検証台数": st.column_config.NumberColumn("台数", format="%d台"),
-                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
-                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
-                "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
-                "設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-
     # 日別推移データをAI評価より先に計算する
     daily_stats = merged_df.groupby('対象日付').agg(
         high_setting_rate=('is_high_setting', 'mean'),
@@ -362,34 +381,63 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     
     # データ不足の考慮 (検証台数不足 or 学習データ不足)
     low_rel_count = (merged_df['予測信頼度'] == '🔻低').sum() if '予測信頼度' in merged_df.columns else 0
+    mid_rel_count = (merged_df['予測信頼度'] == '🔸中').sum() if '予測信頼度' in merged_df.columns else 0
     low_rel_rate = low_rel_count / total_count if total_count > 0 else 0
+    mid_rel_rate = mid_rel_count / total_count if total_count > 0 else 0
     comment_prefix = ""
     if total_count < 5:
         comment_prefix = f"⚠️ **【検証台数不足】** 今回対象となった推奨台が **{total_count}台** と少ないため、たまたまのヒキの影響を強く受けています。点数は参考程度にご覧ください。\n\n"
-    elif low_rel_rate >= 0.5:
-        comment_prefix = f"⚠️ **【学習データ不足】** 今回の推奨台は過去データが少ない台が多いため、傾向を完全に把握しきれていません。\n\n"
+    elif low_rel_rate > 0.3:
+        comment_prefix = f"⚠️ **【台ごとの履歴データ不足】** 対象台の多く（{low_rel_rate:.0%}）が、過去履歴が14日未満の「信頼度:低」状態です。AIが各台のクセを正確に把握して期待度を高く出すには、1台あたり約30日分のデータが必要です。あと**約2〜3週間**ほど日々のデータ取得を続けると、予測スコアと精度が劇的に安定します。\n\n"
+    elif low_rel_rate + mid_rel_rate > 0.5:
+        comment_prefix = f"💡 **【データ蓄積の途中】** 対象台の半数以上が過去履歴30日未満です。AIのポテンシャルを完全に引き出すため、あと**約1〜2週間**ほど毎日のデータ取得（ログ蓄積）を継続することをおすすめします。\n\n"
 
     # 全体評価（期間全体の総評）
+    eval_mode_str = "標準"
+    if penalty_reg <= 10:
+        eval_mode_str = "甘め"
+    elif penalty_reg >= 20:
+        eval_mode_str = "辛め"
+        
     if pd.isna(avg_g) or avg_g < 2000:
         overall_comment = f"全体として推奨台の平均回転数が **{int(avg_g if not pd.isna(avg_g) else 0)}G** と少なく、試行回数不足です。もう少し稼働がある状況で検証したいですね。"
         mood = "🤔"
     elif avg_s5_score >= 80:
-        overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と大成功レベルです！本物の高設定を的確に見抜けています！"
+        if eval_mode_str == "甘め":
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と大成功レベルです！（※甘め評価のためBIGのヒキ強も含まれます）"
+        elif eval_mode_str == "辛め":
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と大成功レベルです！辛め評価でもこの点数は、文句なしの**本物の高設定**を的確に見抜けています！"
+        else:
+            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と大成功レベルです！本物の高設定を的確に見抜けています！"
         mood = "🌟"
     elif avg_s5_score >= 60:
         if avg_diff_r < 0:
-            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** でまずまずですが、REGが平均 {abs(avg_diff_r):.1f}回 不足しています。低〜中間設定の上振れに助けられている部分もありそうです。"
+            if eval_mode_str == "甘め":
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** でまずまずです。REGが平均 {abs(avg_diff_r):.1f}回 不足していますが、甘め評価（出玉重視）としては合格点です。"
+            else:
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** でまずまずですが、REGが平均 {abs(avg_diff_r):.1f}回 不足しています。低〜中間設定の上振れに助けられている部分もありそうです。"
         else:
-            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** で優秀です！中身もしっかり高設定挙動を示しています。"
+            if eval_mode_str == "辛め":
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** です。辛め評価の中では健闘しており、中身もしっかり高設定挙動を示しています。"
+            else:
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** で優秀です！中身もしっかり高設定挙動を示しています。"
         mood = "👍"
     elif avg_s5_score >= 40:
         if avg_g < 4000:
             overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と惜しい結果です。平均回転数が {int(avg_g)}G と少なめなので、下振れの可能性もあります。"
         else:
-            overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と反省点が残ります。低〜中間設定が混ざっている可能性が高いです。"
+            if eval_mode_str == "甘め":
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と反省点が残ります。甘め評価でこの点数なので、低設定の誤爆だった可能性が高いです。"
+            elif eval_mode_str == "辛め":
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** です。辛め評価なので点数が低く出やすくなっていますが、もう少しREGが欲しいところです。"
+            else:
+                overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と反省点が残ります。低〜中間設定が混ざっている可能性が高いです。"
         mood = "💦"
     else:
-        overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と惨敗です…。過去の傾向が変わった可能性があるので、最近のデータで学習し直すか、店選びを見直す余地があります。"
+        if eval_mode_str == "辛め":
+             overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と惨敗です…。辛め評価であることを考慮しても厳しい結果です。設定状況が変わった可能性があります。"
+        else:
+             overall_comment = f"全体の平均設定5近似度は **{avg_s5_score:.1f}点** と惨敗です…。過去の傾向が変わった可能性があるので、最近のデータで学習し直すか、店選びを見直す余地があります。"
         mood = "😭"
 
     # 過去の自分との比較ロジック
@@ -572,6 +620,18 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             advices = []
             needs_tuning = False
 
+            # --- 1台あたりのログ日数（信頼度）のチェック ---
+            if '予測信頼度' in prob_analysis_df.columns and total_eval_count > 0:
+                low_rel_count = (prob_analysis_df['予測信頼度'] == '🔻低').sum()
+                mid_rel_count = (prob_analysis_df['予測信頼度'] == '🔸中').sum()
+                low_rel_rate = low_rel_count / total_eval_count
+                mid_rel_rate = mid_rel_count / total_eval_count
+                
+                if low_rel_rate > 0.3:
+                    advices.append(f"⚠️ **台ごとの履歴データ不足**: 対象台の多く（{low_rel_rate:.0%}）が、過去履歴が14日未満の「信頼度:低」状態です。AIが各台のクセを正確に把握して期待度を高く出すには、1台あたり約30日分のデータが必要です。あと**約2〜3週間**ほど日々のデータ取得を続けると、予測スコアと精度が劇的に安定します。")
+                elif low_rel_rate + mid_rel_rate > 0.5:
+                    advices.append(f"💡 **データ蓄積の途中**: 対象台の半数以上が過去履歴30日未満です。AIのポテンシャルを完全に引き出すため、あと**約1〜2週間**ほど毎日のデータ取得（ログ蓄積）を継続することをおすすめします。")
+
             if total_eval_count < 30:
                 advices.append(f"⚠️ **全体的なデータ不足**: 現在の集計期間における検証データが **{total_eval_count}台** と少なく、たまたまのヒキによるブレの影響を強く受けています。チューニングを変更する前に、もう少しデータ（最低30台程度）が貯まるのを待つことをおすすめします。")
                 needs_tuning = True
@@ -629,13 +689,52 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                         'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
                         'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples
                     }
-                    st.cache_data.clear(); st.rerun()
+                    backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+                    st.cache_data.clear(); st.rerun() # 設定保存後に再分析
                     
                 if reset_btn:
                     if selected_shop in st.session_state["shop_hyperparams"]:
                         del st.session_state["shop_hyperparams"][selected_shop]
+                        backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                         st.cache_data.clear(); st.rerun()
-                    
+                        
+            st.markdown("**🔬 現在の設定でのシミュレーション成績 (最新データ)**")
+            st.caption("現在適用されている設定で過去データを再評価した場合のシミュレーション結果です。設定調整後の成果確認に使えます。")
+            sim_df = df_verify[df_verify[shop_col] == selected_shop].copy() if not df_verify.empty and shop_col in df_verify.columns else pd.DataFrame()
+            if not sim_df.empty and 'prediction_score' in sim_df.columns and 'target' in sim_df.columns and 'next_diff' in sim_df.columns:
+                sim_df['確率帯'] = sim_df['prediction_score'].apply(get_prob_band)
+                sim_stats = sim_df.groupby('確率帯').agg(
+                    台数=('台番号', 'count'),
+                    高設定率=('target', 'mean'),
+                    勝率=('next_diff', lambda x: (x > 0).mean()),
+                    平均差枚=('next_diff', 'mean'),
+                    合計差枚=('next_diff', 'sum')
+                ).reset_index()
+                
+                rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                sim_stats['sort'] = sim_stats['確率帯'].map(rank_order).fillna(99)
+                sim_stats = sim_stats.sort_values('sort').drop('sort', axis=1)
+                sim_stats['信頼度'] = sim_stats['台数'].apply(get_confidence_indicator)
+                
+                st.dataframe(
+                    sim_stats,
+                    column_config={
+                        "確率帯": st.column_config.TextColumn("期待度"),
+                        "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
+                        "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                        "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("シミュレーション用のデータがありません。")
+
+            st.markdown(f"**📝 過去の保存ログベースの成績 ({selected_period})**")
+            st.caption("過去に予測結果を保存した時点でのスコアと、実際の結果を照合した成績です。")
             rank_stats = prob_analysis_df.groupby('確率帯').agg(
                 台数=('台番号', 'count'),
                 高設定率=('is_high_setting', 'mean'),

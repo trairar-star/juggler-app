@@ -227,13 +227,13 @@ def load_prediction_log():
 def save_prediction_log(df):
     if df.empty:
         st.warning("保存するデータがありません。")
-        return
+        return False
     if 'prediction_score' in df.columns:
         # 期待度70%以上（AIの推奨基準）の台のみを抽出して保存
         df = df[df['prediction_score'] >= 0.70].sort_values('prediction_score', ascending=False)
         if df.empty:
             st.warning("期待度70%以上の推奨台がないため、ログの保存をスキップしました。")
-            return
+            return False
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -309,7 +309,10 @@ def save_prediction_log(df):
                 worksheet.update(final_data)
                 
         st.success(f"予測結果（期待度70%以上）を '{log_sheet_name}' シートに保存（上書き）しました！")
-    except Exception as e: st.error(f"保存エラー: {e}")
+        return True
+    except Exception as e: 
+        st.error(f"保存エラー: {e}")
+        return False
 
 @st.cache_data(ttl=3600)
 def load_shop_events():
@@ -611,6 +614,66 @@ def delete_my_balance(target_timestamp):
         return False
     except Exception as e:
         st.error(f"収支削除エラー: {e}")
+        return False
+
+# --- 店舗別AI設定の永続化 ---
+@st.cache_data(ttl=3600)
+def load_shop_ai_settings():
+    """店舗別のAI設定をスプレッドシートから読み込む"""
+    default_settings = {
+        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}
+    }
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('shop_ai_settings')
+        records = worksheet.get_all_records()
+        if not records:
+            return default_settings
+            
+        settings_dict = {}
+        for record in records:
+            shop_name = record.get('店名')
+            if not shop_name:
+                continue
+            
+            try:
+                settings_dict[shop_name] = {
+                    'train_months': int(record.get('train_months')),
+                    'n_estimators': int(record.get('n_estimators')),
+                    'learning_rate': float(record.get('learning_rate')),
+                    'num_leaves': int(record.get('num_leaves')),
+                    'max_depth': int(record.get('max_depth')),
+                    'min_child_samples': int(record.get('min_child_samples')),
+                }
+            except (ValueError, TypeError):
+                continue
+        
+        if "デフォルト" not in settings_dict:
+            settings_dict["デフォルト"] = default_settings["デフォルト"]
+            
+        return settings_dict
+        
+    except gspread.exceptions.WorksheetNotFound:
+        return default_settings
+    except Exception as e:
+        st.warning(f"AI設定の読み込みに失敗しました: {e}。デフォルト設定を使用します。")
+        return default_settings
+
+def save_shop_ai_settings(shop_hyperparams):
+    """店舗別のAI設定をスプレッドシートに保存する"""
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        sheet_name = 'shop_ai_settings'
+        try: worksheet = sh.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="10")
+        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples']
+        data_to_write = [header] + [[shop_name] + [params.get(k) for k in header[1:]] for shop_name, params in shop_hyperparams.items()]
+        worksheet.clear(); worksheet.update('A1', data_to_write)
+        return True
+    except Exception as e:
+        st.error(f"AI設定の保存に失敗しました: {e}")
         return False
 
 # --- 内部関数: 特徴量作成 ---
@@ -920,7 +983,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                         if len(shop_pred_idx) > 0:
                             predict_df.loc[shop_pred_idx, 'prediction_score'] = shop_model.predict_proba(predict_df.loc[shop_pred_idx, features])[:, 1]
                             predict_df.loc[shop_pred_idx, '予測差枚数'] = shop_reg.predict(predict_df.loc[shop_pred_idx, features]).astype(int)
-                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.2(m{shop_hp.get('train_months',3)}_n{s_n_est}_l{s_nl}_d{s_md})"
+                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.2(m{shop_hp.get('train_months',3)}_n{s_n_est}_l{s_nl}_lr{s_lr}_d{s_md}_c{s_mcs})"
                     if not train_df.empty:
                         shop_train_idx = train_df[train_df[shop_col] == shop].index
                         if len(shop_train_idx) > 0:

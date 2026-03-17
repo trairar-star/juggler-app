@@ -121,6 +121,8 @@ def main():
                 correct_password = "1234"
             if password == correct_password:
                 st.session_state["logged_in"] = True
+                # ログイン成功時に自動保存フラグを立てる
+                st.session_state['login_save_requested'] = True
                 st.rerun()
             else:
                 st.error("パスワードが違います。")
@@ -173,17 +175,10 @@ def main():
     if st.sidebar.button("🔄 データ更新 (再読み込み)"):
         st.cache_data.clear()
         st.rerun()
-        
-    # 予測保存ボタン (サイドバー)
-    if st.sidebar.button("💾 予測結果をログ保存"):
-        # このボタンを押すと、後述の処理で計算された df を保存します
-        st.session_state['save_requested'] = True
 
     # --- 店舗別AIパラメータの初期化 ---
     if "shop_hyperparams" not in st.session_state:
-        st.session_state["shop_hyperparams"] = {
-            "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}
-        }
+        st.session_state["shop_hyperparams"] = backend.load_shop_ai_settings()
 
     # データのロード
     with st.spinner("スプレッドシートからデータを読み込み中..."):
@@ -226,14 +221,17 @@ def main():
     for col in ['おすすめ度', 'prediction_score', '予測差枚数', '根拠']:
         if col not in df.columns:
             df[col] = 0 if col == '予測差枚数' else '-'
-
+            
     # カラム名判定
     shop_col = '店名' if '店名' in df.columns else '店舗名'
 
-    # --- 保存処理の実行 (キャッシュ外へ移動) ---
-    if st.session_state.get('save_requested'):
-        backend.save_prediction_log(df)
-        st.session_state['save_requested'] = False
+    # --- ログイン時の自動保存処理 ---
+    if st.session_state.get('login_save_requested'):
+        with st.spinner("本日の予測結果を自動保存中..."):
+            save_success = backend.save_prediction_log(df)
+        st.session_state['login_save_requested'] = False # 再実行時に保存が走らないようにフラグを消す
+        if save_success:
+            st.toast("✅ 本日の予測結果を自動保存しました！")
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
         if page == "精度検証 (各店舗AI設定)":

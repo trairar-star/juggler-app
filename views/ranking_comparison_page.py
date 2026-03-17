@@ -183,15 +183,15 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         match_df = pd.merge(merged_df, top3_machines, on=['実際の稼働日', shop_col, '台番号'], how='inner')
                         top3_count = len(match_df.drop_duplicates(subset=['実際の稼働日', shop_col]))
                         
-                    st.info(f"👑 **{shop_machine_label}AI推奨台のトップ3獲得実績**: 過去 {total_eval_days} 回中 **{top3_count} 回** (獲得率: {top3_count/total_eval_days:.1%})\n※AIが推奨した台（Top10）が、その日の指定条件の差枚ランキングでトップ3に入った回数です。")
+                    st.info(f"👑 **{shop_machine_label}AI推奨台のトップ3獲得実績**: 過去 {total_eval_days} 回中 **{top3_count} 回** (獲得率: {top3_count/total_eval_days:.1%})\n※AIが推奨した台が、その日の指定条件の差枚ランキングでトップ3に入った回数です。")
 
                 rank_metric = st.radio("📊 実際のランキング基準", ["差枚", "合算確率", "REG確率"], horizontal=True, help="合算確率とREG確率は、総ゲーム数3000G以上の台のみを対象とします。")
 
-                # AI予測ランキング (Top 10) のデータ準備
+                # AI予測ランキング のデータ準備
                 pred_df_day = merged_df[(merged_df['対象日付'].dt.date == selected_date) & (merged_df[shop_col] == compare_shop)].copy()
                 if selected_machine != 'すべての機種':
                     pred_df_day = pred_df_day[pred_df_day['機種名'] == selected_machine]
-                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False).head(10)
+                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False)
                 
                 # 実際のランキング のデータ準備
                 target_ts = pd.Timestamp(selected_date)
@@ -241,9 +241,9 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
 
                 # --- 上段: AI予測ランキング ---
                 if selected_machine != 'すべての機種':
-                    st.markdown(f"##### 🤖 AI予測 Top10 ({selected_machine})")
+                    st.markdown(f"##### 🤖 AI推奨台 ({selected_machine})")
                 else:
-                    st.markdown("##### 🤖 AI予測 Top10 (全体)")
+                    st.markdown("##### 🤖 AI推奨台 (全体)")
                 st.caption(f"※対象日: {selected_date}")
                 if pred_df_day.empty:
                     st.info("この日の予測ログがありません。")

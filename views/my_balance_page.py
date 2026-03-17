@@ -222,27 +222,50 @@ def render_my_balance_page(df_raw):
             row = df_balance[df_balance['登録日時'] == uid].iloc[0]
             d_str = row['日付'].strftime('%Y-%m-%d') if pd.notna(row['日付']) else "不明"
             return f"{d_str} | {row['店名']} | {row['機種名']} ({row['収支']}円)"
+        
+        def on_edit_target_change():
+            """編集対象が変更されたときにフォームの値を更新するコールバック"""
+            target_uid = st.session_state.edit_balance_target
+            if target_uid:
+                try:
+                    target_row = df_balance[df_balance['登録日時'] == target_uid].iloc[0]
+                    st.session_state.eb_date = pd.to_datetime(target_row['日付']).date()
+                    st.session_state.eb_shop = target_row['店名']
+                    st.session_state.eb_num = str(target_row['台番号'])
+                    st.session_state.eb_mac = target_row['機種名']
+                    st.session_state.eb_inv = int(target_row['投資'])
+                    st.session_state.eb_rec = int(target_row['回収'])
+                    st.session_state.eb_memo = str(target_row.get('メモ', ''))
+                except (IndexError, KeyError):
+                    # データが見つからない場合は何もしない
+                    pass
 
-        target_uid = st.selectbox("編集・削除するデータを選択", df_balance['登録日時'].unique(), format_func=format_balance_label, key="edit_balance_target")
+        target_uid = st.selectbox(
+            "編集・削除するデータを選択", 
+            df_balance['登録日時'].unique(), 
+            format_func=format_balance_label, 
+            key="edit_balance_target",
+            on_change=on_edit_target_change
+        )
+        
+        # 初回実行時にフォームの値を初期化
+        if 'eb_date' not in st.session_state and not df_balance.empty:
+            on_edit_target_change()
         
         if target_uid:
-            target_row = df_balance[df_balance['登録日時'] == target_uid].iloc[0]
-            
             with st.form("edit_balance_form"):
                 e_col1, e_col2 = st.columns(2)
                 with e_col1:
-                    try: default_date = pd.to_datetime(target_row['日付']).date()
-                    except: default_date = pd.Timestamp.now(tz='Asia/Tokyo').date()
-                    edit_date = st.date_input("稼働日", value=default_date, key="eb_date")
-                    edit_shop = st.text_input("店舗名", value=target_row['店名'], key="eb_shop")
-                    edit_number = st.text_input("台番号", value=str(target_row['台番号']), key="eb_num")
+                    st.date_input("稼働日", key="eb_date")
+                    st.text_input("店舗名", key="eb_shop")
+                    st.text_input("台番号", key="eb_num")
                 with e_col2:
-                    edit_machine = st.text_input("機種名", value=target_row['機種名'], key="eb_mac")
-                    edit_invest = st.number_input("投資金額 (円)", value=int(target_row['投資']), min_value=0, step=1000, key="eb_inv")
-                    edit_recovery = st.number_input("回収金額 (円)", value=int(target_row['回収']), min_value=0, step=1000, key="eb_rec")
-                edit_memo = st.text_area("メモ", value=str(target_row.get('メモ', '')), height=80, key="eb_memo")
+                    st.text_input("機種名", key="eb_mac")
+                    st.number_input("投資金額 (円)", min_value=0, step=1000, key="eb_inv")
+                    st.number_input("回収金額 (円)", min_value=0, step=1000, key="eb_rec")
+                st.text_area("メモ", height=80, key="eb_memo")
                 if st.form_submit_button("更新を保存", type="primary"):
-                    if backend.update_my_balance(target_uid, edit_date, edit_shop, edit_machine, edit_number, edit_invest, edit_recovery, edit_memo):
+                    if backend.update_my_balance(target_uid, st.session_state.eb_date, st.session_state.eb_shop, st.session_state.eb_mac, st.session_state.eb_num, st.session_state.eb_inv, st.session_state.eb_rec, st.session_state.eb_memo):
                         st.success("収支データを更新しました！")
                         st.cache_data.clear(); st.rerun()
                     else: st.error("更新に失敗しました。")
