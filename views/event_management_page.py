@@ -2,11 +2,33 @@ import pandas as pd
 import streamlit as st # type: ignore
 import backend
 
-def render_event_management_page():
+def render_event_management_page(df_raw):
     st.header("📝 イベント管理")
-    st.caption("登録済みの店舗イベント一覧です。不要なイベントはここから削除できます。")
+    st.caption("店舗独自のイベント（取材、特定日など）を登録・編集・削除します。")
+
+    # --- イベント登録フォーム ---
+    with st.expander("新しいイベントを登録", expanded=False):
+        shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
+        if shop_col in df_raw.columns:
+            unique_shops = df_raw[shop_col].unique()
+            
+            with st.form("event_reg_form", clear_on_submit=True):
+                reg_shop = st.selectbox("店舗", unique_shops)
+                reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
+                reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
+                reg_rank = st.selectbox("イベントの強さ (期待度)", ["S", "A", "B", "C"], index=1, help="S:激アツ, A:強い, B:普通, C:弱め")
+                submitted = st.form_submit_button("イベントを登録")
+                
+                if submitted:
+                    if backend.save_shop_event(reg_shop, reg_date, reg_name, reg_rank):
+                        st.success(f"{reg_shop} のイベントを登録しました！")
+                        st.cache_data.clear()
+                        st.rerun()
+        else:
+            st.warning("店舗データが見つからないため、イベントを登録できません。")
     
     df_events = backend.load_shop_events()
+    st.subheader("登録済みイベント一覧")
     
     if df_events.empty:
         st.info("現在、登録されているイベントはありません。")

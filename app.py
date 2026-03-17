@@ -135,7 +135,7 @@ def main():
     if "global_selected_shop" not in st.session_state:
         st.session_state["global_selected_shop"] = "全て"
         
-    pages = ["店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (答え合わせ)", "🏆 予測 vs 実際 ランキング", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    pages = ["店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (各店舗AI設定)", "🏆 予測 vs 実際 ランキング", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -179,6 +179,12 @@ def main():
         # このボタンを押すと、後述の処理で計算された df を保存します
         st.session_state['save_requested'] = True
 
+    # --- 店舗別AIパラメータの初期化 ---
+    if "shop_hyperparams" not in st.session_state:
+        st.session_state["shop_hyperparams"] = {
+            "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}
+        }
+
     # データのロード
     with st.spinner("スプレッドシートからデータを読み込み中..."):
         df_raw = backend.load_data()
@@ -202,50 +208,10 @@ def main():
         
         st.sidebar.info(f"📚 **学習データ統計**\n\n期間: {min_str} 〜 {max_str}\n総数: {total_records:,} 件")
 
-    # --- 店舗イベント登録 (サイドバー) ---
-    with st.sidebar.expander("📅 店舗イベント登録", expanded=False):
-        st.caption("店舗独自のイベント（取材、特定日など）を登録すると、AIがその傾向を学習します。")
-        
-        # 店舗リスト取得
-        shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
-        if shop_col in df_raw.columns:
-            unique_shops = df_raw[shop_col].unique()
-            
-            with st.form("event_reg_form", clear_on_submit=True):
-                reg_shop = st.selectbox("店舗", unique_shops)
-                reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
-                reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
-                reg_rank = st.selectbox("イベントの強さ (期待度)", ["S", "A", "B", "C"], index=1, help="S:激アツ, A:強い, B:普通, C:弱め")
-                submitted = st.form_submit_button("イベントを登録")
-                
-                if submitted:
-                    if backend.save_shop_event(reg_shop, reg_date, reg_name, reg_rank):
-                        st.success(f"{reg_shop} のイベントを登録しました！")
-                        st.cache_data.clear() # データ更新のためキャッシュクリア
-                        st.rerun() # 画面リロード
-
-    # --- ハイパーパラメータ調整 (サイドバー) ---
-    with st.sidebar.expander("⚙️ AIモデル設定 (調整)", expanded=False):
-        hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, 3, step=1, help="店長スイッチ対策や処理落ちを防ぐため、直近のデータのみで学習させます。")
-        hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, 300, step=50, help="値を大きくすると学習量が増えますが、時間がかかり過学習のリスクもあります。")
-        hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, 0.03, step=0.01, help="値を小さくすると丁寧に学習しますが、回数を増やす必要があります。")
-        hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, 15, step=1, help="モデルの複雑さ。スロットのようなノイズが多いデータは小さめ(15〜20)がおすすめです。")
-        hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, 4, step=1, help="木の深さの上限。ノイズ対策として3〜7程度に制限するのがおすすめです。-1は無制限。")
-        hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, 50, step=10, help="1つの条件を法則と認めるために必要な最低データ数。過学習を防ぐため、スロットでは50前後を推奨します。")
-        
-        hyperparams = {
-            'train_months': hp_train_months,
-            'n_estimators': hp_n_estimators,
-            'learning_rate': hp_learning_rate,
-            'num_leaves': hp_num_leaves,
-            'max_depth': hp_max_depth,
-            'min_child_samples': hp_min_child_samples
-        }
-
     # 分析実行
     with st.spinner("AIがデータを分析し、予測を生成しています..."):
         # キャッシュキーとしてデータの長さを利用（簡易的）
-        df, df_verify, df_importance = backend.run_analysis(df_raw, df_events, df_island, hyperparams, target_date=predict_target_date)
+        df, df_verify, df_importance = backend.run_analysis(df_raw, df_events, df_island, st.session_state["shop_hyperparams"], target_date=predict_target_date)
     
     if df.empty:
         st.warning(f"指定された予測対象日（{predict_target_date.strftime('%Y-%m-%d')}）以前の分析可能なデータがありません。")
@@ -270,7 +236,7 @@ def main():
         st.session_state['save_requested'] = False
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
-        if page == "精度検証 (答え合わせ)":
+        if page == "精度検証 (各店舗AI設定)":
             df_pred_log = backend.load_prediction_log()
             verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw)
         elif page == "🏆 予測 vs 実際 ランキング":
@@ -281,7 +247,7 @@ def main():
         elif page == "島マスター管理":
             island_master_page.render_island_master_page(df_raw)
         elif page == "イベント管理":
-            event_management_page.render_event_management_page()
+            event_management_page.render_event_management_page(df_raw)
         elif page == "💰 マイ収支管理":
             my_balance_page.render_my_balance_page(df_raw)
         else:

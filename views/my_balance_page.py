@@ -51,7 +51,7 @@ def render_my_balance_page(df_raw):
                     st.error("店舗名と機種名は必須です。")
                 else:
                     if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_memo):
-                        st.success("収支を登録しました！")
+                        st.success("収支データを登録（または上書き更新）しました！")
                         st.cache_data.clear()
                         st.rerun()
 

@@ -680,50 +680,66 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None):
 
     # --- 7. 特徴量重要度 (Feature Importance) ---
     if df_importance is not None and not df_importance.empty:
-        if 'shop_name' in df_importance.columns:
-            display_importance = df_importance[df_importance['shop_name'] == selected_shop].copy()
-        else:
-            display_importance = pd.DataFrame()
+        st.divider()
+        st.subheader("🧠 AIが重視したポイント (特徴量重要度)")
+
+        feature_name_map = {
+            '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
+            '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
+            'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚',
+            'mean_7days_diff': '台: 直近7日平均差枚', 'mean_14days_diff': '台: 直近14日平均差枚',
+            'mean_30days_diff': '台: 直近30日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
+            '連続マイナス日数': '台: 連続マイナス日数', 'machine_code': '機種', 'shop_code': '店舗',
+            'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'neighbor_avg_diff': '配置: 両隣の平均差枚',
+            'event_avg_diff': 'イベント: 平均差枚', 'prev_最終ゲーム': '前々日: 最終ゲーム数',
+            'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
+            'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
+            'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚'
+        }
+
+        # 全店舗の重要度データを準備
+        imp_all = df_importance[df_importance['shop_name'] == '全店舗'].copy()
+        if not imp_all.empty:
+            imp_all['特徴量名'] = imp_all['feature'].map(lambda x: feature_name_map.get(x, x))
+            imp_all = imp_all.sort_values('importance', ascending=False)
+
+        # 店舗別の重要度データを準備
+        imp_shop = df_importance[df_importance['shop_name'] == selected_shop].copy()
+        if not imp_shop.empty:
+            imp_shop['特徴量名'] = imp_shop['feature'].map(lambda x: feature_name_map.get(x, x))
+            imp_shop = imp_shop.sort_values('importance', ascending=False)
+
+        if not imp_shop.empty:
+            # 店舗別モデルと全体モデルを比較表示
+            st.caption(f"AIが【{selected_shop}】の台を予測する際に重視したデータ（左）と、全店舗共通の傾向（右）を比較します。")
             
-        if not display_importance.empty:
-            display_importance = display_importance.sort_values('importance', ascending=False)
-            st.divider()
-            st.subheader("🧠 AIが重視したポイント (特徴量重要度)")
-            st.caption(f"AIが【{selected_shop}】の台を予測する際に、どのデータを一番重要視しているかを示します。（店舗専用の分析モデル）")
+            col1, col2 = st.columns(2)
             
-            feature_name_map = {
-                '累計ゲーム': '前日: 累計ゲーム数',
-                'REG確率': '前日: REG確率',
-                'BIG確率': '前日: BIG確率',
-                '差枚': '前日: 差枚数',
-                '末尾番号': '台番号: 末尾',
-                'target_weekday': '予測日: 曜日',
-                'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)',
-                'weekday_avg_diff': '店舗: 曜日平均差枚',
-                'mean_7days_diff': '台: 直近7日平均差枚',
-                'mean_14days_diff': '台: 直近14日平均差枚',
-                'mean_30days_diff': '台: 直近30日平均差枚',
-                'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
-                '連続マイナス日数': '台: 連続マイナス日数',
-                'machine_code': '機種',
-                'shop_code': '店舗',
-                'reg_ratio': '前日: REG比率',
-                'is_corner': '配置: 角台',
-                'neighbor_avg_diff': '配置: 両隣の平均差枚',
-                'event_avg_diff': 'イベント: 平均差枚',
-                'prev_最終ゲーム': '前々日: 最終ゲーム数',
-                'event_code': 'イベント: 種類',
-                'event_rank_score': 'イベント: ランク',
-                'prev_差枚': '前々日: 差枚数',
-                'prev_REG確率': '前々日: REG確率',
-                'prev_累計ゲーム': '前々日: 累計ゲーム数',
-                'shop_avg_diff': '店舗: 当日平均差枚',
-                'island_avg_diff': '島: 当日平均差枚'
-            }
-            
-            display_importance['特徴量名'] = display_importance['feature'].map(lambda x: feature_name_map.get(x, x))
-            
-            chart_imp = alt.Chart(display_importance).mark_bar(color='#AB47BC').encode(
+            with col1:
+                st.markdown(f"**【{selected_shop}】専用モデル**")
+                chart_shop = alt.Chart(imp_shop).mark_bar(color='#AB47BC').encode(
+                    x=alt.X('importance:Q', title='重要度スコア'),
+                    y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
+                    tooltip=['特徴量名', 'importance']
+                ).properties(height=500).interactive()
+                st.altair_chart(chart_shop, use_container_width=True)
+                
+            with col2:
+                st.markdown("**【全店舗】共通モデル**")
+                if not imp_all.empty:
+                    chart_all = alt.Chart(imp_all).mark_bar(color='#5C6BC0').encode(
+                        x=alt.X('importance:Q', title='重要度スコア'),
+                        y=alt.Y('特徴量名:N', title=None, sort='-x', axis=alt.Axis(labelLimit=0)),
+                        tooltip=['特徴量名', 'importance']
+                    ).properties(height=500).interactive()
+                    st.altair_chart(chart_all, use_container_width=True)
+                else:
+                    st.info("全店舗共通モデルのデータがありません。")
+
+        elif not imp_all.empty:
+            # 店舗別モデルがなく、全体モデルのみの場合
+            st.caption(f"【{selected_shop}】専用の学習モデルはまだありません（データ不足）。代わりに全店舗共通の傾向を表示します。")
+            chart_imp = alt.Chart(imp_all).mark_bar(color='#5C6BC0').encode(
                 x=alt.X('importance:Q', title='重要度スコア'),
                 y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
                 tooltip=['特徴量名', 'importance']

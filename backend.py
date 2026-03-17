@@ -229,31 +229,30 @@ def save_prediction_log(df):
         st.warning("保存するデータがありません。")
         return
     if 'prediction_score' in df.columns:
-        shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
-        if shop_col:
-            df = df.sort_values('prediction_score', ascending=False).groupby(shop_col).head(10)
-        else:
-            df = df.sort_values('prediction_score', ascending=False).head(10)
+        # 期待度70%以上（AIの推奨基準）の台のみを抽出して保存
+        df = df[df['prediction_score'] >= 0.70].sort_values('prediction_score', ascending=False)
+        if df.empty:
+            st.warning("期待度70%以上の推奨台がないため、ログの保存をスキップしました。")
+            return
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         log_sheet_name = 'prediction_log'
+        
         try: 
             worksheet = sh.worksheet(log_sheet_name)
-            header = worksheet.row_values(1)
-            updates = []
-            if 'ai_version' not in header:
-                updates.append({'cell': (1, len(header) + 1), 'val': 'ai_version'})
-                header.append('ai_version')
-            if '予測対象日' not in header:
-                updates.append({'cell': (1, len(header) + 1), 'val': '予測対象日'})
-                header.append('予測対象日')
-            for u in updates:
-                worksheet.update_cell(u['cell'][0], u['cell'][1], u['val'])
+            existing_data = worksheet.get_all_values()
+            if existing_data:
+                header = existing_data[0]
+            else:
+                header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
         except: 
             worksheet = sh.add_worksheet(title=log_sheet_name, rows="1000", cols="20")
-            worksheet.append_row(['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version'])
             header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
+            existing_data = []
+
+        if 'ai_version' not in header: header.append('ai_version')
+        if '予測対象日' not in header: header.append('予測対象日')
             
         save_df = df.copy()
         save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
@@ -265,19 +264,51 @@ def save_prediction_log(df):
         else:
             save_df['予測対象日'] = save_df['対象日付'] + pd.Timedelta(days=1)
             
-        target_cols = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
-        valid_cols = [c for c in header if c in save_df.columns]
-        for c in target_cols:
-            if c not in valid_cols and c in save_df.columns:
-                valid_cols.append(c)
-                
-        save_df = save_df[valid_cols]
         for col in save_df.columns:
             if pd.api.types.is_datetime64_any_dtype(save_df[col]):
                 save_df[col] = save_df[col].dt.strftime('%Y-%m-%d')
+
+        valid_cols = [c for c in header if c in save_df.columns]
+        for c in header:
+            if c not in valid_cols and c in save_df.columns:
+                valid_cols.append(c)
+                header.append(c)
+                
+        save_df = save_df[valid_cols]
         save_df = save_df.fillna('')
-        worksheet.append_rows(save_df.values.tolist())
-        st.success(f"予測結果（各店舗 Top 10）を '{log_sheet_name}' シートに保存しました！")
+        
+        # 今回保存する予測対象日のリストを取得（上書き判定用）
+        target_dates = save_df['予測対象日'].unique().tolist()
+        
+        final_data = [header]
+        if existing_data and len(existing_data) > 1:
+            try:
+                date_col_idx = existing_data[0].index('予測対象日')
+                for row in existing_data[1:]:
+                    row_padded = row + [''] * (len(header) - len(row))
+                    # 予測対象日が今回保存するものと同じ場合はスキップ（古いデータを削除）
+                    if len(row) > date_col_idx and row[date_col_idx] in target_dates:
+                        continue
+                    final_data.append(row_padded)
+            except ValueError:
+                # 予測対象日列がない場合はそのまま残す
+                for row in existing_data[1:]:
+                    final_data.append(row + [''] * (len(header) - len(row)))
+                    
+        # 新しいデータを追加
+        final_data.extend(save_df.values.tolist())
+        
+        # シートをクリアして一括更新
+        worksheet.clear()
+        try:
+            worksheet.update(values=final_data, range_name='A1')
+        except TypeError:
+            try:
+                worksheet.update('A1', final_data)
+            except Exception:
+                worksheet.update(final_data)
+                
+        st.success(f"予測結果（期待度70%以上）を '{log_sheet_name}' シートに保存（上書き）しました！")
     except Exception as e: st.error(f"保存エラー: {e}")
 
 @st.cache_data(ttl=3600)
@@ -461,16 +492,66 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
         sh = gc.open_by_key(SPREADSHEET_KEY)
         
         sheet_name = 'my_balance'
-        try: worksheet = sh.worksheet(sheet_name)
+        try: 
+            worksheet = sh.worksheet(sheet_name)
+            existing_data = worksheet.get_all_values()
+            if existing_data:
+                header = existing_data[0]
+            else:
+                header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', 'メモ']
+                existing_data = []
         except: 
             worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="10")
-            worksheet.append_row(['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', 'メモ'])
+            header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', 'メモ']
+            existing_data = []
         
         timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         date_str = date_obj.strftime('%Y-%m-%d')
         balance = int(recovery) - int(invest)
         
-        worksheet.append_row([timestamp, date_str, shop, number, machine, invest, recovery, balance, memo])
+        new_row_dict = {
+            '登録日時': timestamp, '日付': date_str, '店名': shop,
+            '台番号': str(number), '機種名': machine, '投資': str(invest),
+            '回収': str(recovery), '収支': str(balance), 'メモ': memo
+        }
+        
+        final_data = [header]
+        replaced = False
+        
+        if existing_data and len(existing_data) > 1:
+            try:
+                idx_date = header.index('日付')
+                idx_shop = header.index('店名')
+                idx_num = header.index('台番号')
+                
+                for row in existing_data[1:]:
+                    row_padded = row + [''] * (len(header) - len(row))
+                    # 同日・同店舗・同台番号のデータがあれば上書きする
+                    if len(row_padded) > max(idx_date, idx_shop, idx_num) and \
+                       row_padded[idx_date] == date_str and \
+                       row_padded[idx_shop] == shop and \
+                       str(row_padded[idx_num]) == str(number):
+                        new_row = [new_row_dict.get(col, '') for col in header]
+                        final_data.append(new_row)
+                        replaced = True
+                    else:
+                        final_data.append(row_padded)
+            except ValueError:
+                for row in existing_data[1:]:
+                    final_data.append(row + [''] * (len(header) - len(row)))
+        
+        if not replaced:
+            new_row = [new_row_dict.get(col, '') for col in header]
+            final_data.append(new_row)
+            
+        # シートをクリアして一括更新
+        worksheet.clear()
+        try:
+            worksheet.update(values=final_data, range_name='A1')
+        except TypeError:
+            try: worksheet.update('A1', final_data)
+            except Exception: worksheet.update(final_data)
+            
         return True
     except Exception as e:
         st.error(f"収支保存エラー: {e}")
@@ -765,8 +846,9 @@ def _generate_features(df, df_events, df_island, target_date):
     return df, features
 
 # --- 内部関数: モデル学習 ---
-def _train_models(train_df, features, hyperparams):
+def _train_models(train_df, predict_df, features, shop_hyperparams):
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
+    default_hp = shop_hyperparams.get("デフォルト", {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50})
     
     X, y = train_df[features], train_df['target']
     sample_weights = None
@@ -775,14 +857,25 @@ def _train_models(train_df, features, hyperparams):
         days_diff = (max_date - train_df['対象日付']).dt.days
         sample_weights = 0.995 ** days_diff
     
-    n_est = hyperparams.get('n_estimators', 300)
-    lr = hyperparams.get('learning_rate', 0.03)
-    nl = hyperparams.get('num_leaves', 15)
-    md = hyperparams.get('max_depth', 4)
-    mcs = hyperparams.get('min_child_samples', 50) # 追加: デフォルト50件
+    n_est = default_hp.get('n_estimators', 300)
+    lr = default_hp.get('learning_rate', 0.03)
+    nl = default_hp.get('num_leaves', 15)
+    md = default_hp.get('max_depth', 4)
+    mcs = default_hp.get('min_child_samples', 50)
 
+    # --- 全店舗共通モデルの学習と推論 ---
     model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
     model.fit(X, y, sample_weight=sample_weights)
+    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
+    reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
+    
+    if not predict_df.empty:
+        predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
+        predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
+        predict_df['ai_version'] = "v2.2(共通)"
+    if not train_df.empty:
+        train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
+        train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
     
     feature_importances_list = []
     feature_importances_list.append(pd.DataFrame({
@@ -792,23 +885,47 @@ def _train_models(train_df, features, hyperparams):
         'importance': model.feature_importances_
     }))
     
+    # --- 店舗個別モデルの学習と推論の上書き ---
     if shop_col:
         for shop in train_df[shop_col].unique():
+            shop_hp = shop_hyperparams.get(shop, default_hp)
+            s_n_est = shop_hp.get('n_estimators', 300)
+            s_lr = shop_hp.get('learning_rate', 0.03)
+            s_nl = shop_hp.get('num_leaves', 15)
+            s_md = shop_hp.get('max_depth', 4)
+            s_mcs = shop_hp.get('min_child_samples', 50)
+            
             shop_train = train_df[train_df[shop_col] == shop]
             if len(shop_train) >= 50: # サンプル数が少なすぎる場合は除外
                 X_shop = shop_train[features]
                 y_shop = shop_train['target']
                 sw_shop = sample_weights.loc[shop_train.index] if sample_weights is not None else None
                 
-                shop_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
+                shop_model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs)
+                shop_reg = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs)
+                
                 try:
                     shop_model.fit(X_shop, y_shop, sample_weight=sw_shop)
+                    shop_reg.fit(X_shop, shop_train['next_diff'], sample_weight=sw_shop)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': shop,
                         'category': '店舗',
                         'feature': features,
                         'importance': shop_model.feature_importances_
                     }))
+                    
+                    # その店舗の推論結果を専用モデルで上書きする
+                    if not predict_df.empty:
+                        shop_pred_idx = predict_df[predict_df[shop_col] == shop].index
+                        if len(shop_pred_idx) > 0:
+                            predict_df.loc[shop_pred_idx, 'prediction_score'] = shop_model.predict_proba(predict_df.loc[shop_pred_idx, features])[:, 1]
+                            predict_df.loc[shop_pred_idx, '予測差枚数'] = shop_reg.predict(predict_df.loc[shop_pred_idx, features]).astype(int)
+                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.2(m{shop_hp.get('train_months',3)}_n{s_n_est}_l{s_nl}_d{s_md})"
+                    if not train_df.empty:
+                        shop_train_idx = train_df[train_df[shop_col] == shop].index
+                        if len(shop_train_idx) > 0:
+                            train_df.loc[shop_train_idx, 'prediction_score'] = shop_model.predict_proba(X_shop)[:, 1]
+                            train_df.loc[shop_train_idx, '予測差枚数'] = shop_reg.predict(X_shop).astype(int)
                 except: pass
                     
     # --- 曜日別モデルの学習 ---
@@ -856,13 +973,10 @@ def _train_models(train_df, features, hyperparams):
 
     feature_importances = pd.concat(feature_importances_list, ignore_index=True) if feature_importances_list else pd.DataFrame()
     
-    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs)
-    reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights)
-
-    return model, reg_model, feature_importances
+    return predict_df, train_df, feature_importances
 
 # --- 内部関数: 予測の後処理 ---
-def _postprocess_predictions(predict_df, train_df, hyperparams):
+def _postprocess_predictions(predict_df, train_df):
     specs = get_machine_specs()
     
     def apply_setting5_boost(row):
@@ -1033,24 +1147,17 @@ def _postprocess_predictions(predict_df, train_df, hyperparams):
     if not train_df.empty:
         train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
     
-    t_m = hyperparams.get('train_months', 3) if hyperparams else 3
-    n_est = hyperparams.get('n_estimators', 300) if hyperparams else 300
-    nl = hyperparams.get('num_leaves', 15) if hyperparams else 15
-    lr = hyperparams.get('learning_rate', 0.03) if hyperparams else 0.03
-    if not predict_df.empty: 
-        predict_df['ai_version'] = f"v2.1_設定5(m{t_m}_n{n_est}_l{nl}_lr{lr})"
-    
     return predict_df, train_df
 
 # ---------------------------------------------------------
 # 分析・予測ロジック (メイン関数)
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
-def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_date=None):
+def run_analysis(df, df_events=None, df_island=None, shop_hyperparams=None, target_date=None):
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
-    if hyperparams is None:
-        hyperparams = {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}
+    if shop_hyperparams is None:
+        shop_hyperparams = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
 
     # 1. 特徴量エンジニアリング
     df, features = _generate_features(df, df_events, df_island, target_date)
@@ -1059,15 +1166,22 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     train_df = df.dropna(subset=['next_diff']).copy()
     predict_df = df[df['next_diff'].isna()].copy()
     
-    # 2. 学習データの期間絞り込み
-    train_months = hyperparams.get('train_months', 3)
-    if '対象日付' in train_df.columns and not train_df.empty:
-        max_train_date = train_df['対象日付'].max()
-        cutoff_date = max_train_date - pd.DateOffset(months=train_months)
-        train_df = train_df[train_df['対象日付'] >= cutoff_date]
+    # 2. 学習データの期間絞り込み (店舗ごとに適用)
+    shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
+    if shop_col and not train_df.empty:
+        filtered_train_dfs = []
+        for shop in train_df[shop_col].unique():
+            shop_hp = shop_hyperparams.get(shop, shop_hyperparams.get("デフォルト", {}))
+            t_m = shop_hp.get('train_months', 3)
+            shop_df = train_df[train_df[shop_col] == shop]
+            if not shop_df.empty and '対象日付' in shop_df.columns:
+                max_d = shop_df['対象日付'].max()
+                cutoff = max_d - pd.DateOffset(months=t_m)
+                filtered_train_dfs.append(shop_df[shop_df['対象日付'] >= cutoff])
+        if filtered_train_dfs:
+            train_df = pd.concat(filtered_train_dfs, ignore_index=True)
 
     # 3. 予測データを最新日に絞り込み
-    shop_col = '店名' if '店名' in predict_df.columns else ('店舗名' if '店舗名' in predict_df.columns else None)
     if '対象日付' in predict_df.columns and not predict_df.empty:
         if shop_col:
             latest_dates = predict_df.groupby(shop_col)['対象日付'].transform('max')
@@ -1079,17 +1193,10 @@ def run_analysis(df, df_events=None, df_island=None, hyperparams=None, target_da
     if len(train_df) < 10 or len(predict_df) == 0:
         return predict_df, pd.DataFrame(), pd.DataFrame()
 
-    # 4. モデル学習
-    model, reg_model, feature_importances = _train_models(train_df, features, hyperparams)
-
-    # 5. 推論 (スコア付与)
-    predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
-    predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
-
-    train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
-    train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
+    # 4 & 5. モデル学習と推論 (店舗ごとのパラメータで独立して実行される)
+    predict_df, train_df, feature_importances = _train_models(train_df, predict_df, features, shop_hyperparams)
 
     # 6. 後処理 (スコア補正、根拠の自然言語生成)
-    predict_df, train_df = _postprocess_predictions(predict_df, train_df, hyperparams)
+    predict_df, train_df = _postprocess_predictions(predict_df, train_df)
 
     return predict_df, train_df, feature_importances

@@ -587,6 +587,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         # --- AI正答率の計算 ---
         ai_accuracy_map = {}
         ai_win_rate_map = {}
+        ai_acc_str_map = {}
+        ai_win_str_map = {}
+        
         if df_train is not None and not df_train.empty and shop_col in df_train.columns and 'prediction_score' in df_train.columns and 'target' in df_train.columns:
             # 過去データから、期待度70%以上だった推奨台を抽出
             high_expect_df = df_train[df_train['prediction_score'] >= 0.70]
@@ -594,29 +597,43 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             if 'next_diff' in high_expect_df.columns:
                 acc_stats = high_expect_df.groupby(shop_col).agg(
                     正答率=('target', 'mean'), # 推奨台のうち、実際に高設定(target=1)だった割合
-                    勝率=('next_diff', lambda x: (x > 0).mean()) # 推奨台のうち、差枚がプラスだった割合
+                    正答数=('target', 'sum'),
+                    勝率=('next_diff', lambda x: (x > 0).mean()), # 推奨台のうち、差枚がプラスだった割合
+                    勝数=('next_diff', lambda x: (x > 0).sum()),
+                    サンプル数=('target', 'count')
                 ).reset_index()
                 ai_win_rate_map = dict(zip(acc_stats[shop_col], acc_stats['勝率']))
+                for _, r in acc_stats.iterrows():
+                    shop = r[shop_col]
+                    ai_win_str_map[shop] = f"{r['勝率']*100:.1f}% ({int(r['勝数'])}/{int(r['サンプル数'])}台)"
             else:
                 acc_stats = high_expect_df.groupby(shop_col).agg(
-                    正答率=('target', 'mean') # 推奨台のうち、実際に高設定(target=1)だった割合
+                    正答率=('target', 'mean'), # 推奨台のうち、実際に高設定(target=1)だった割合
+                    正答数=('target', 'sum'),
+                    サンプル数=('target', 'count')
                 ).reset_index()
                 
             ai_accuracy_map = dict(zip(acc_stats[shop_col], acc_stats['正答率']))
+            for _, r in acc_stats.iterrows():
+                shop = r[shop_col]
+                ai_acc_str_map[shop] = f"{r['正答率']*100:.1f}% ({int(r['正答数'])}/{int(r['サンプル数'])}台)"
             
-        shop_stats['AI正答率'] = shop_stats[shop_col].map(ai_accuracy_map).fillna(0.0) * 100
-        shop_stats['AI推奨台勝率'] = shop_stats[shop_col].map(ai_win_rate_map).fillna(0.0) * 100
+        shop_stats['AI正答率_数値'] = shop_stats[shop_col].map(ai_accuracy_map).fillna(0.0) * 100
+        shop_stats['AI推奨台勝率_数値'] = shop_stats[shop_col].map(ai_win_rate_map).fillna(0.0) * 100
+        
+        shop_stats['AI正答率'] = shop_stats[shop_col].map(ai_acc_str_map).fillna("- (0/0台)")
+        shop_stats['AI推奨台勝率'] = shop_stats[shop_col].map(ai_win_str_map).fillna("- (0/0台)")
         
         # --- AI実績に基づくペナルティ計算 ---
         def calc_sort_score(row):
             score = row['平均スコア']
             # 過去データがない(0%)場合はペナルティの対象外
-            if row['AI正答率'] > 0:
-                if row['AI正答率'] < 30: score -= 0.15  # 30%未満なら重いペナルティ
-                elif row['AI正答率'] < 40: score -= 0.05  # 40%未満なら軽いペナルティ
-            if row['AI推奨台勝率'] > 0:
-                if row['AI推奨台勝率'] < 30: score -= 0.15
-                elif row['AI推奨台勝率'] < 40: score -= 0.05
+            if row['AI正答率_数値'] > 0:
+                if row['AI正答率_数値'] < 30: score -= 0.15  # 30%未満なら重いペナルティ
+                elif row['AI正答率_数値'] < 40: score -= 0.05  # 40%未満なら軽いペナルティ
+            if row['AI推奨台勝率_数値'] > 0:
+                if row['AI推奨台勝率_数値'] < 30: score -= 0.15
+                elif row['AI推奨台勝率_数値'] < 40: score -= 0.05
             return score
 
         shop_stats['ソート用スコア'] = shop_stats.apply(calc_sort_score, axis=1)
@@ -626,14 +643,14 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         
         st.caption("※過去の「AI正答率」や「推奨台勝率」が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い）と判断し、ランキング順位を自動的に下げるペナルティを適用しています。")
         st.dataframe(
-            shop_stats,
+            shop_stats[[shop_col, '平均スコア', '推奨台数', '全台数', 'AI正答率', 'AI推奨台勝率']],
             column_config={
                 shop_col: st.column_config.TextColumn("店舗"),
                 "平均スコア": st.column_config.ProgressColumn("明日の期待度", min_value=0, max_value=1.0, format="%.2f", help="明日の店舗全体の平均的な設定5以上確率"),
                 "推奨台数": st.column_config.NumberColumn("推奨", format="%d台", help="AI期待度が70%以上の台数"),
                 "全台数": st.column_config.NumberColumn("全台", format="%d台"),
-                "AI正答率": st.column_config.ProgressColumn("過去のAI正答率", format="%d%%", min_value=0, max_value=100, help="過去にAIが推奨(期待度70%以上)した台が、実際に高設定挙動だった割合。この店でAIの予測がどれくらい通用するかを示します。"),
-                "AI推奨台勝率": st.column_config.ProgressColumn("推奨台勝率", format="%d%%", min_value=0, max_value=100, help="過去にAIが推奨(期待度70%以上)した台が、実際に差枚プラスで終わった割合(勝率)です。"),
+                "AI正答率": st.column_config.TextColumn("過去のAI正答率", help="過去にAIが推奨(期待度70%以上)した台が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
+                "AI推奨台勝率": st.column_config.TextColumn("推奨台勝率", help="過去にAIが推奨(期待度70%以上)した台が、実際に差枚プラスで終わった割合(勝率)と台数です。"),
             },
             use_container_width=True,
             hide_index=True

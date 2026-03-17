@@ -7,11 +7,13 @@ import backend
 from utils import get_confidence_indicator
 
 def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
-    st.header("✅ 精度検証 (保存データの答え合わせ)")
+    st.header("✅ 精度検証 (各店舗AI設定)")
     st.caption("あなたが保存した過去の「予測結果ログ」と、実際の結果データを照合して、当時のAIの精度を検証します。")
 
-    # --- 検証・評価設定 (サイドバー) ---
-    with st.sidebar.expander("🎯 検証・評価設定", expanded=False):
+    selected_version = 'すべて'
+
+    # --- 検証・評価設定 ---
+    with st.expander("🎯 検証・評価設定", expanded=False):
         st.caption("設定5近似度を計算する際の減点ルールを調整できます。")
         penalty_reg = st.slider("REG 1回不足ごとの減点", min_value=0, max_value=50, value=15, step=1)
         penalty_big = st.slider("BIG 1回不足ごとの減点", min_value=0, max_value=50, value=5, step=1)
@@ -29,8 +31,8 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             min_log_date = valid_dates.min().date()
             max_log_date = valid_dates.max().date()
             
-            with st.sidebar.expander("📅 予測保存日で絞り込み (バージョン比較)", expanded=False):
-                st.caption("AIが予測を保存した日時で絞り込みます。設定4基準時代と設定5基準時代の成績を分けて確認できます。")
+            with st.expander("⚙️ AI設定・バージョンで絞り込み", expanded=True):
+                st.caption("モデルの設定（学習回数や葉の数など）ごとに成績を分けて確認・比較できます。")
                 
                 if 'ai_version' in df_pred_log.columns:
                     df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
@@ -260,7 +262,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         return
 
     merged_df = base_df[base_df[shop_col] == selected_shop].copy()
-    st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop})")
+    st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop} / {selected_version})")
 
     if merged_df.empty:
         st.info("選択された店舗の分析データがありません。")
@@ -314,6 +316,31 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         ).properties(height=200)
         
         st.altair_chart(pie_chart, use_container_width=True)
+
+    # --- バージョン別成績比較表 (「すべて」選択時のみ表示) ---
+    if selected_version == 'すべて' and 'ai_version' in merged_df.columns:
+        st.markdown("##### 🔍 バージョン別 成績比較")
+        ver_stats = merged_df.groupby('ai_version').agg(
+            検証台数=('台番号', 'count'),
+            高設定率=('is_high_setting', 'mean'),
+            勝率=('差枚_actual', lambda x: (x > 0).mean()),
+            平均差枚=('差枚_actual', 'mean'),
+            設定5近似度=('設定5近似度', 'mean')
+        ).reset_index().sort_values('検証台数', ascending=False)
+        
+        st.dataframe(
+            ver_stats,
+            column_config={
+                "ai_version": st.column_config.TextColumn("バージョン設定"),
+                "検証台数": st.column_config.NumberColumn("台数", format="%d台"),
+                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
+                "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                "設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
 
     # 日別推移データをAI評価より先に計算する
     daily_stats = merged_df.groupby('対象日付').agg(
@@ -573,6 +600,41 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 st.markdown("分布の偏りと実際の正解率（折れ線グラフ）のズレを分析した結果、以下の設定調整をおすすめします：")
                 for adv in advices:
                     st.markdown(f"- {adv}")
+                    
+            # --- 各店舗専用 AIモデル設定 ---
+            st.divider()
+            st.subheader(f"⚙️ 【{selected_shop}】専用 AIモデル設定")
+            st.caption("上のアドバイスを参考に、この店舗専用のパラメータを調整して「設定を保存して再分析」を押してください。")
+            
+            if "shop_hyperparams" not in st.session_state:
+                st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
+                
+            default_hp = st.session_state["shop_hyperparams"]["デフォルト"]
+            current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
+            
+            with st.form(f"hp_form_{selected_shop}"):
+                hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, current_hp.get('train_months', 3), step=1)
+                hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, current_hp.get('n_estimators', 300), step=50)
+                hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, current_hp.get('learning_rate', 0.03), step=0.01)
+                hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, current_hp.get('num_leaves', 15), step=1)
+                hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, current_hp.get('max_depth', 4), step=1)
+                hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, current_hp.get('min_child_samples', 50), step=10)
+                
+                cols = st.columns(2)
+                submitted = cols[0].form_submit_button("この店舗の設定を保存して再分析", type="primary")
+                reset_btn = cols[1].form_submit_button("全店舗共通設定に戻す")
+                
+                if submitted:
+                    st.session_state["shop_hyperparams"][selected_shop] = {
+                        'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
+                        'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples
+                    }
+                    st.cache_data.clear(); st.rerun()
+                    
+                if reset_btn:
+                    if selected_shop in st.session_state["shop_hyperparams"]:
+                        del st.session_state["shop_hyperparams"][selected_shop]
+                        st.cache_data.clear(); st.rerun()
                     
             rank_stats = prob_analysis_df.groupby('確率帯').agg(
                 台数=('台番号', 'count'),
