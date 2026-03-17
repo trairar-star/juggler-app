@@ -714,6 +714,25 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     if 'prediction_score' in df_sorted.columns:
         df_sorted['予想設定5以上確率'] = (df_sorted['prediction_score'] * 100).astype(int)
 
+    # --- ランク変動の計算 (前日差枚順位との比較) ---
+    if 'prediction_score' in df_sorted.columns and '差枚' in df_sorted.columns:
+        df_sorted['AI順位_num'] = df_sorted['prediction_score'].rank(method='min', ascending=False).fillna(999).astype(int)
+        df_sorted['前日差枚順位_num'] = df_sorted['差枚'].rank(method='min', ascending=False).fillna(999).astype(int)
+        
+        def format_rank_change(row):
+            ai_r = row['AI順位_num']
+            prev_r = row['前日差枚順位_num']
+            if ai_r == 999: return "-"
+            if prev_r == 999: return f"{ai_r}位"
+            diff = prev_r - ai_r
+            if diff > 0: return f"{ai_r}位 (🔼+{diff})"
+            elif diff < 0: return f"{ai_r}位 (🔻{diff})"
+            else: return f"{ai_r}位 (➖)"
+            
+        df_sorted['AI順位'] = df_sorted.apply(format_rank_change, axis=1)
+    else:
+        df_sorted['AI順位'] = "-"
+
     # 期待度70%以上に絞る (表示も保存条件に合わせる)
     if 'prediction_score' in df_sorted.columns:
         df_top10 = df_sorted[df_sorted['prediction_score'] >= 0.70]
@@ -724,7 +743,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         st.info("現在、期待度が70%を超えている推奨台はありません。（店舗全体の傾向や他の店舗を確認してみてください）")
 
     # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
-    base_cols = ['台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
+    base_cols = ['AI順位', '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
     if selected_shop == '全て' and shop_col in df.columns:
         base_cols.insert(0, shop_col)
         
@@ -738,6 +757,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     st.dataframe(
         styled_top10,
         column_config={
+            "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
             shop_col: st.column_config.TextColumn("店舗", width="small"),
             "台番号": st.column_config.TextColumn("No.", width="small"),
             "機種名": st.column_config.TextColumn("機種", width="small"),
@@ -763,6 +783,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             st.dataframe(
                 styled_recon,
                 column_config={
+                    "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
                     shop_col: st.column_config.TextColumn("店舗", width="small"),
                     "台番号": st.column_config.TextColumn("No.", width="small"),
                     "機種名": st.column_config.TextColumn("機種", width="small"),
