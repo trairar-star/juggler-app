@@ -691,63 +691,104 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             )
             st.altair_chart(alt.layer(bar_hist, line_hist).resolve_scale(y='independent').properties(height=300), use_container_width=True)
 
-            # AIチューニングアドバイス
-            score_mean = prob_analysis_df['prediction_score'].mean()
+            # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
+            total_eval_count = len(prob_analysis_df)
+            period_high_setting_rate = prob_analysis_df['is_high_setting'].mean()
             high_score_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.70]
             high_score_accuracy = high_score_df['is_high_setting'].mean() if not high_score_df.empty else 0
-            period_high_setting_rate = prob_analysis_df['is_high_setting'].mean()
+            score_mean = prob_analysis_df['prediction_score'].mean()
             
-            total_eval_count = len(prob_analysis_df)
-            high_score_count = len(high_score_df)
+            avg_g_recent = prob_analysis_df['結果_累計ゲーム'].mean()
             
-            advices = []
-            needs_tuning = False
-
-            # --- 1台あたりのログ日数（信頼度）のチェック ---
-            if '予測信頼度' in prob_analysis_df.columns and total_eval_count > 0:
-                low_rel_count = (prob_analysis_df['予測信頼度'] == '🔻低').sum()
-                mid_rel_count = (prob_analysis_df['予測信頼度'] == '🔸中').sum()
-                low_rel_rate = low_rel_count / total_eval_count
-                mid_rel_rate = mid_rel_count / total_eval_count
-                
-                if low_rel_rate > 0.3:
-                    advices.append(f"⚠️ **台ごとの履歴データ不足**: 対象台の多く（{low_rel_rate:.0%}）が、過去履歴が14日未満の「信頼度:低」状態です。AIが各台のクセを正確に把握して期待度を高く出すには、1台あたり約30日分のデータが必要です。あと**約2〜3週間**ほど日々のデータ取得を続けると、予測スコアと精度が劇的に安定します。")
-                elif low_rel_rate + mid_rel_rate > 0.5:
-                    advices.append(f"💡 **データ蓄積の途中**: 対象台の半数以上が過去履歴30日未満です。AIのポテンシャルを完全に引き出すため、あと**約1〜2週間**ほど毎日のデータ取得（ログ蓄積）を継続することをおすすめします。")
-
+            low_rel_count = (prob_analysis_df['予測信頼度'] == '🔻低').sum() if '予測信頼度' in prob_analysis_df.columns else 0
+            low_rel_rate = low_rel_count / total_eval_count if total_eval_count > 0 else 0
+            
+            # 要因1: データ量
+            diag_data = {"status": "🟢", "title": "データ蓄積量", "msg": "十分なデータが蓄積されています。"}
             if total_eval_count < 30:
-                advices.append(f"⚠️ **全体的なデータ不足**: 現在の集計期間における検証データが **{total_eval_count}台** と少なく、たまたまのヒキによるブレの影響を強く受けています。チューニングを変更する前に、もう少しデータ（最低30台程度）が貯まるのを待つことをおすすめします。")
-                needs_tuning = True
-            else:
-                if score_mean > period_high_setting_rate + 0.15:
-                    advices.append("全体的にAIの評価が**甘すぎ（期待度が高すぎ）**る傾向があります。棒グラフが右側に寄りすぎている場合、サイドバーの `葉の数 (num_leaves)` を下げる（例: 10〜12）か、`学習率` を下げてより厳格に学習させてみてください。")
-                    needs_tuning = True
-                elif score_mean < period_high_setting_rate - 0.15:
-                    advices.append("全体的にAIの評価が**慎重すぎ（期待度が低すぎ）**る傾向があります。グラフが左側に偏っている場合、サイドバーの `学習回数 (n_estimators)` を増やす（例: 400〜500）か、`葉の数` を少し上げて、パターンをより多く覚えさせてみてください。")
-                    needs_tuning = True
-                    
-            if high_score_count > 0:
-                if high_score_count < 10:
-                    advices.append(f"⚠️ **推奨台のデータ不足**: 期待度70%以上の台が **{high_score_count}台** しかありません。ブレが大きいため以下の「正解率」の評価は参考程度にしてください。")
-                    
-                if high_score_accuracy < 0.40:
-                    advices.append("期待度70%以上の台（本来のおすすめ台）の**正解率が低く、過学習（たまたまのノイズを必勝法と勘違い）**を起こしている可能性があります。`深さ制限 (max_depth)` を 3 などに下げて、シンプルな条件だけを覚えさせてみてください。")
-                    needs_tuning = True
-                elif high_score_accuracy > 0.60:
-                    advices.append("期待度70%以上の台の正解率が非常に高く、**高評価の台はしっかり結果を出せています**。折れ線グラフが右肩上がりになっていれば大成功です！")
-                    
-            if not needs_tuning and total_eval_count >= 30:
-                advices.append("期待度と実際の高設定率のバランスが取れており、**現在のパラメータ設定は非常に良好**です！この設定のまま運用を続けることをおすすめします。")
+                diag_data = {"status": "🔴", "title": "データ蓄積量", "msg": f"検証台数が{total_eval_count}台と少なすぎます。たまたまのヒキによるブレが大きいため、まずはデータ取得を続けてください。"}
+            elif low_rel_rate > 0.3:
+                diag_data = {"status": "🟡", "title": "データ蓄積量", "msg": f"各台の履歴データが浅い（新台・配置変更など）台が {low_rel_rate:.0%} 含まれています。AIがクセを把握しきるまであと数週間のデータ取得が必要です。"}
+                
+            # 要因2: 稼働（客層）
+            diag_kado = {"status": "🟢", "title": "稼働状況(客層)", "msg": "検証対象の台は全体的にしっかり回されており、結果の信頼度が高いです。"}
+            if avg_g_recent < 3000:
+                diag_kado = {"status": "🔴", "title": "稼働状況(客層)", "msg": f"平均稼働が{int(avg_g_recent)}Gと低すぎます。客層の見切りが早いため、AIが当てていたとしても「不発・見切り」としてハズレ扱いになっている可能性が高いです。"}
+            elif avg_g_recent < 4000:
+                diag_kado = {"status": "🟡", "title": "稼働状況(客層)", "msg": f"平均稼働が{int(avg_g_recent)}Gとやや低めです。高設定が埋もれてしまっている可能性があります。"}
 
-            with st.expander("🤖 ヒストグラムから見る AI チューニングアドバイス", expanded=True):
-                st.markdown("分布の偏りと実際の正解率（折れ線グラフ）のズレを分析した結果、以下の設定調整をおすすめします：")
-                for adv in advices:
-                    st.markdown(f"- {adv}")
+            # 要因3: AI設定 (過学習 / 未学習)
+            diag_ai = {"status": "🟢", "title": "AI設定(パラメータ)", "msg": "スコア分布と正解率のバランスが良く、現在の設定は良好です。"}
+            if total_eval_count >= 30:
+                if len(high_score_df) >= 5 and high_score_accuracy < period_high_setting_rate:
+                    diag_ai = {"status": "🔴", "title": "AI設定(過学習)", "msg": "AIが高評価した台の勝率が、店全体の平均勝率を下回っています。ノイズ（たまたま出た低設定）を必勝法だと勘違いしている「過学習」の疑いがあります。「深さ制限(max_depth)」を下げるか、「最小データ数」を増やしてください。"}
+                elif score_mean > period_high_setting_rate + 0.15:
+                    diag_ai = {"status": "🟡", "title": "AI設定(評価甘め)", "msg": "全体的にスコアが高く出すぎています。「葉の数(num_leaves)」を少し下げるか、「学習率」を下げてみてください。"}
+                elif score_mean < period_high_setting_rate - 0.15:
+                    diag_ai = {"status": "🟡", "title": "AI設定(評価慎重)", "msg": "全体的にスコアが低く出すぎています。「学習回数」を増やすか、「葉の数」を少し上げてみてください。"}
+
+            # 要因4: 特徴量の多さ (次元の呪い)
+            diag_feat = {"status": "🟢", "title": "特徴量の多さ", "msg": "学習データに対して適切な条件分岐が行われています。"}
+            if total_eval_count >= 50 and len(high_score_df) == 0:
+                 diag_feat = {"status": "🟡", "title": "特徴量の多さ(条件厳格化)", "msg": "期待度70%を超える台が1台もありません。AIが多くの特徴量（条件）を同時に満たす完璧な台を探しすぎて、身動きが取れなくなっています。"}
+
+            # 要因5: 店舗の読みにくさ (ランダム・フェイク)
+            diag_shop = {"status": "🟢", "title": "店舗の素直さ", "msg": "店舗のクセをある程度捉えられています。"}
+            if period_high_setting_rate < 0.05:
+                 diag_shop = {"status": "🔴", "title": "店舗の素直さ(ベタピン疑惑)", "msg": "そもそも店舗全体の高設定投入率が極端に低すぎます。AIが予測する以前に、戦うべき店舗（優良店）ではない可能性があります。"}
+            elif diag_data["status"] == "🟢" and diag_kado["status"] == "🟢" and diag_ai["status"] in ["🟢", "🟡"]:
+                if len(high_score_df) >= 5 and (high_score_accuracy - period_high_setting_rate) < 0.05:
+                    diag_shop = {"status": "🔴", "title": "店舗の素直さ(予測困難)", "msg": "データ・稼働・AI設定は悪くないにも関わらず、AI推奨台が結果を出せていません。店長が「完全ランダム」で設定を入れているか、前日の凹み台などを「意図的にフェイクとして使う」など、非常に読みにくい（騙してくる）店舗である可能性が高いです。"}
+
+            with st.expander("🤖 総合原因分析 (AIの自己診断レポート)", expanded=True):
+                st.markdown("精度検証の結果から、予測がうまくいっているか、あるいは**何が原因で精度が落ちているか**を5つの観点で総合的に診断します。")
+                
+                for diag in [diag_data, diag_kado, diag_ai, diag_feat, diag_shop]:
+                    st.markdown(f"**{diag['status']} {diag['title']}**: {diag['msg']}")
+                
+                st.divider()
+                
+                # --- 最終アプローチ（ネクストアクション）の判定 ---
+                if diag_shop["status"] == "🔴":
+                    final_action_title = "🚨 【最終結論】この店舗での稼働を見直す（店を変える）"
+                    if "ベタピン疑惑" in diag_shop["title"]:
+                        final_action_msg = "店舗全体に高設定が全く使われていない可能性が高いです。AIの設定やデータ収集を頑張るよりも、**『より状況の良い別の店舗を開拓する』** ことが最も勝率に直結します。"
+                    else:
+                        final_action_msg = "店長の配分がランダムすぎるか、フェイク（罠）が多くてAIの予測が通用していません。**『この店での稼働を控える』**か、**『強いイベント日のみに絞る』** ことを強くおすすめします。AIの設定をいじっても改善は難しいです。"
+                    st.error(f"**{final_action_title}**\n\n{final_action_msg}")
+
+                elif diag_data["status"] == "🔴":
+                    final_action_title = "⏳ 【最終結論】今は情報を集めるまで待つ（データ収集継続）"
+                    final_action_msg = "まだAIが傾向を学習・評価するための十分なデータが揃っていません。今AIのパラメータをいじると逆に精度が壊れる（過学習する）危険があります。**まずは毎日のデータ取得を継続し、サンプル数が30台以上に達するのを待ってください。**"
+                    st.warning(f"**{final_action_title}**\n\n{final_action_msg}")
+                    
+                elif diag_kado["status"] == "🔴":
+                    final_action_title = "🤔 【最終結論】店舗の客層・稼働状況を再評価する"
+                    final_action_msg = "AIの予測云々以前に、客層の見切りが早すぎて「答え合わせ」ができていない状態です。この店で勝つには、**『自分自身でしっかり回して判別する』**覚悟が必要になります。または、もっと稼働が良い店を探すのも一つの手です。"
+                    st.warning(f"**{final_action_title}**\n\n{final_action_msg}")
+
+                elif diag_ai["status"] in ["🔴", "🟡"] or diag_feat["status"] in ["🔴", "🟡"]:
+                    final_action_title = "⚙️ 【最終結論】アプリ内のAI設定をチューニングする"
+                    tuning_hints = []
+                    if "過学習" in diag_ai["title"]: tuning_hints.append("「深さ制限(max_depth)」を下げる、または「最小データ数」を増やす")
+                    if "評価甘め" in diag_ai["title"]: tuning_hints.append("「葉の数(num_leaves)」を下げる、または「学習率」を下げる")
+                    if "評価慎重" in diag_ai["title"]: tuning_hints.append("「学習回数」を増やす、または「葉の数」を上げる")
+                    if "条件厳格化" in diag_feat["title"]: tuning_hints.append("「深さ制限」を下げる、または「最小データ数」を増やす")
+                    
+                    final_action_msg = "データ量も店舗の素直さも悪くありませんが、AIの「クセの覚え方」が現在の店舗の状況とズレています。すぐ下の**【店舗専用 AIモデル設定】**から、以下の調整を試して再分析してください。\n\n"
+                    for hint in set(tuning_hints):
+                        final_action_msg += f"- {hint}\n"
+                    st.info(f"**{final_action_title}**\n\n{final_action_msg}")
+
+                else:
+                    final_action_title = "🌟 【最終結論】現状維持でOK（素晴らしい状態です！）"
+                    final_action_msg = "店舗の状況、データ量、AIの設定、すべてが完璧に噛み合っています。**今のAI設定のまま、自信を持って日々の立ち回りに活用してください！**"
+                    st.success(f"**{final_action_title}**\n\n{final_action_msg}")
                     
             # --- 各店舗専用 AIモデル設定 ---
             st.divider()
             st.subheader(f"⚙️ 【{selected_shop}】専用 AIモデル設定")
-            st.caption("上のアドバイスを参考に、この店舗専用のパラメータを調整して「設定を保存して再分析」を押してください。")
+            st.caption("上のアドバイスを参考に手動で調整するか、「自動チューニング」を試してください。")
             
             if "shop_hyperparams" not in st.session_state:
                 st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
@@ -763,23 +804,121 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, current_hp.get('max_depth', 4), step=1)
                 hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, current_hp.get('min_child_samples', 50), step=10)
                 
-                cols = st.columns(2)
+                cols = st.columns(3)
                 submitted = cols[0].form_submit_button("この店舗の設定を保存して再分析", type="primary")
                 reset_btn = cols[1].form_submit_button("全店舗共通設定に戻す")
+                auto_tune_btn = cols[2].form_submit_button("✨ 自動チューニング")
                 
-                if submitted:
-                    st.session_state["shop_hyperparams"][selected_shop] = {
-                        'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
-                        'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples
-                    }
+            if submitted:
+                st.session_state["shop_hyperparams"][selected_shop] = {
+                    'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
+                    'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples
+                }
+                backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+                st.cache_data.clear(); st.rerun()
+                
+            if reset_btn:
+                if selected_shop in st.session_state["shop_hyperparams"]:
+                    del st.session_state["shop_hyperparams"][selected_shop]
                     backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-                    st.cache_data.clear(); st.rerun() # 設定保存後に再分析
+                    st.cache_data.clear(); st.rerun()
                     
-                if reset_btn:
-                    if selected_shop in st.session_state["shop_hyperparams"]:
-                        del st.session_state["shop_hyperparams"][selected_shop]
+            if auto_tune_btn:
+                with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
+                    import lightgbm as lgb
+                    # 特徴量リストの復元
+                    base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff']
+                    actual_features = [f for f in base_features if f in df_verify.columns]
+                    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+                    
+                    shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
+                    
+                    if len(shop_df) < 150:
+                        st.error("データが少なすぎて自動チューニングを実行できません。150件以上のデータが必要です。")
+                    else:
+                        # 時系列でソートし、最新20%をテスト、古い80%を学習に分割
+                        shop_df = shop_df.sort_values('対象日付')
+                        split_idx = int(len(shop_df) * 0.8)
+                        train_data = shop_df.iloc[:split_idx]
+                        test_data = shop_df.iloc[split_idx:]
+                        
+                        X_train, y_train = train_data[actual_features], train_data['target']
+                        X_test, y_test = test_data[actual_features], test_data['target']
+                        
+                        # サンプルウェイト（時間減衰）の再現
+                        max_date = train_data['対象日付'].max()
+                        days_diff = (max_date - train_data['対象日付']).dt.days
+                        sample_weights = 0.995 ** days_diff
+                        
+                        # 探索するパラメータの候補群
+                        param_candidates = [
+                            {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}, # デフォルト
+                            {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 80}, # 慎重派 (過学習防止)
+                            {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30}, # 積極派 (複雑な条件)
+                            {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50}, # 深読み派
+                            {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100}, # 超シンプル派
+                            {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60}, # じっくり学習
+                            {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20}, # 荒波・一点張り
+                            {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40}, # 浅く広く
+                            {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40}, # バランス型
+                            {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30}, # バランス型2
+                        ]
+                        
+                        best_score = -9999
+                        best_params = param_candidates[0]
+                        
+                        progress_bar = st.progress(0)
+                        
+                        # 各パラメータで模擬テストを実施
+                        for i, params in enumerate(param_candidates):
+                            try:
+                                model = lgb.LGBMClassifier(
+                                    objective='binary', random_state=42, verbose=-1, 
+                                    n_estimators=params['n_estimators'], learning_rate=params['learning_rate'], 
+                                    num_leaves=params['num_leaves'], max_depth=params['max_depth'], 
+                                    min_child_samples=params['min_child_samples'],
+                                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                                )
+                                model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                                
+                                preds = model.predict_proba(X_test)[:, 1]
+                                test_eval = test_data.copy()
+                                test_eval['pred_score'] = preds
+                                
+                                # 期待度70%以上を出した台の「実際の成績」でAIを評価する
+                                target_df = test_eval[test_eval['pred_score'] >= 0.70]
+                                
+                                if len(target_df) == 0:
+                                    score = -1 # オススメ台を1台も出せないAIは失格
+                                else:
+                                    precision = target_df['target'].mean() # 推奨台の高設定率
+                                    avg_diff = target_df['next_diff'].mean() # 推奨台の平均差枚
+                                    coverage = len(target_df) / len(test_eval) # 推奨台の割合(少なすぎを防止)
+                                    
+                                    # 総合評価スコア (高設定率と差枚を重視)
+                                    score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                                    
+                                if score > best_score:
+                                    best_score = score
+                                    best_params = params
+                            except Exception:
+                                pass
+                            
+                            progress_bar.progress((i + 1) / len(param_candidates))
+                        
+                        # 一番優秀だった設定を適用して保存
+                        st.session_state["shop_hyperparams"][selected_shop] = {
+                            'train_months': hp_train_months, # データ期間はユーザー指定を維持
+                            'n_estimators': best_params['n_estimators'],
+                            'learning_rate': best_params['learning_rate'],
+                            'num_leaves': best_params['num_leaves'],
+                            'max_depth': best_params['max_depth'],
+                            'min_child_samples': best_params['min_child_samples']
+                        }
                         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-                        st.cache_data.clear(); st.rerun()
+                        st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")
+                        st.cache_data.clear()
+                        st.rerun()
                         
             st.markdown("**🔬 現在の設定でのシミュレーション成績 (最新データ)**")
             st.caption("現在適用されている設定で過去データを再評価した場合のシミュレーション結果です。設定調整後の成果確認に使えます。")

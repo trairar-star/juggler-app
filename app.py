@@ -12,6 +12,7 @@ from views import island_master_page
 from views import event_management_page
 from views import feature_analysis_page
 from views import daily_result_page
+from views import calendar_compare_page
 from views import verification_page
 from views import ranking_comparison_page
 from utils import get_confidence_indicator
@@ -138,7 +139,7 @@ def main():
     if "global_selected_shop" not in st.session_state:
         st.session_state["global_selected_shop"] = "全て"
         
-    pages = ["店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (各店舗AI設定)", "🏆 予測 vs 実際 ランキング", "📅 日別 結果＆予測確認", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    pages = ["店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (各店舗AI設定)", "🏆 予測 vs 実際 ランキング", "📅 日別 結果＆予測確認", "🗺️ 店舗間ヒートマップ", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -254,6 +255,8 @@ def main():
             ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df, df_raw)
         elif page == "📅 日別 結果＆予測確認":
             daily_result_page.render_daily_result_page(df_raw, df_events, df_island, st.session_state["shop_hyperparams"])
+        elif page == "🗺️ 店舗間ヒートマップ":
+            calendar_compare_page.render_calendar_compare_page(df_raw, df, predict_target_date)
         elif page == "AI傾向分析 (勝利の法則)":
             feature_analysis_page.render_feature_analysis_page(df_verify, df_importance, df_events)
         elif page == "島マスター管理":

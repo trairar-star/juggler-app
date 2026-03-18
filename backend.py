@@ -235,10 +235,13 @@ def save_prediction_log(df):
         st.warning("保存するデータがありません。")
         return False
     if 'prediction_score' in df.columns:
-        # 期待度70%以上（AIの推奨基準）の台のみを抽出して保存
-        df = df[df['prediction_score'] >= 0.70].sort_values('prediction_score', ascending=False)
+        shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
+        if shop_col:
+            df = df.sort_values('prediction_score', ascending=False).groupby(shop_col).head(10)
+        else:
+            df = df.sort_values('prediction_score', ascending=False).head(10)
         if df.empty:
-            st.warning("期待度70%以上の推奨台がないため、ログの保存をスキップしました。")
+            st.warning("保存する推奨台がありません。")
             return False
     try:
         gc = _get_gspread_client()
@@ -314,7 +317,7 @@ def save_prediction_log(df):
             except Exception:
                 worksheet.update(final_data)
                 
-        st.success(f"予測結果（期待度70%以上）を '{log_sheet_name}' シートに保存（上書き）しました！")
+        st.success(f"予測結果（各店舗Top10）を '{log_sheet_name}' シートに保存（上書き）しました！")
         return True
     except Exception as e: 
         st.error(f"保存エラー: {e}")
@@ -905,12 +908,32 @@ def _generate_features(df, df_events, df_island, target_date):
     # 一時的に作成した不要な列を削除
     df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win'], errors='ignore')
 
+    # 現在のソート順を保持（mergeによる順序崩れ防止）
+    df['original_order'] = np.arange(len(df))
+
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
         # 店舗の平均稼働に対する自台の稼働割合（相対的な粘られ度）
         df['shop_avg_games'] = df.groupby([shop_col, '対象日付'])['累計ゲーム'].transform('mean').replace(0, np.nan)
         df['relative_games_ratio'] = (df['累計ゲーム'] / df['shop_avg_games']).fillna(1.0)
         df = df.drop(columns=['shop_avg_games'])
+        
+        # --- ①店舗全体の回収・還元モード指標 (直近7日間の店舗全体の平均差枚) ---
+        shop_daily_avg = df.groupby([shop_col, '対象日付'])['差枚'].mean().reset_index(name='shop_daily_avg_diff')
+        shop_daily_avg = shop_daily_avg.sort_values([shop_col, '対象日付'])
+        shop_daily_avg['shop_7days_avg_diff'] = shop_daily_avg.groupby(shop_col)['shop_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
+        df = pd.merge(df, shop_daily_avg[[shop_col, '対象日付', 'shop_7days_avg_diff']], on=[shop_col, '対象日付'], how='left')
+
+    if shop_col and '機種名' in df.columns:
+        # --- ②機種ごとの扱い指標 (過去30日間のその機種の平均差枚) ---
+        machine_daily_avg = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].mean().reset_index(name='machine_daily_avg_diff')
+        machine_daily_avg = machine_daily_avg.sort_values([shop_col, '機種名', '対象日付'])
+        machine_daily_avg['machine_30days_avg_diff'] = machine_daily_avg.groupby([shop_col, '機種名'])['machine_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
+        df = pd.merge(df, machine_daily_avg[[shop_col, '機種名', '対象日付', 'machine_30days_avg_diff']], on=[shop_col, '機種名', '対象日付'], how='left')
+
+    # ソート順を元に戻す
+    df = df.sort_values('original_order').drop(columns=['original_order']).reset_index(drop=True)
+
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
 
@@ -947,7 +970,7 @@ def _generate_features(df, df_events, df_island, target_date):
         df['is_new_machine'] = 0
 
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio']:
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff']:
         if f in df.columns: features.append(f)
 
     return df, features
@@ -1209,6 +1232,18 @@ def _postprocess_predictions(predict_df, train_df):
         cons_low_util = row.get('連続低稼働日数', 0)
         if cons_low_util >= 3:
             reasons.append(f"【特殊】現在{int(cons_low_util)}日連続で放置(1500G未満)されています。店側の「稼働喚起のテコ入れ(見せ台)」のターゲットになる可能性があります。")
+
+        shop_7d = row.get('shop_7days_avg_diff', 0)
+        if shop_7d < -150:
+            reasons.append(f"【店舗状況】店舗全体が直近1週間回収モード(平均{int(shop_7d)}枚)ですが、あえてこの台を推奨しています。")
+        elif shop_7d > 150:
+            reasons.append(f"【店舗状況】店舗全体が直近1週間還元モード(平均+{int(shop_7d)}枚)で、全体のベースアップに期待できます。")
+            
+        mac_30d = row.get('machine_30days_avg_diff', 0)
+        if mac_30d > 150:
+            reasons.append(f"【機種優遇】過去30日間、この機種(平均+{int(mac_30d)}枚)は店舗から甘く使われている傾向があります。")
+        elif mac_30d < -150:
+            reasons.append(f"【機種冷遇】過去30日間、この機種(平均{int(mac_30d)}枚)は冷遇気味ですが、この台単体は評価されています。")
 
         if row.get('is_new_machine', 0) == 1:
             reasons.append("【新台/移動】新台導入または配置変更から1週間以内のため、店側のアピール(高設定投入)が期待できます。")

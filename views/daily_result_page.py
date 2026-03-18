@@ -268,7 +268,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "合算確率_str": st.column_config.TextColumn("合算確率", width="small"),
             "BIG確率_str": st.column_config.TextColumn("BIG確率", width="small"),
             "REG確率_str": st.column_config.TextColumn("REG確率", width="small"),
-            "根拠": st.column_config.TextColumn("AI推奨根拠 (期待度70%以上だった台のみ)", width="large"),
+            "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
         },
         use_container_width=True,
         hide_index=True

@@ -698,8 +698,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             html_str += "</ul></div>"
             st.markdown(html_str, unsafe_allow_html=True)
 
-    # --- メインコンテンツ: 推奨台表示 (上部に配置) ---
-    st.subheader("🏆 AI推奨台 (期待度70%以上)")
+    # --- メインコンテンツ: 予測ランキング表示 (上部に配置) ---
+    st.subheader("🏆 予測期待度ランキング (Top 10)")
 
     sort_cols = []
     if 'prediction_score' in df.columns: sort_cols.append('prediction_score')
@@ -733,14 +733,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
     else:
         df_sorted['AI順位'] = "-"
 
-    # 期待度70%以上に絞る (表示も保存条件に合わせる)
-    if 'prediction_score' in df_sorted.columns:
-        df_top10 = df_sorted[df_sorted['prediction_score'] >= 0.70]
-    else:
-        df_top10 = df_sorted.head(10)
+    # トップ10に絞る
+    df_top10 = df_sorted.head(10)
         
     if df_top10.empty:
-        st.info("現在、期待度が70%を超えている推奨台はありません。（店舗全体の傾向や他の店舗を確認してみてください）")
+        st.info("推奨台がありません。")
 
     # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
     base_cols = ['AI順位', '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
@@ -768,32 +765,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
         use_container_width=True,
         hide_index=True
     )
-
-    # --- 偵察用 Top 10 ランキング (店舗選択時のみ) ---
-    if selected_shop != '全て':
-        with st.expander("🕵️ 偵察用 Top 10 ランキング (期待度70%未満も含む)"):
-            st.caption("AIのスコアが高い順に上位10台を表示します。70%未満の台はあくまで参考程度の「偵察用」です。")
-            df_recon = df_sorted.head(10)
-            
-            # Pandas Stylerを使って青いバーを描画
-            styled_recon = df_recon[display_cols]
-            if '予想設定5以上確率' in display_cols:
-                styled_recon = styled_recon.style.bar(subset=['予想設定5以上確率'], color='rgba(66, 165, 245, 0.6)', vmin=0, vmax=100)
-            
-            st.dataframe(
-                styled_recon,
-                column_config={
-                    "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
-                    shop_col: st.column_config.TextColumn("店舗", width="small"),
-                    "台番号": st.column_config.TextColumn("No.", width="small"),
-                    "機種名": st.column_config.TextColumn("機種", width="small"),
-                    "店癖マッチ": st.column_config.TextColumn("店癖", width="small", help="AIが検知した激アツ(🔥)や警戒(⚠️)の条件"),
-                    "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
-                    "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%", width="small", help="AIが予測する設定5以上の確率"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
 
     # --- 詳細分析: 上位台の根拠とスペック ---
     if selected_shop != '全て' and not df_top10.empty:
