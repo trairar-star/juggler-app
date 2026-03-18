@@ -214,6 +214,10 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
     base_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
     
+    if base_df.empty:
+        st.info("まだ結果が判明している予測がありません。")
+        return
+
     # --- 設定5近似度の算出 (ボーナス回数の精査) ---
     specs = backend.get_machine_specs()
     def evaluate_setting5(row):
@@ -314,10 +318,6 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
     base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分', '結果_設定5以上確率']] = eval_df
-    
-    if base_df.empty:
-        st.info("まだ結果が判明している予測がありません。")
-        return
 
     # --- 低稼働台のフィルタリング (ノーカウント処理) ---
     if min_g_filter > 0:
