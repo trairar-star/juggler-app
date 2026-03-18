@@ -91,6 +91,11 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     display_df['総回転'] = display_df.get('累計ゲーム', 0)
     
+    # 差枚や回数などを確実に整数型(int)にして小数点を消す
+    for col in ['差枚', '総回転', 'BIG', 'REG']:
+        if col in display_df.columns:
+            display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
+    
     # --- 事後確率（設定5以上確率）の計算 ---
     specs = backend.get_machine_specs()
     def calc_post_prob(row):
@@ -267,9 +272,9 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small"),
             "事後確率": st.column_config.ProgressColumn("結果(事後確率)", format="%d%%", min_value=0, max_value=100, help="実際の結果(BIG/REG回数)から統計的に逆算した、本当に設定5以上だった確率"),
             "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
-            "総回転": st.column_config.NumberColumn("総回転"),
-            "BIG": st.column_config.NumberColumn("BIG"),
-            "REG": st.column_config.NumberColumn("REG"),
+            "総回転": st.column_config.NumberColumn("総回転", format="%d"),
+            "BIG": st.column_config.NumberColumn("BIG", format="%d"),
+            "REG": st.column_config.NumberColumn("REG", format="%d"),
             "合算確率_str": st.column_config.TextColumn("合算確率", width="small"),
             "BIG確率_str": st.column_config.TextColumn("BIG確率", width="small"),
             "REG確率_str": st.column_config.TextColumn("REG確率", width="small"),
