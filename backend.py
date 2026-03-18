@@ -19,52 +19,60 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 # ---------------------------------------------------------
 MACHINE_SPECS = {
     "ウルトラミラクルジャグラー": {
-        "設定1": {"BIG": 267.5, "REG": 425.6, "合算": 164.3},
-        "設定4": {"BIG": 242.7, "REG": 322.8, "合算": 138.6},
-        "設定5": {"BIG": 233.2, "REG": 297.9, "合算": 130.8},
-        "設定6": {"BIG": 216.3, "REG": 277.7, "合算": 121.6},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 267.5, "REG": 425.6, "合算": 164.3, "ぶどう": 6.02},
+        "設定4": {"BIG": 242.7, "REG": 322.8, "合算": 138.6, "ぶどう": 5.90},
+        "設定5": {"BIG": 233.2, "REG": 297.9, "合算": 130.8, "ぶどう": 5.80},
+        "設定6": {"BIG": 216.3, "REG": 277.7, "合算": 121.6, "ぶどう": 5.70},
     },
     "ゴーゴージャグラー3": {
-        "設定1": {"BIG": 259.0, "REG": 354.2, "合算": 149.6},
-        "設定4": {"BIG": 254.0, "REG": 268.6, "合算": 130.5},
-        "設定5": {"BIG": 247.3, "REG": 247.3, "合算": 123.7},
-        "設定6": {"BIG": 234.9, "REG": 234.9, "合算": 117.4},
+        "BIG獲得": 240, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 259.0, "REG": 354.2, "合算": 149.6, "ぶどう": 6.02},
+        "設定4": {"BIG": 254.0, "REG": 268.6, "合算": 130.5, "ぶどう": 5.91},
+        "設定5": {"BIG": 247.3, "REG": 247.3, "合算": 123.7, "ぶどう": 5.86},
+        "設定6": {"BIG": 234.9, "REG": 234.9, "合算": 117.4, "ぶどう": 5.78},
     },
     "ジャグラーガールズSS": {
-        "設定1": {"BIG": 273.1, "REG": 381.0, "合算": 159.1},
-        "設定4": {"BIG": 250.1, "REG": 281.3, "合算": 132.4},
-        "設定5": {"BIG": 243.6, "REG": 270.8, "合算": 128.3},
-        "設定6": {"BIG": 226.0, "REG": 252.1, "合算": 119.2},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 381.0, "合算": 159.1, "ぶどう": 6.09},
+        "設定4": {"BIG": 250.1, "REG": 281.3, "合算": 132.4, "ぶどう": 5.92},
+        "設定5": {"BIG": 243.6, "REG": 270.8, "合算": 128.3, "ぶどう": 5.87},
+        "設定6": {"BIG": 226.0, "REG": 252.1, "合算": 119.2, "ぶどう": 5.75},
     },
     "ネオアイムジャグラーEX": {
-        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5},
-        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2},
-        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5},
-        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 8,
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5, "ぶどう": 6.02},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2, "ぶどう": 5.95},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5, "ぶどう": 5.95},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5, "ぶどう": 5.78},
     },
     "ハッピージャグラーVIII": {
-        "設定1": {"BIG": 273.1, "REG": 397.2, "合算": 161.8},
-        "設定4": {"BIG": 254.0, "REG": 300.6, "合算": 137.7},
-        "設定5": {"BIG": 239.2, "REG": 273.1, "合算": 127.5},
-        "設定6": {"BIG": 226.0, "REG": 256.0, "合算": 120.0},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 397.2, "合算": 161.8, "ぶどう": 6.16},
+        "設定4": {"BIG": 254.0, "REG": 300.6, "合算": 137.7, "ぶどう": 5.98},
+        "設定5": {"BIG": 239.2, "REG": 273.1, "合算": 127.5, "ぶどう": 5.87},
+        "設定6": {"BIG": 226.0, "REG": 256.0, "合算": 120.0, "ぶどう": 5.79},
     },
     "ファンキージャグラー2KT": {
-        "設定1": {"BIG": 266.4, "REG": 439.8, "合算": 165.9},
-        "設定4": {"BIG": 249.2, "REG": 322.8, "合算": 140.6},
-        "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2},
-        "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 266.4, "REG": 439.8, "合算": 165.9, "ぶどう": 6.02},
+        "設定4": {"BIG": 249.2, "REG": 322.8, "合算": 140.6, "ぶどう": 5.91},
+        "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2, "ぶどう": 5.81},
+        "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6, "ぶどう": 5.66},
     },
     "マイジャグラーV": {
-        "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8},
-        "設定4": {"BIG": 254.0, "REG": 290.0, "合算": 135.4},
-        "設定5": {"BIG": 240.1, "REG": 268.6, "合算": 126.8},
-        "設定6": {"BIG": 229.1, "REG": 229.1, "合算": 114.6},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8, "ぶどう": 5.90},
+        "設定4": {"BIG": 254.0, "REG": 290.0, "合算": 135.4, "ぶどう": 5.77},
+        "設定5": {"BIG": 240.1, "REG": 268.6, "合算": 126.8, "ぶどう": 5.70},
+        "設定6": {"BIG": 229.1, "REG": 229.1, "合算": 114.6, "ぶどう": 5.60},
     },
     "ジャグラー（デフォルト）": {
-        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5},
-        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2},
-        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5},
-        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5},
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5, "ぶどう": 6.02},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2, "ぶどう": 5.95},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5, "ぶどう": 5.85},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5, "ぶどう": 5.75},
     }
 }
 
@@ -196,6 +204,38 @@ def load_data():
         target_raw_df[date_col] = pd.to_datetime(target_raw_df[date_col], errors='coerce')
         target_raw_df = target_raw_df.dropna(subset=[date_col])
         
+        # --- 子役（ぶどう）確率の逆算 ---
+        status_col = next((c for c in target_raw_df.columns if 'ステータス' in c or 'OK' in c.upper()), None)
+        if status_col:
+            ok_mask = target_raw_df[status_col].astype(str).str.strip().str.upper() == 'OK'
+            g_arr = target_raw_df['累計ゲーム'].astype(float)
+            b_arr = target_raw_df['BIG'].astype(float)
+            r_arr = target_raw_df['REG'].astype(float)
+            diff_arr = target_raw_df['差枚'].astype(float)
+            
+            valid_mask = ok_mask & (g_arr >= 1000) # 1000G未満はブレが大きいため計算しない
+            
+            specs = get_machine_specs()
+            b_p_list, r_p_list, g_p_list = [], [], []
+            for m in target_raw_df['機種名']:
+                sk = get_matched_spec_key(m, specs)
+                ms = specs.get(sk, specs['ジャグラー（デフォルト）'])
+                b_p_list.append(ms.get('BIG獲得', 252))
+                r_p_list.append(ms.get('REG獲得', 96))
+                g_p_list.append(ms.get('ぶどう獲得', 7))
+                
+            in_tokens = g_arr * 3
+            out_tokens = in_tokens + diff_arr
+            bonus_out = b_arr * np.array(b_p_list) + r_arr * np.array(r_p_list)
+            other_out = g_arr * 0.4715 # リプレイとチェリーの概算OUT(固定)
+            
+            grape_out = out_tokens - bonus_out - other_out
+            grape_count = grape_out / np.array(g_p_list)
+            
+            calc_prob = np.where(valid_mask & (grape_count > 0), g_arr / grape_count, np.nan)
+            # 異常値(極端なブレやエラー)は除外
+            target_raw_df['推定ぶどう確率'] = np.where((calc_prob > 4.5) & (calc_prob < 8.0), calc_prob, np.nan)
+
         # --- キャッシュと新規データを結合 ---
         if not history_df.empty:
             df = pd.concat([history_df, target_raw_df], ignore_index=True)
@@ -819,6 +859,9 @@ def _generate_features(df, df_events, df_island, target_date):
     for col in ['差枚', 'REG確率', '累計ゲーム', '最終ゲーム']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
     
+    if '推定ぶどう確率' in df.columns:
+        df['prev_推定ぶどう確率'] = df.groupby(group_keys)['推定ぶどう確率'].shift(1)
+
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
     if 'BIG' in df.columns: df['next_BIG'] = df.groupby(group_keys)['BIG'].shift(-1)
     if 'REG' in df.columns: df['next_REG'] = df.groupby(group_keys)['REG'].shift(-1)
@@ -972,6 +1015,8 @@ def _generate_features(df, df_events, df_island, target_date):
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff']:
         if f in df.columns: features.append(f)
+        
+    if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
 
     return df, features
 
@@ -1239,6 +1284,13 @@ def _postprocess_predictions(predict_df, train_df):
         elif shop_7d > 150:
             reasons.append(f"【店舗状況】店舗全体が直近1週間還元モード(平均+{int(shop_7d)}枚)で、全体のベースアップに期待できます。")
             
+        # ぶどう確率の根拠追加
+        prev_grape = row.get('prev_推定ぶどう確率')
+        if pd.notna(prev_grape) and prev_grape > 0:
+            spec_grape_5 = specs[matched_spec_key].get('設定5', {}).get('ぶどう', 5.9)
+            if prev_grape <= spec_grape_5:
+                reasons.append(f"【🍇小役優秀】前日の推定ぶどう確率が1/{prev_grape:.2f}と設定5以上の数値を叩き出しており、高設定の裏付けになっています。")
+
         mac_30d = row.get('machine_30days_avg_diff', 0)
         if mac_30d > 150:
             reasons.append(f"【機種優遇】過去30日間、この機種(平均+{int(mac_30d)}枚)は店舗から甘く使われている傾向があります。")

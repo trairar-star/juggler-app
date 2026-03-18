@@ -139,6 +139,11 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         
     display_df['事後確率'] = display_df.apply(calc_post_prob, axis=1)
     
+    if '推定ぶどう確率' in display_df.columns:
+        display_df['ぶどう確率_str'] = display_df['推定ぶどう確率'].apply(lambda x: f"1/{x:.2f}" if pd.notna(x) else "-")
+    else:
+        display_df['ぶどう確率_str'] = "-"
+
     # --- 期待外れ台のフラグ計算 (ハイライト用) ---
     def check_bad_pred(row):
         score = row.get('prediction_score', 0)
@@ -238,7 +243,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     if '期待度' in display_df.columns: cols.append('期待度')
     if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
     cols.append('事後確率')
-    cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str'])
+    cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
     
     if '根拠' in display_df.columns:
         cols.append('根拠')
@@ -268,6 +273,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "合算確率_str": st.column_config.TextColumn("合算確率", width="small"),
             "BIG確率_str": st.column_config.TextColumn("BIG確率", width="small"),
             "REG確率_str": st.column_config.TextColumn("REG確率", width="small"),
+            "ぶどう確率_str": st.column_config.TextColumn("🍇確率", width="small", help="差枚数から逆算した推定ぶどう確率 (ステータスOKの台のみ)"),
             "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
         },
         use_container_width=True,

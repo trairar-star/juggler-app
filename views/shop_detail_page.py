@@ -41,7 +41,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     with c3: st.metric("BIG", format_val(row.get('BIG', '-')))
     with c4: st.metric("REG", format_val(row.get('REG', '-')))
     
-    c5, c6, c7 = st.columns(3)
+    c5, c6, c7, c8 = st.columns(4)
     
     try:
         games_val = float(row.get('累計ゲーム', 0))
@@ -54,6 +54,11 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     with c5: st.metric("合算確率", format_prob(total_prob))
     with c6: st.metric("BIG確率", format_prob(row.get('BIG確率', 0)))
     with c7: st.metric("REG確率", format_prob(row.get('REG確率', 0)))
+    with c8: 
+        if '推定ぶどう確率' in row and pd.notna(row['推定ぶどう確率']):
+            st.metric("推定🍇確率", f"1/{row['推定ぶどう確率']:.2f}")
+        else:
+            st.metric("推定🍇確率", "-")
     
     matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
     
@@ -61,8 +66,9 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         st.markdown(f"**📚 {matched_spec_key} スペック目安:**")
         if matched_spec_key == "ジャグラー（デフォルト）":
             st.warning("⚠️ **注意:** この機種はスペックが未登録のため、デフォルト値で代用して分析しています。")
-        spec_df = pd.DataFrame(specs[matched_spec_key]).T
-        st.dataframe(spec_df.style.format(formatter="1/{:.1f}"), use_container_width=True)
+        spec_data = {k: v for k, v in specs[matched_spec_key].items() if k.startswith("設定")}
+        spec_df = pd.DataFrame(spec_data).T
+        st.dataframe(spec_df.style.format(formatter="1/{:.2f}"), use_container_width=True)
     
     # --- AIのやめどきアドバイス ---
     score = float(row.get('prediction_score', 0))
