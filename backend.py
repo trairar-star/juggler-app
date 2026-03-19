@@ -217,7 +217,7 @@ def load_data():
             r_arr = target_raw_df['REG'].astype(float)
             diff_arr = target_raw_df['差枚'].astype(float)
             
-            valid_mask = ok_mask & (g_arr >= 1000) # 1000G未満はブレが大きいため計算しない
+            valid_mask = ok_mask & (g_arr >= 3000) # ブドウはブレが大きく設定差も小さいため3000G以上で計算
             
             specs = get_machine_specs()
             b_p_list, r_p_list, g_p_list = [], [], []
@@ -236,7 +236,8 @@ def load_data():
             # リプレイ: 1/7.298 (3枚) ≒ 0.411 OUT
             # チェリー: 1/33 (2枚) 取得率95%想定 ≒ 0.058 OUT
             # ベル＆ピエロ: 1/1000 (14枚＆10枚) 取得も考慮 ≒ 0.016 OUT
-            other_out = g_arr * 0.4850
+            # さらにボーナス成立後のロス等を加味して厳しく設定
+            other_out = g_arr * 0.4900
             
             grape_out = out_tokens - bonus_out - other_out
             grape_count = grape_out / np.array(g_p_list)
@@ -1327,10 +1328,11 @@ def _postprocess_predictions(predict_df, train_df):
 
         # ぶどう確率の根拠追加
         prev_grape = row.get('prev_推定ぶどう確率')
-        if pd.notna(prev_grape) and prev_grape > 0:
+        prev_games = row.get('prev_累計ゲーム', 0)
+        if pd.notna(prev_grape) and prev_grape > 0 and prev_games >= 4000:
             spec_grape_5 = specs[matched_spec_key].get('設定5', {}).get('ぶどう', 5.9)
             if prev_grape <= spec_grape_5:
-                reasons.append(f"【🍇小役優秀】前日の推定ぶどう確率が1/{prev_grape:.2f}と設定5以上の数値を叩き出しており、高設定の裏付けになっています。")
+                reasons.append(f"【🍇小役優秀】前日は{int(prev_games)}G稼働で推定ぶどう確率が1/{prev_grape:.2f}と設定5以上の数値を叩き出しており、高設定の強い裏付けになっています。")
 
         mac_30d = row.get('machine_30days_avg_diff', 0)
         if mac_30d > 150:
