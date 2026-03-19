@@ -298,27 +298,40 @@ def save_prediction_log(df):
         sh = gc.open_by_key(SPREADSHEET_KEY)
         log_sheet_name = 'prediction_log'
         
+        # スプレッドシートのヘッダーが手動操作で壊れた場合（重複など）にも耐えられるように、保存する列を厳格に固定する
+        STANDARD_HEADER = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', '予測信頼度', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
+        
         try: 
             worksheet = sh.worksheet(log_sheet_name)
             existing_data = worksheet.get_all_values()
-            if existing_data:
-                header = existing_data[0]
-                # 互換性のため古いヘッダー名を置換
-                header = ['prediction_score' if c == '予想設定5以上確率' else c for c in header]
-            else:
-                header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
         except: 
-            worksheet = sh.add_worksheet(title=log_sheet_name, rows="1000", cols="20")
-            header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
+            worksheet = sh.add_worksheet(title=log_sheet_name, rows="1000", cols="15")
             existing_data = []
 
-        if 'ai_version' not in header: header.append('ai_version')
-        if '予測対象日' not in header: header.append('予測対象日')
+        # 既存データのパース (ユーザー操作による重複列や不要な列の混入を綺麗に掃除する)
+        if existing_data and len(existing_data) > 1:
+            raw_header = existing_data[0]
+            raw_header = ['prediction_score' if c == '予想設定5以上確率' else c for c in raw_header]
+            
+            df_existing = pd.DataFrame(existing_data[1:], columns=raw_header)
+            
+            # 列名が重複している場合（スプレッドシート上でドラッグコピーしてしまった等）、最初の列だけ残して他は捨てる
+            df_existing = df_existing.loc[:, ~df_existing.columns.duplicated()]
+            
+            for c in STANDARD_HEADER:
+                if c not in df_existing.columns:
+                    df_existing[c] = ''
+            df_existing = df_existing[STANDARD_HEADER]
+        else:
+            df_existing = pd.DataFrame(columns=STANDARD_HEADER)
             
         save_df = df.copy()
         save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:
             save_df['ai_version'] = "不明"
+            
+        if '店名' not in save_df.columns and '店舗名' in save_df.columns:
+            save_df['店名'] = save_df['店舗名']
             
         if 'next_date' in save_df.columns:
             save_df['予測対象日'] = save_df['next_date']
@@ -329,25 +342,11 @@ def save_prediction_log(df):
             if pd.api.types.is_datetime64_any_dtype(save_df[col]):
                 save_df[col] = save_df[col].dt.strftime('%Y-%m-%d')
 
-        valid_cols = [c for c in header if c in save_df.columns]
-        for c in header:
-            if c not in valid_cols and c in save_df.columns:
-                valid_cols.append(c)
-                header.append(c)
-                
-        save_df = save_df[valid_cols]
-        save_df = save_df.fillna('')
-        
-        # 既存データをDataFrame化してPandasで正確に重複排除を行う
-        if existing_data and len(existing_data) > 1:
-            df_existing = pd.DataFrame(existing_data[1:], columns=existing_data[0])
-            # 足りないカラムを空文字で埋める
-            for c in header:
-                if c not in df_existing.columns:
-                    df_existing[c] = ''
-            df_existing = df_existing[header]
-        else:
-            df_existing = pd.DataFrame(columns=header)
+        # 保存データも標準ヘッダーの形にカッチリ揃える
+        for c in STANDARD_HEADER:
+            if c not in save_df.columns:
+                save_df[c] = ''
+        save_df = save_df[STANDARD_HEADER].fillna('')
             
         # 新旧データを結合
         df_combined = pd.concat([df_existing, save_df], ignore_index=True)
@@ -368,10 +367,9 @@ def save_prediction_log(df):
         if '台番号' in df_combined.columns:
             df_combined['台番号'] = df_combined['tmp_mac']
             
-        # 一時カラムを削除してリストに戻す
-        df_combined = df_combined.drop(columns=subset_cols)
-        df_combined = df_combined.fillna('')
-        final_data = [header] + df_combined[header].values.tolist()
+        # 一時カラムを除外し、順番を固定してリスト化
+        df_combined = df_combined[STANDARD_HEADER].fillna('')
+        final_data = [STANDARD_HEADER] + df_combined.values.tolist()
         
         # シートをクリアして一括更新
         worksheet.clear()
