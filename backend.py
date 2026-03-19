@@ -1294,6 +1294,10 @@ def _postprocess_predictions(predict_df, train_df):
         elif shop_7d > 150:
             reasons.append(f"【店舗状況】店舗全体が直近1週間還元モード(平均+{int(shop_7d)}枚)で、全体のベースアップに期待できます。")
             
+        # 機種情報の取得（ぶどう確率の判定などより前に実行）
+        machine_name = row.get('機種名', '')
+        matched_spec_key = get_matched_spec_key(machine_name, specs)
+
         # ぶどう確率の根拠追加
         prev_grape = row.get('prev_推定ぶどう確率')
         if pd.notna(prev_grape) and prev_grape > 0:
@@ -1312,10 +1316,6 @@ def _postprocess_predictions(predict_df, train_df):
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)
-        
-        # 機種固有の設定5基準を判定
-        machine_name = row.get('機種名', '')
-        matched_spec_key = get_matched_spec_key(machine_name, specs)
         
         is_setting5_over = False
         if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
