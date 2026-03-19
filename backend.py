@@ -157,7 +157,7 @@ def load_data():
                 else:
                     history_df = pd.DataFrame()
             except:
-                pass
+                history_df = pd.DataFrame()
 
         if not history_df.empty:
             max_history_date = history_df[date_col].max()
