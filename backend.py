@@ -326,26 +326,36 @@ def save_prediction_log(df):
         save_df = save_df[valid_cols]
         save_df = save_df.fillna('')
         
-        # 今回保存する予測対象日のリストを取得（上書き判定用）
-        target_dates = save_df['予測対象日'].unique().tolist()
-        
-        final_data = [header]
+        # 既存データをDataFrame化してPandasで正確に重複排除を行う
         if existing_data and len(existing_data) > 1:
-            try:
-                date_col_idx = existing_data[0].index('予測対象日')
-                for row in existing_data[1:]:
-                    row_padded = row + [''] * (len(header) - len(row))
-                    # 予測対象日が今回保存するものと同じ場合はスキップ（古いデータを削除）
-                    if len(row) > date_col_idx and row[date_col_idx] in target_dates:
-                        continue
-                    final_data.append(row_padded)
-            except ValueError:
-                # 予測対象日列がない場合はそのまま残す
-                for row in existing_data[1:]:
-                    final_data.append(row + [''] * (len(header) - len(row)))
-                    
-        # 新しいデータを追加
-        final_data.extend(save_df.values.tolist())
+            df_existing = pd.DataFrame(existing_data[1:], columns=existing_data[0])
+            # 足りないカラムを空文字で埋める
+            for c in header:
+                if c not in df_existing.columns:
+                    df_existing[c] = ''
+            df_existing = df_existing[header]
+        else:
+            df_existing = pd.DataFrame(columns=header)
+            
+        # 新旧データを結合
+        df_combined = pd.concat([df_existing, save_df], ignore_index=True)
+        
+        # 重複判定用のキーを文字列で統一（フォーマット揺れによる重複を防止）
+        df_combined['tmp_date'] = df_combined['予測対象日'].astype(str)
+        shop_col_name = '店名' if '店名' in df_combined.columns else ('店舗名' if '店舗名' in df_combined.columns else None)
+        if shop_col_name:
+            df_combined['tmp_shop'] = df_combined[shop_col_name].astype(str)
+        df_combined['tmp_mac'] = df_combined['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+        subset_cols = ['tmp_date', 'tmp_shop', 'tmp_mac'] if shop_col_name else ['tmp_date', 'tmp_mac']
+        
+        # 完全に一致するキーを持つ古いデータを削除し、一番下（最新）を残す
+        df_combined = df_combined.drop_duplicates(subset=subset_cols, keep='last')
+        
+        # 一時カラムを削除してリストに戻す
+        df_combined = df_combined.drop(columns=subset_cols)
+        df_combined = df_combined.fillna('')
+        final_data = [header] + df_combined[header].values.tolist()
         
         # シートをクリアして一括更新
         worksheet.clear()
