@@ -137,6 +137,10 @@ def load_data():
         raw_df.columns = [str(c).strip() for c in raw_df.columns]
         date_col = '対象日付'
         if date_col not in raw_df.columns: return pd.DataFrame()
+        
+        # --- 列名の揺れを吸収（最も早い段階で統一） ---
+        rename_map = {'REG回数': 'REG', 'BIG回数': 'BIG', '店舗名': '店名'}
+        raw_df = raw_df.rename(columns=rename_map)
 
         # --- 1週間以上前のデータは更新されない仕様を利用した高速化 (ローカルキャッシュ) ---
         raw_df['tmp_date'] = pd.to_datetime(raw_df[date_col], errors='coerce')
@@ -151,6 +155,8 @@ def load_data():
         if os.path.exists(HISTORY_CACHE_FILE):
             try:
                 history_df = pd.read_parquet(HISTORY_CACHE_FILE, engine='pyarrow')
+                # キャッシュデータの列名も最新仕様に統一
+                history_df = history_df.rename(columns=rename_map)
                 # キャッシュ内のデータが古すぎる/新しすぎる場合を考慮し、確定済み範囲のみ残す
                 if date_col in history_df.columns:
                     history_df = history_df[history_df[date_col] < freeze_threshold]
@@ -172,8 +178,6 @@ def load_data():
             return history_df
 
         # --- 重い前処理（新規データのみ実行されるため一瞬で終わる） ---
-        rename_map = {'REG回数': 'REG', 'BIG回数': 'BIG', '店舗名': '店名'}
-        target_raw_df = target_raw_df.rename(columns=rename_map)
 
         if '機種名' in target_raw_df.columns:
             target_raw_df['機種名'] = target_raw_df['機種名'].apply(lambda x: unicodedata.normalize('NFKC', str(x)) if pd.notna(x) else x)
@@ -267,7 +271,13 @@ def load_prediction_log():
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet('prediction_log')
-        return pd.DataFrame(worksheet.get_all_records())
+        df = pd.DataFrame(worksheet.get_all_records())
+        # 古いカラム名「予想設定5以上確率」との互換性維持
+        if '予想設定5以上確率' in df.columns and 'prediction_score' not in df.columns:
+            df['prediction_score'] = pd.to_numeric(df['予想設定5以上確率'], errors='coerce')
+            if df['prediction_score'].max() > 1.0:
+                df['prediction_score'] = df['prediction_score'] / 100.0
+        return df
     except: return pd.DataFrame()
 
 def save_prediction_log(df):
@@ -293,6 +303,8 @@ def save_prediction_log(df):
             existing_data = worksheet.get_all_values()
             if existing_data:
                 header = existing_data[0]
+                # 互換性のため古いヘッダー名を置換
+                header = ['prediction_score' if c == '予想設定5以上確率' else c for c in header]
             else:
                 header = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
         except: 
@@ -352,6 +364,10 @@ def save_prediction_log(df):
         # 完全に一致するキーを持つ古いデータを削除し、一番下（最新）を残す
         df_combined = df_combined.drop_duplicates(subset=subset_cols, keep='last')
         
+        # 保存用に台番号のフォーマットを綺麗に統一する
+        if '台番号' in df_combined.columns:
+            df_combined['台番号'] = df_combined['tmp_mac']
+            
         # 一時カラムを削除してリストに戻す
         df_combined = df_combined.drop(columns=subset_cols)
         df_combined = df_combined.fillna('')
