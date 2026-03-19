@@ -231,7 +231,12 @@ def load_data():
             in_tokens = g_arr * 3
             out_tokens = in_tokens + diff_arr
             bonus_out = b_arr * np.array(b_p_list) + r_arr * np.array(r_p_list)
-            other_out = g_arr * 0.4715 # リプレイとチェリーの概算OUT(固定)
+            
+            # --- 他小役の概算OUTを厳しめに設定 (ぶどう確率が甘く出すぎるのを防ぐ) ---
+            # リプレイ: 1/7.298 (3枚) ≒ 0.411 OUT
+            # チェリー: 1/33 (2枚) 取得率95%想定 ≒ 0.058 OUT
+            # ベル＆ピエロ: 1/1000 (14枚＆10枚) 取得も考慮 ≒ 0.016 OUT
+            other_out = g_arr * 0.4850
             
             grape_out = out_tokens - bonus_out - other_out
             grape_count = grape_out / np.array(g_p_list)
