@@ -277,6 +277,10 @@ def load_prediction_log():
             df['prediction_score'] = pd.to_numeric(df['予想設定5以上確率'], errors='coerce')
             if df['prediction_score'].max() > 1.0:
                 df['prediction_score'] = df['prediction_score'] / 100.0
+                
+        # 空文字などが混入して画面側で計算エラーになるのを防ぐため、確実に数値型に変換
+        if 'prediction_score' in df.columns:
+            df['prediction_score'] = pd.to_numeric(df['prediction_score'], errors='coerce')
         return df
     except: return pd.DataFrame()
 
@@ -317,6 +321,10 @@ def save_prediction_log(df):
             
             # 列名が重複している場合（スプレッドシート上でドラッグコピーしてしまった等）、最初の列だけ残して他は捨てる
             df_existing = df_existing.loc[:, ~df_existing.columns.duplicated()]
+            
+            # 旧データの「店舗名」が消滅するのを防ぐため「店名」に引き継ぐ
+            if '店名' not in df_existing.columns and '店舗名' in df_existing.columns:
+                df_existing['店名'] = df_existing['店舗名']
             
             for c in STANDARD_HEADER:
                 if c not in df_existing.columns:
