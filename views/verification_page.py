@@ -37,22 +37,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.session_state.penalty_reg = 10
             st.session_state.penalty_big = 2
             st.session_state.low_g_penalty = 20
-            st.session_state.min_g_filter = 0
         if c2.button("⚖️ 標準", help="REGを重視するバランス型（推奨）"):
             st.session_state.penalty_reg = 15
             st.session_state.penalty_big = 5
             st.session_state.low_g_penalty = 30
-            st.session_state.min_g_filter = 0
         if c3.button("🌶️ 辛め", help="REG不足に厳しく、低稼働を許さない設定"):
             st.session_state.penalty_reg = 20
             st.session_state.penalty_big = 8
             st.session_state.low_g_penalty = 50
-            st.session_state.min_g_filter = 1000
             
         penalty_reg = st.slider("REG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_reg', 15), 1, key="penalty_reg")
         penalty_big = st.slider("BIG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_big', 5), 1, key="penalty_big")
         low_g_penalty = st.slider("低稼働(1000G未満)の最大減点率(%)", 0, 100, st.session_state.get('low_g_penalty', 30), 5, key="low_g_penalty")
-        min_g_filter = st.slider("検証から除外する最低ゲーム数", 0, 3000, st.session_state.get('min_g_filter', 0), 100, key="min_g_filter", help="客層に合わせて、指定したG数未満しか回されなかった台を採点対象から除外します。※ただし、確率的に高設定が極めて薄い（500Gノーボナ等）と判断できる「明らかな見切り台」はハズレとして減点対象に残ります。")
 
     if df_pred_log.empty:
         st.warning("保存された予測結果ログがありません。日々の予測結果は、ログイン時に自動で保存されます。")
@@ -245,7 +241,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         g = row.get('結果_累計ゲーム', 0)
         act_b = row.get('結果_BIG', 0)
         act_r = row.get('結果_REG', 0)
-        if pd.isna(g) or g <= 0: return pd.Series([0, 0, 0, 0, 0, 0])
+        diff = row.get('差枚_actual', 0)
+        if pd.isna(g) or g <= 0: return pd.Series([np.nan, 0, 0, 0, 0, 0])
         machine = row.get('機種名', '')
         matched_spec = backend.get_matched_spec_key(machine, specs)
         p_b, p_r = 1/259.0, 1/255.0 # デフォルト
@@ -332,32 +329,30 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
         elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
         
+        valid_play = (g >= 3000) or (abs(diff) >= 1000)
+        
+        if not valid_play and not is_abandoned:
+            return pd.Series([np.nan, 0, 0, 0, 0, 0])
+            
         if is_abandoned:
             total_score *= 0.5 # 高設定の可能性が著しく低いため点数半減
+            
+        # 確率ベースの強制減点 (G数が少ない場合の「0.5σ保護」が過剰に効いてしまうのを防ぐ)
+        reg_prob_den = g / act_r if act_r > 0 else 9999
+        tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
+        
+        if reg_prob_den > 400: total_score -= 30
+        elif reg_prob_den > 300: total_score -= 15
+            
+        if tot_prob_den > 180: total_score -= 30
+        elif tot_prob_den > 150: total_score -= 15
+            
+        total_score = max(0.0, total_score)
             
         return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r, prob_5_over_pct])
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
     base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分', '結果_設定5以上確率']] = eval_df
-
-    # --- 低稼働台のフィルタリング (ノーカウント処理) ---
-    if min_g_filter > 0:
-        # 指定G数以上回されている台
-        cond_g_enough = base_df['結果_累計ゲーム'] >= min_g_filter
-        
-        # 指定G数未満だが、確率的に高設定が極めて薄い「明らかな見切り台」
-        g_val = base_df['結果_累計ゲーム']
-        p_val = base_df['結果_合算確率分母']
-        
-        cond_500 = (g_val >= 500) & (p_val == 0)
-        cond_1000 = (g_val >= 1000) & (p_val >= 400)
-        cond_1500 = (g_val >= 1500) & (p_val >= 300)
-        cond_abandoned = cond_500 | cond_1000 | cond_1500
-        
-        base_df = base_df[cond_g_enough | cond_abandoned].copy()
-        if base_df.empty:
-            st.warning(f"検証対象となるデータがありません。（指定G数以上の台、または明らかな見切り台が存在しません）")
-            return
 
     # --- 店舗フィルター ---
     if shop_col not in base_df.columns:

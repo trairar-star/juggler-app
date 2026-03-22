@@ -145,11 +145,12 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     display_df['事後確率'] = display_df.apply(calc_post_prob, axis=1)
     
     # --- 結果点数（設定5近似度）の計算 ---
-    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名'):
+    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名', diff_col='差枚'):
         g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
         act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
         act_r = pd.to_numeric(row.get(r_col, 0), errors='coerce')
-        if pd.isna(g) or g <= 0: return 0.0
+        diff = pd.to_numeric(row.get(diff_col, 0), errors='coerce')
+        if pd.isna(g) or g <= 0: return np.nan
         
         machine = row.get(m_col, '')
         matched_spec = backend.get_matched_spec_key(machine, specs)
@@ -196,10 +197,26 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
         elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
         
+        valid_play = (g >= 3000) or (abs(diff) >= 1000)
+        
+        # 有効稼働(3000G or ±1000枚)でもなく、明らかな見切り台でもない場合は「判別不能ノイズ」として採点対象外
+        if not valid_play and not is_abandoned:
+            return np.nan
+            
         if is_abandoned:
             total_score *= 0.5
             
-        return total_score
+        # 確率ベースの強制減点 (G数が少ない場合の「0.5σ保護」が過剰に効いてしまうのを防ぐ)
+        reg_prob_den = g / act_r if act_r > 0 else 9999
+        tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
+        
+        if reg_prob_den > 400: total_score -= 30
+        elif reg_prob_den > 300: total_score -= 15
+            
+        if tot_prob_den > 180: total_score -= 30
+        elif tot_prob_den > 150: total_score -= 15
+            
+        return max(0.0, total_score)
 
     display_df['結果点数'] = display_df.apply(calculate_score, axis=1)
     
