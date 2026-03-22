@@ -228,6 +228,17 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     st.markdown(f"### 🎰 {selected_date.strftime('%Y-%m-%d')} の結果 ({selected_shop})")
 
+    # --- 店舗全体の有効稼働勝率 ---
+    all_g = pd.to_numeric(display_df['総回転'], errors='coerce').fillna(0)
+    all_diff = pd.to_numeric(display_df['差枚'], errors='coerce').fillna(0)
+    valid_all = display_df[(all_g >= 3000) | ((all_g < 3000) & (all_diff.abs() >= 1000))]
+    if not valid_all.empty:
+        all_win_c = (valid_all['差枚'] > 0).sum()
+        all_win_rate_str = f"{all_win_c / len(valid_all):.1%} ({all_win_c}/{len(valid_all)}台)"
+    else:
+        all_win_rate_str = "- (0/0台)"
+    st.caption(f"📊 店舗全体の勝率: **{all_win_rate_str}** (有効稼働のみ対象)")
+
     # --- 本日のAI精度パーセントの計算と表示 ---
     if 'prediction_score' in display_df.columns:
         ai_target_df = display_df[display_df['prediction_score'] >= 0.70]
@@ -242,12 +253,24 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             total_target = len(ai_target_df)
             accuracy = hit_count / total_target * 100
             acc_color = "🟢" if accuracy >= 60 else "🟡" if accuracy >= 40 else "🔴"
-            st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%**\n\n{target_label} **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！(赤背景は期待外れ台)")
+            
+            # --- AI推奨台の有効稼働勝率 ---
+            act_g = pd.to_numeric(ai_target_df['総回転'], errors='coerce').fillna(0)
+            act_diff = pd.to_numeric(ai_target_df['差枚'], errors='coerce').fillna(0)
+            valid_df = ai_target_df[(act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))]
+            if not valid_df.empty:
+                win_c = (valid_df['差枚'] > 0).sum()
+                win_rate_str = f"{win_c / len(valid_df):.1%} ({win_c}/{len(valid_df)}台)"
+            else:
+                win_rate_str = "- (0/0台)"
+                
+            st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%**\n\n{target_label} **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
 
     cols = ['AI順位', '台番号', '機種名']
     if '期待度' in display_df.columns: cols.append('期待度')
     if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
     cols.append('事後確率')
+    cols.append('結果点数')
     cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
     
     if '根拠' in display_df.columns:
@@ -257,7 +280,10 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # Pandas Stylerを使って期待外れ台を赤くハイライト
     def apply_row_style(row):
-        if display_df.loc[row.name, 'is_bad_pred']: return ['background-color: rgba(255, 75, 75, 0.2)'] * len(available_cols)
+        if display_df.loc[row.name, 'is_bad_pred']: 
+            return ['background-color: rgba(255, 75, 75, 0.2)'] * len(available_cols)
+        elif display_df.loc[row.name, '結果点数'] >= 80:
+            return ['background-color: rgba(255, 215, 0, 0.2)'] * len(available_cols)
         return [''] * len(available_cols)
         
     styled_display_df = display_df[available_cols].style.apply(apply_row_style, axis=1)
@@ -271,6 +297,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "期待度": st.column_config.TextColumn("AI期待度", width="small", help="AIが前日時点で予測していた設定5以上の確率です。"),
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small"),
             "事後確率": st.column_config.ProgressColumn("結果(事後確率)", format="%d%%", min_value=0, max_value=100, help="実際の結果(BIG/REG回数)から統計的に逆算した、本当に設定5以上だった確率"),
+            "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
             "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
             "総回転": st.column_config.NumberColumn("総回転", format="%d"),
             "BIG": st.column_config.NumberColumn("BIG", format="%d"),

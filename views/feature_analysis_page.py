@@ -119,8 +119,9 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
     
     _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col)
 
-def render_feature_analysis_page(df_train, df_importance=None, df_events=None, df_raw=None, passed_shop_col=None):
-    st.header("🔬 AI学習データ分析 (勝利の法則)")
+def render_feature_analysis_page(df_train, df_importance=None, df_events=None, df_raw=None, passed_shop_col=None, pre_selected_shop=None):
+    if not pre_selected_shop:
+        st.header("🔬 AI学習データ分析 (勝利の法則)")
     
     base_analysis_df = df_train.copy()
 
@@ -155,21 +156,24 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
         st.warning("店舗データがありません。")
         return
 
-    shops = ["店舗を選択してください"] + sorted(list(base_analysis_df[shop_col].unique()))
+    if pre_selected_shop:
+        selected_shop = pre_selected_shop
+    else:
+        shops = ["店舗を選択してください"] + sorted(list(base_analysis_df[shop_col].unique()))
+        
+        default_index = 0
+        saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
+        if saved_shop in shops:
+            default_index = shops.index(saved_shop)
     
-    default_index = 0
-    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
-    if saved_shop in shops:
-        default_index = shops.index(saved_shop)
-
-    selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="feature_analysis_shop")
+        selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="feature_analysis_shop")
+        
+        if selected_shop != "店舗を選択してください":
+            st.session_state["global_selected_shop"] = selected_shop
     
-    if selected_shop != "店舗を選択してください":
-        st.session_state["global_selected_shop"] = selected_shop
-
-    if selected_shop == "店舗を選択してください":
-        st.info("👆 分析対象の店舗を選択してください。店舗ごとの傾向や勝利の法則を分析します。")
-        return
+        if selected_shop == "店舗を選択してください":
+            st.info("👆 分析対象の店舗を選択してください。店舗ごとの傾向や勝利の法則を分析します。")
+            return
 
     analysis_df = base_analysis_df[base_analysis_df[shop_col] == selected_shop].copy()
     st.caption(f"【{selected_shop}】の過去データから、この店で高設定が入りやすい台の特徴を可視化します。")

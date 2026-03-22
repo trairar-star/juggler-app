@@ -139,7 +139,7 @@ def main():
     if "global_selected_shop" not in st.session_state:
         st.session_state["global_selected_shop"] = "全て"
         
-    pages = ["店舗別詳細データ", "AI傾向分析 (勝利の法則)", "精度検証 (各店舗AI設定)", "🏆 予測 vs 実際 ランキング", "📅 日別 結果＆予測確認", "🗺️ 店舗間ヒートマップ", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    pages = ["店舗別詳細データ", "📊 予測の実績検証・AI設定", "📅 日別 結果＆予測確認", "🗺️ 店舗間ヒートマップ", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -252,18 +252,13 @@ def main():
             st.toast("✅ 本日の予測結果を自動保存しました！")
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
-        if page == "精度検証 (各店舗AI設定)":
+        if page == "📊 予測の実績検証・AI設定":
             df_pred_log = backend.load_prediction_log()
             verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw)
-        elif page == "🏆 予測 vs 実際 ランキング":
-            df_pred_log = backend.load_prediction_log()
-            ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df, df_raw)
         elif page == "📅 日別 結果＆予測確認":
             daily_result_page.render_daily_result_page(df_raw, df_events, df_island, st.session_state["shop_hyperparams"])
         elif page == "🗺️ 店舗間ヒートマップ":
             calendar_compare_page.render_calendar_compare_page(df_raw, df, predict_target_date)
-        elif page == "AI傾向分析 (勝利の法則)":
-            feature_analysis_page.render_feature_analysis_page(df_verify, df_importance, df_events, df_raw, shop_col)
         elif page == "島マスター管理":
             island_master_page.render_island_master_page(df_raw)
         elif page == "イベント管理":
