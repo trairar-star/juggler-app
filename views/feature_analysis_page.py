@@ -6,9 +6,12 @@ from utils import get_confidence_indicator
 import backend
 from views.shop_detail_page import _calculate_shop_trends
 
-def _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col):
+def _render_monthly_trend_analysis(viz_df):
     with st.expander("🗓️ 月間トレンド (月初・月末の傾向)", expanded=False):
         st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数や高設定率です。")
+        
+        chart_metric_shop = st.radio("📊 グラフの表示指標", ["平均差枚", "高設定率"], horizontal=True, key="monthly_trend_metric")
+        y_col = "差枚" if chart_metric_shop == "平均差枚" else "高設定_rate"
         
         trend_df = viz_df.copy()
         if '対象日付' in trend_df.columns:
