@@ -70,7 +70,11 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
         b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
         r = pd.to_numeric(row.get('REG', 0), errors='coerce')
-        if pd.isna(g) or g < 3000: return 0
+        diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
+        
+        valid_play = (g >= 3000) or (g < 3000 and abs(diff) >= 1000)
+        if not valid_play:
+            return np.nan
         
         machine = row.get('機種名', '')
         matched_spec = backend.get_matched_spec_key(machine, specs)

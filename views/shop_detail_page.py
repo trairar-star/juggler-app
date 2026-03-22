@@ -575,15 +575,16 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
                         high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))
                         high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
+                        high_expect_df['valid_high'] = high_expect_df['valid_play'] & (high_expect_df['is_high_setting'] == 1)
     
                         acc_stats = high_expect_df.groupby(shop_col).agg(
-                            正答率=('is_high_setting', 'mean'),
-                            正答数=('is_high_setting', 'sum'),
+                            正答数=('valid_high', 'sum'),
                             有効稼働数=('valid_play', 'sum'),
                             勝数=('valid_win', 'sum'),
                             サンプル数=('台番号', 'count')
                         ).reset_index()
                         acc_stats['勝率'] = np.where(acc_stats['有効稼働数'] > 0, acc_stats['勝数'] / acc_stats['有効稼働数'], 0.0)
+                        acc_stats['正答率'] = np.where(acc_stats['有効稼働数'] > 0, acc_stats['正答数'] / acc_stats['有効稼働数'], 0.0)
                         
                         ai_accuracy_map = dict(zip(acc_stats[shop_col], acc_stats['正答率']))
                         ai_win_rate_map = dict(zip(acc_stats[shop_col], acc_stats['勝率']))
