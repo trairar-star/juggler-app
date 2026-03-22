@@ -958,6 +958,42 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                         width="stretch",
                     hide_index=True
                 )
+                
+                with st.expander("🔍 シミュレーション詳細データを確認", expanded=False):
+                    st.caption("シミュレーションで各確率帯に分類された台の具体的な日付と結果を確認できます。")
+                    band_options_sim = ['すべて', '85%以上', '70%〜84%', '50%〜69%', '30%〜49%', '30%未満']
+                    selected_band_sim = st.selectbox("表示する確率帯を選択", band_options_sim, index=1, key="sim_band_select")
+                    
+                    sim_display_df = sim_df.copy()
+                    if selected_band_sim != 'すべて':
+                        sim_display_df = sim_display_df[sim_display_df['確率帯'] == selected_band_sim]
+                        
+                    if sim_display_df.empty:
+                        st.info("該当するデータがありません。")
+                    else:
+                        sim_display_df['予想設定5以上確率'] = (sim_display_df['prediction_score'] * 100).astype(int)
+                        if 'next_date' in sim_display_df.columns:
+                            sim_display_df['予測対象日'] = pd.to_datetime(sim_display_df['next_date'])
+                        else:
+                            sim_display_df['予測対象日'] = pd.to_datetime(sim_display_df['対象日付']) + pd.Timedelta(days=1)
+                        
+                        sim_display_df['高設定挙動'] = sim_display_df['target'].apply(lambda x: '🌟' if x == 1 else '')
+                        sim_display_df = sim_display_df.sort_values('予測対象日', ascending=False)
+                        
+                        st.dataframe(
+                            sim_display_df[['予測対象日', '台番号', '機種名', '予想設定5以上確率', '高設定挙動', 'next_diff', 'next_累計ゲーム', 'next_BIG', 'next_REG']],
+                            column_config={
+                                "予測対象日": st.column_config.DateColumn("予測日", format="MM/DD"),
+                                "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
+                                "高設定挙動": st.column_config.TextColumn("挙動", help="設定5以上基準を満たしたか"),
+                                "next_diff": st.column_config.NumberColumn("結果差枚", format="%+d"),
+                                "next_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
+                                "next_BIG": st.column_config.NumberColumn("BIG", format="%d"),
+                                "next_REG": st.column_config.NumberColumn("REG", format="%d"),
+                            },
+                            hide_index=True,
+                            width="stretch"
+                        )
             else:
                 st.info("シミュレーション用のデータがありません。")
 
