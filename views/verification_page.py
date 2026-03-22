@@ -927,7 +927,8 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                         st.rerun()
                         
             st.markdown("**🔬 現在の設定でのシミュレーション成績 (最新データ)**")
-            st.caption("現在適用されている設定で過去データを再評価した場合のシミュレーション結果です。設定調整後の成果確認に使えます。")
+            st.info("💡 **なぜ日別予測とスコアが違うの？**\nこのシミュレーションは「過去の全データを学習したAI」に「同じ過去のデータ」をテストさせているため、AIが結果を暗記しており期待度が異常に高く（85%以上などに）出ます。一方、「日別確認」は過去に遡って『その前日までのデータだけで未来を予測』する実戦形式のため、現実的なスコアになります。")
+            st.caption("現在適用されている設定で過去データを再評価（答え合わせ）した結果です。AIが「どの程度店のクセを表現できるようになったか」の設定調整の参考値としてご利用ください。")
             sim_df = df_verify[df_verify[shop_col] == selected_shop].copy() if not df_verify.empty and shop_col in df_verify.columns else pd.DataFrame()
             if not sim_df.empty and 'prediction_score' in sim_df.columns and 'target' in sim_df.columns and 'next_diff' in sim_df.columns:
                 sim_df['確率帯'] = sim_df['prediction_score'].apply(get_prob_band)
