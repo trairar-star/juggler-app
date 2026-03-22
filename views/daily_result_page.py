@@ -96,55 +96,9 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         if col in display_df.columns:
             display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
     
-    # --- 事後確率（設定5以上確率）の計算 ---
-    specs = backend.get_machine_specs()
-    def calc_post_prob(row):
-        g = row.get('総回転', 0)
-        act_b = row.get('BIG', 0)
-        act_r = row.get('REG', 0)
-        if pd.isna(g) or g <= 0: return 0
-        
-        machine = row.get('機種名', '')
-        matched_spec = backend.get_matched_spec_key(machine, specs)
-        
-        prob_5_over = 0.0
-        if matched_spec:
-            ms = specs[matched_spec]
-            s1 = ms.get("設定1", {"BIG": 280.0, "REG": 400.0})
-            s4 = ms.get("設定4", {"BIG": 260.0, "REG": 300.0})
-            s5 = ms.get("設定5", s4)
-            s6 = ms.get("設定6", s5)
-            
-            full_specs = {1: s1, 4: s4, 5: s5, 6: s6}
-            for s in [2, 3]:
-                full_specs[s] = {}
-                for k in ["BIG", "REG"]:
-                    p1_val = 1.0 / s1.get(k, 300.0)
-                    p4_val = 1.0 / s4.get(k, 300.0)
-                    p_s = p1_val + (p4_val - p1_val) * (s - 1) / 3.0
-                    full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
-            
-            log_L = []
-            for i in range(1, 7):
-                p_big_i = 1.0 / full_specs[i].get("BIG", 300.0)
-                p_reg_i = 1.0 / full_specs[i].get("REG", 300.0)
-                exp_big_i = g * p_big_i
-                exp_reg_i = g * p_reg_i
-                ll_big = act_b * math.log(exp_big_i) - exp_big_i if exp_big_i > 0 else 0
-                ll_reg = act_r * math.log(exp_reg_i) - exp_reg_i if exp_reg_i > 0 else 0
-                log_L.append(ll_big + ll_reg)
-                
-            max_ll = max(log_L)
-            likelihoods = [math.exp(ll - max_ll) for ll in log_L]
-            sum_L = sum(likelihoods)
-            if sum_L > 0:
-                prob_5_over = (likelihoods[4] + likelihoods[5]) / sum_L
-                
-        return int(prob_5_over * 100)
-        
-    display_df['事後確率'] = display_df.apply(calc_post_prob, axis=1)
     
     # --- 結果点数（設定5近似度）の計算 ---
+    specs = backend.get_machine_specs()
     def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名', diff_col='差枚'):
         g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
         act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
@@ -234,21 +188,19 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         b = row.get('BIG', 0)
         r = row.get('REG', 0)
         diff = row.get('差枚', 0)
-        post_prob = row.get('事後確率', 0)
         tot_prob = (b + r) / g if g > 0 else 0
         
         # 低稼働かつ確率が死んでない台は免除 (0G、または1000G未満で合算1/200以上)
         if g < 1000 and (g == 0 or tot_prob >= (1/200.0)): return False
-        if diff < 0 or post_prob <= 30: return True
+        if diff < 0 or row.get('結果点数', 0) < 40: return True
         return False
         
     display_df['is_bad_pred'] = display_df.apply(check_bad_pred, axis=1)
 
     # --- ランク変動の計算 ---
     if 'AI順位_num' in display_df.columns:
-        # 事後確率（とタイブレーク用の差枚）で実際の結果順位を計算
-        display_df['事後スコア'] = display_df['事後確率'] + (display_df.get('差枚', 0).fillna(0) / 100000.0)
-        display_df['事後順位_num'] = display_df['事後スコア'].rank(method='min', ascending=False).fillna(999).astype(int)
+        # 結果点数で実際の結果順位を計算
+        display_df['事後順位_num'] = display_df['結果点数'].rank(method='min', ascending=False).fillna(999).astype(int)
         
         def format_ai_rank(row):
             ai_r = row.get('AI順位_num', 999)
@@ -325,7 +277,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             target_label = "AI予測上位10台"
             
         if not ai_target_df.empty:
-            hit_df = ai_target_df[(ai_target_df['差枚'] > 0) | (ai_target_df['事後確率'] >= 50)]
+            hit_df = ai_target_df[(ai_target_df['差枚'] > 0) | (ai_target_df['結果点数'] >= 50)]
             hit_count = len(hit_df)
             total_target = len(ai_target_df)
             accuracy = hit_count / total_target * 100
@@ -355,7 +307,6 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     cols = ['AI順位', '台番号', '機種名']
     if '期待度' in display_df.columns: cols.append('期待度')
     if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
-    cols.append('事後確率')
     cols.append('結果点数')
     cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
     
@@ -383,7 +334,6 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "機種名": st.column_config.TextColumn("機種", width="small"),
             "期待度": st.column_config.TextColumn("AI期待度", width="small", help="AIが前日時点で予測していた設定5以上の確率です。"),
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small"),
-            "事後確率": st.column_config.ProgressColumn("結果(事後確率)", format="%d%%", min_value=0, max_value=100, help="実際の結果(BIG/REG回数)から統計的に逆算した、本当に設定5以上だった確率"),
             "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
             "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
             "総回転": st.column_config.NumberColumn("総回転", format="%d"),

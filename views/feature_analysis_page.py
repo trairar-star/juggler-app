@@ -91,33 +91,18 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
                 st.dataframe(worst_trends_df, column_config={"条件": st.column_config.TextColumn("警戒条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
             st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1%}** です。")
         
-        viz_df = df_raw_shop[df_raw_shop['累計ゲーム'] >= 1000].copy()
-        viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
-        spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-        spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-        viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & (viz_df['差枚'].abs() >= 1000))
-        viz_df['高設定'] = ((viz_df['REG確率'] >= spec_reg) | (viz_df['合算確率'] >= spec_tot)).astype(int)
-        viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan)
-    
-        chart_metric_shop = st.radio("📊 グラフの表示指標", ["平均差枚", "高設定率"], horizontal=True, key="shop_detail_metric")
-        y_col = "差枚" if chart_metric_shop == "平均差枚" else "高設定_rate"
-        bar_color1 = "#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC"
-        bar_color2 = "#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC"
-    
-        if '日付要素' in viz_df.columns and not viz_df['日付要素'].isnull().all():
-            st.markdown(f"**🔥 イベント別 {chart_metric_shop}**")
-            event_summary = viz_df.groupby('日付要素')[y_col].mean().sort_values(ascending=False)
-            st.bar_chart(event_summary, color=bar_color1)
+        viz_df = df_raw_shop.copy()
+        if not viz_df.empty:
+            viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
+            spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+            spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+            viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & (viz_df['差枚'].abs() >= 1000))
+            viz_df['高設定'] = ((viz_df['REG確率'] >= spec_reg) | (viz_df['合算確率'] >= spec_tot)).astype(int)
+            viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan)
+        else:
+            viz_df['高設定_rate'] = np.nan
         
-        st.markdown(f"**📅 曜日別 {chart_metric_shop}**")
-        if '曜日' not in viz_df.columns and '対象日付' in viz_df.columns:
-            day_map = {'Monday': '月', 'Tuesday': '火', 'Wednesday': '水', 'Thursday': '木', 'Friday': '金', 'Saturday': '土', 'Sunday': '日'}
-            viz_df['曜日'] = viz_df['対象日付'].dt.day_name().map(day_map)
-        if '曜日' in viz_df.columns:
-            weekday_shop_stats = viz_df.groupby('曜日')[y_col].mean().sort_values(ascending=False)
-            st.bar_chart(weekday_shop_stats, color=bar_color2)
-        
-    _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col)
+    _render_monthly_trend_analysis(viz_df)
 
 def render_feature_analysis_page(df_train, df_importance=None, df_events=None, df_raw=None, passed_shop_col=None, pre_selected_shop=None):
     if not pre_selected_shop:
