@@ -366,29 +366,28 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
         st.info("👆 上記のメニューから分析対象の店舗を選択してください。")
         return
 
-    with tab_stats:
-        merged_df = base_df[base_df[shop_col] == selected_shop].copy()
-        st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop} / {selected_version})")
-        
-        # --- 有効稼働フラグの追加 ---
-        merged_df['valid_play'] = (pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
-                                  ((pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
-                                   (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0).abs() >= 1000))
-        merged_df['valid_win'] = merged_df['valid_play'] & (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) > 0)
-        
-        specs = backend.get_machine_specs()
-        spec_reg_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-        spec_tot_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-        m_cum_g = pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0)
-        m_big_c = pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0)
-        m_reg_c = pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)
-        merged_df['結果_合算確率分母'] = np.where((m_big_c + m_reg_c) > 0, m_cum_g / (m_big_c + m_reg_c), 0)
-        merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
-        merged_df['valid_high'] = merged_df['valid_play'] & (merged_df['is_high_setting'] == 1)
+    merged_df = base_df[base_df[shop_col] == selected_shop].copy()
+    st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop} / {selected_version})")
     
-        if merged_df.empty:
-            st.info("選択された店舗の分析データがありません。")
-            return
+    # --- 有効稼働フラグの追加 ---
+    merged_df['valid_play'] = (pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                              ((pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                               (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0).abs() >= 1000))
+    merged_df['valid_win'] = merged_df['valid_play'] & (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) > 0)
+    
+    specs = backend.get_machine_specs()
+    spec_reg_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+    spec_tot_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+    m_cum_g = pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+    m_big_c = pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0)
+    m_reg_c = pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)
+    merged_df['結果_合算確率分母'] = np.where((m_big_c + m_reg_c) > 0, m_cum_g / (m_big_c + m_reg_c), 0)
+    merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
+    merged_df['valid_high'] = merged_df['valid_play'] & (merged_df['is_high_setting'] == 1)
+
+    if merged_df.empty:
+        st.info("選択された店舗の分析データがありません。")
+        return
 
     # --- バージョン別成績比較表 (「すべて」選択時のみ表示) ---
     if selected_version == 'すべて' and 'ai_version' in merged_df.columns:
