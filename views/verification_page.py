@@ -933,8 +933,8 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 sim_df['確率帯'] = sim_df['prediction_score'].apply(get_prob_band)
                 sim_stats = sim_df.groupby('確率帯').agg(
                     台数=('台番号', 'count'),
-                    高設定率=('target', 'mean'),
-                    勝率=('next_diff', lambda x: (x > 0).mean()),
+                    高設定率=('target', lambda x: x.mean() * 100),
+                    勝率=('next_diff', lambda x: (x > 0).mean() * 100),
                     平均差枚=('next_diff', 'mean'),
                     合計差枚=('next_diff', 'sum')
                 ).reset_index()
@@ -949,8 +949,8 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                     column_config={
                         "確率帯": st.column_config.TextColumn("期待度"),
                         "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
-                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
-                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
+                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
                         "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                         "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                         "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
