@@ -224,17 +224,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     
     reg_df = analysis_df[analysis_df['累計ゲーム'] >= min_g].copy()
     
-    tab_basic, tab_event, tab_date, tab_special, tab_ai = st.tabs([
-        "📊 基本指標 (REG・稼働)", 
-        "🎉 イベント傾向", 
-        "📅 曜日・末尾傾向", 
-        "🕵️‍♂️ 特殊パターン", 
-        "🧠 AI特徴量重要度"
-    ])
-
-    with tab_basic:
+    with st.expander("📊 基本指標 (REG・稼働)", expanded=False):
         # --- 1. REG確率別の翌日高設定率 (最重要) ---
-        st.subheader("📊 REG確率と高設定据え置きの関係")
+        st.markdown("### 📊 REG確率と高設定据え置きの関係")
         st.caption("「前日のREG確率が良い台は、翌日も高設定のまま（据え置き）になるのか？」を検証します。")
         
         if reg_df.empty:
@@ -304,9 +296,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             )
             st.altair_chart(chart_d, width="stretch")
 
-    with tab_event:
+    with st.expander("🎉 イベント傾向", expanded=False):
         # --- 4. イベントランク別の設定投入傾向 ---
-        st.subheader("🎉 イベントランク別の設定投入傾向")
+        st.markdown("### 🎉 イベントランク別の設定投入傾向")
         st.caption(f"指定した回転数（{min_g}G）以上回っている台のうち、「REG確率が1/300より良い台（高設定挙動）」の割合をイベントの強さごとに比較します。")
         
         if df_events is not None and not df_events.empty and shop_col in reg_df.columns:
@@ -368,9 +360,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
         else:
             st.info("イベントデータが登録されていないか、結合に失敗しました。")
 
-    with tab_date:
+    with st.expander("📅 曜日・末尾傾向", expanded=False):
         # --- 5. 予測日ベースの曜日・末尾別の傾向 ---
-        st.subheader("📅 予測日ベースの傾向 (曜日・末尾)")
+        st.markdown("### 📅 予測日ベースの傾向 (曜日・末尾)")
         st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、「予測日の曜日」や「台の末尾番号」ごとの成績を比較します。店舗のクセを見抜くのに役立ちます。")
     
         if not reg_df.empty:
@@ -447,8 +439,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     st.info("末尾番号データがありません。")
 
     # --- 6. 特殊パターンの検証 (REG先行・大凹み・大勝) ---
-    with tab_special:
-        st.subheader("🕵️‍♂️ 特殊パターンの検証 (REG先行・凹み反発・大勝のその後)")
+    with st.expander("🕵️‍♂️ 特殊パターンの検証", expanded=False):
+        st.markdown("### 🕵️‍♂️ 特殊パターンの検証 (REG先行・凹み反発・大勝のその後)")
         st.caption(f"指定した回転数（{min_g}G）以上回っている台を対象に、スロット特有のパターンの翌日の成績を調査します。")
     
         if not reg_df.empty:
@@ -874,9 +866,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     st.info("相対稼働率のデータがありません。")
 
     # --- 7. 特徴量重要度 (Feature Importance) ---
-    with tab_ai:
+    with st.expander("🧠 AI特徴量重要度", expanded=False):
         if df_importance is not None and not df_importance.empty:
-            st.subheader("🧠 AIが重視したポイント (特徴量重要度)")
+            st.markdown("### 🧠 AIが重視したポイント (特徴量重要度)")
     
             feature_name_map = {
                 '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
