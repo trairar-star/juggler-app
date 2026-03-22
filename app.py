@@ -267,7 +267,7 @@ def main():
             my_balance_page.render_my_balance_page(df_raw)
         else:
             df_pred_log = backend.load_prediction_log()
-            shop_detail_page.render_shop_detail_page(df, df_raw, shop_col, df_events, df_verify, df_pred_log)
+            shop_detail_page.render_shop_detail_page(df, df_raw, shop_col, df_events, df_verify, df_pred_log, df_importance)
 
 if __name__ == "__main__":
     main()

@@ -7,118 +7,116 @@ import backend
 from views.shop_detail_page import _calculate_shop_trends
 
 def _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col):
-    st.divider()
-    st.subheader("🗓️ 月間トレンド (月初・月末の傾向)")
-    st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数や高設定率です。")
+    with st.expander("🗓️ 月間トレンド (月初・月末の傾向)", expanded=False):
+        st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数や高設定率です。")
+        
+        trend_df = viz_df.copy()
+        if '対象日付' in trend_df.columns:
+            trend_df['day'] = trend_df['対象日付'].dt.day
+            
+            def classify_period(d):
+                if d <= 7: return '月初 (1-7日)'
+                elif d >= 25: return '月末 (25日-)'
+                else: return '中旬 (8-24日)'
+            
+            trend_df['period'] = trend_df['day'].apply(classify_period)
+            period_stats = trend_df.groupby('period')[y_col].mean()
+            
+            m1, m2, m3 = st.columns(3)
+            val_start = period_stats.get('月初 (1-7日)', 0)
+            val_mid = period_stats.get('中旬 (8-24日)', 0)
+            val_end = period_stats.get('月末 (25日-)', 0)
+            
+            if chart_metric_shop == "平均差枚":
+                m1.metric("🌙 月初 (1-7)", f"{int(val_start):+d} 枚")
+                m2.metric("☀️ 中旬 (8-24)", f"{int(val_mid):+d} 枚")
+                m3.metric("🌑 月末 (25-)", f"{int(val_end):+d} 枚")
+            else:
+                m1.metric("🌙 月初 (1-7)", f"{val_start:.1%}")
+                m2.metric("☀️ 中旬 (8-24)", f"{val_mid:.1%}")
+                m3.metric("🌑 月末 (25-)", f"{val_end:.1%}")
+            
+            st.markdown("👇 **期間を選択すると、その期間に強い機種が表示されます**")
+            selected_period = st.radio("期間選択", ['月初 (1-7日)', '中旬 (8-24日)', '月末 (25日-)'], horizontal=True, label_visibility="collapsed")
     
-    trend_df = viz_df.copy()
-    if '対象日付' in trend_df.columns:
-        trend_df['day'] = trend_df['対象日付'].dt.day
-        
-        def classify_period(d):
-            if d <= 7: return '月初 (1-7日)'
-            elif d >= 25: return '月末 (25日-)'
-            else: return '中旬 (8-24日)'
-        
-        trend_df['period'] = trend_df['day'].apply(classify_period)
-        period_stats = trend_df.groupby('period')[y_col].mean()
-        
-        m1, m2, m3 = st.columns(3)
-        val_start = period_stats.get('月初 (1-7日)', 0)
-        val_mid = period_stats.get('中旬 (8-24日)', 0)
-        val_end = period_stats.get('月末 (25日-)', 0)
-        
-        if chart_metric_shop == "平均差枚":
-            m1.metric("🌙 月初 (1-7)", f"{int(val_start):+d} 枚")
-            m2.metric("☀️ 中旬 (8-24)", f"{int(val_mid):+d} 枚")
-            m3.metric("🌑 月末 (25-)", f"{int(val_end):+d} 枚")
-        else:
-            m1.metric("🌙 月初 (1-7)", f"{val_start:.1%}")
-            m2.metric("☀️ 中旬 (8-24)", f"{val_mid:.1%}")
-            m3.metric("🌑 月末 (25-)", f"{val_end:.1%}")
-        
-        st.markdown("👇 **期間を選択すると、その期間に強い機種が表示されます**")
-        selected_period = st.radio("期間選択", ['月初 (1-7日)', '中旬 (8-24日)', '月末 (25日-)'], horizontal=True, label_visibility="collapsed")
-
-        if selected_period:
-            period_df = trend_df[trend_df['period'] == selected_period]
-            if not period_df.empty:
-                st.markdown(f"🎰 **{selected_period} の機種別ランキング**")
-                machine_rank = period_df.groupby('機種名').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), 設置台数=('台番号', 'nunique')).sort_values('高設定率', ascending=False).reset_index()
-                machine_rank['信頼度'] = machine_rank['設置台数'].apply(get_confidence_indicator)
-                st.dataframe(machine_rank, column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "設置台数": st.column_config.NumberColumn(format="%d 台"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
-                
-                st.markdown(f"🔢 **{selected_period} の末尾番号傾向 (0-9)**")
-                if '末尾番号' in period_df.columns:
-                    digit_rank = period_df.groupby('末尾番号').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).sort_index().reset_index()
-                    digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
-                    st.bar_chart(digit_rank.set_index('末尾番号')[chart_metric_shop], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#AB47BC")
-                    st.dataframe(digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, width="stretch")
+            if selected_period:
+                period_df = trend_df[trend_df['period'] == selected_period]
+                if not period_df.empty:
+                    st.markdown(f"🎰 **{selected_period} の機種別ランキング**")
+                    machine_rank = period_df.groupby('機種名').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), 設置台数=('台番号', 'nunique')).sort_values('高設定率', ascending=False).reset_index()
+                    machine_rank['信頼度'] = machine_rank['設置台数'].apply(get_confidence_indicator)
+                    st.dataframe(machine_rank, column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "設置台数": st.column_config.NumberColumn(format="%d 台"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
                     
-                st.markdown(f"📅 **{selected_period} の曜日別傾向**")
-                if '曜日' in period_df.columns:
-                    wd_rank = period_df.groupby('曜日').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).reset_index()
-                    day_order = {'月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6, '日': 7}
-                    wd_rank['sort'] = wd_rank['曜日'].map(day_order).fillna(99)
-                    wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
-                    wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
-                    st.bar_chart(wd_rank.set_index('曜日')[chart_metric_shop], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC")
-                    st.dataframe(wd_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
-
-                if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
-                    st.markdown(f"🔥 **{selected_period} のイベント別傾向**")
-                    ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(chart_metric_shop, ascending=False)
-                    ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
-                    st.bar_chart(ev_rank.set_index('日付要素')[chart_metric_shop], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC")
-                    st.dataframe(ev_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
-
-        st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
-        day_stats = trend_df.groupby('day')[y_col].mean()
-        st.bar_chart(day_stats, color="#00E676" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                    st.markdown(f" **{selected_period} の末尾番号傾向 (0-9)**")
+                    if '末尾番号' in period_df.columns:
+                        digit_rank = period_df.groupby('末尾番号').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).sort_index().reset_index()
+                        digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
+                        st.bar_chart(digit_rank.set_index('末尾番号')[chart_metric_shop], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                        st.dataframe(digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, width="stretch")
+                        
+                    st.markdown(f"📅 **{selected_period} の曜日別傾向**")
+                    if '曜日' in period_df.columns:
+                        wd_rank = period_df.groupby('曜日').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).reset_index()
+                        day_order = {'月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6, '日': 7}
+                        wd_rank['sort'] = wd_rank['曜日'].map(day_order).fillna(99)
+                        wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
+                        wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
+                        st.bar_chart(wd_rank.set_index('曜日')[chart_metric_shop], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                        st.dataframe(wd_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+    
+                    if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
+                        st.markdown(f"🔥 **{selected_period} のイベント別傾向**")
+                        ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(chart_metric_shop, ascending=False)
+                        ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
+                        st.bar_chart(ev_rank.set_index('日付要素')[chart_metric_shop], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC")
+                        st.dataframe(ev_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+    
+            st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
+            day_stats = trend_df.groupby('day')[y_col].mean()
+            st.bar_chart(day_stats, color="#00E676" if chart_metric_shop == "平均差枚" else "#AB47BC")
 
 def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs):
-    st.divider()
-    st.subheader(f"📅 {selected_shop} の傾向分析")
-    st.caption("過去データに基づく、この店舗のイベント日や曜日ごとの平均差枚数です。")
+    with st.expander(f"📅 {selected_shop} の傾向分析", expanded=True):
+        st.caption("過去データに基づく、この店舗の店癖やイベント日・曜日ごとの傾向です。")
+        
+        if top_trends_df is not None or worst_trends_df is not None:
+            st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖/警戒条件**")
+            if top_trends_df is not None and not top_trends_df.empty:
+                st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りやすい『激アツ条件 (🔥)』です。")
+                top_trends_df['信頼度'] = top_trends_df['サンプル'].apply(get_confidence_indicator)
+                st.dataframe(top_trends_df, column_config={"条件": st.column_config.TextColumn("激アツ条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+            if worst_trends_df is not None and not worst_trends_df.empty:
+                st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りにくい『警戒条件 (⚠️)』です。")
+                worst_trends_df['信頼度'] = worst_trends_df['サンプル'].apply(get_confidence_indicator)
+                st.dataframe(worst_trends_df, column_config={"条件": st.column_config.TextColumn("警戒条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+            st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1%}** です。")
+        
+        viz_df = df_raw_shop[df_raw_shop['累計ゲーム'] >= 1000].copy()
+        viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
+        spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+        spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+        viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & (viz_df['差枚'].abs() >= 1000))
+        viz_df['高設定'] = ((viz_df['REG確率'] >= spec_reg) | (viz_df['合算確率'] >= spec_tot)).astype(int)
+        viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan)
     
-    if top_trends_df is not None or worst_trends_df is not None:
-        st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖/警戒条件**")
-        if top_trends_df is not None and not top_trends_df.empty:
-            st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りやすい『激アツ条件 (🔥)』です。")
-            top_trends_df['信頼度'] = top_trends_df['サンプル'].apply(get_confidence_indicator)
-            st.dataframe(top_trends_df, column_config={"条件": st.column_config.TextColumn("激アツ条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
-        if worst_trends_df is not None and not worst_trends_df.empty:
-            st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りにくい『警戒条件 (⚠️)』です。")
-            worst_trends_df['信頼度'] = worst_trends_df['サンプル'].apply(get_confidence_indicator)
-            st.dataframe(worst_trends_df, column_config={"条件": st.column_config.TextColumn("警戒条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
-        st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1%}** です。")
+        chart_metric_shop = st.radio("📊 グラフの表示指標", ["平均差枚", "高設定率"], horizontal=True, key="shop_detail_metric")
+        y_col = "差枚" if chart_metric_shop == "平均差枚" else "高設定_rate"
+        bar_color1 = "#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC"
+        bar_color2 = "#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC"
     
-    viz_df = df_raw_shop[df_raw_shop['累計ゲーム'] >= 1000].copy()
-    viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
-    spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-    spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-    viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & (viz_df['差枚'].abs() >= 1000))
-    viz_df['高設定'] = ((viz_df['REG確率'] >= spec_reg) | (viz_df['合算確率'] >= spec_tot)).astype(int)
-    viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan)
-
-    chart_metric_shop = st.radio("📊 グラフの表示指標", ["平均差枚", "高設定率"], horizontal=True, key="shop_detail_metric")
-    y_col = "差枚" if chart_metric_shop == "平均差枚" else "高設定_rate"
-    bar_color1 = "#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC"
-    bar_color2 = "#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC"
-
-    if '日付要素' in viz_df.columns and not viz_df['日付要素'].isnull().all():
-        st.markdown(f"**🔥 イベント別 {chart_metric_shop}**")
-        event_summary = viz_df.groupby('日付要素')[y_col].mean().sort_values(ascending=False)
-        st.bar_chart(event_summary, color=bar_color1)
-    
-    st.markdown(f"**📅 曜日別 {chart_metric_shop}**")
-    if '曜日' not in viz_df.columns and '対象日付' in viz_df.columns:
-        day_map = {'Monday': '月', 'Tuesday': '火', 'Wednesday': '水', 'Thursday': '木', 'Friday': '金', 'Saturday': '土', 'Sunday': '日'}
-        viz_df['曜日'] = viz_df['対象日付'].dt.day_name().map(day_map)
-    if '曜日' in viz_df.columns:
-        weekday_shop_stats = viz_df.groupby('曜日')[y_col].mean().sort_values(ascending=False)
-        st.bar_chart(weekday_shop_stats, color=bar_color2)
-    
+        if '日付要素' in viz_df.columns and not viz_df['日付要素'].isnull().all():
+            st.markdown(f"**🔥 イベント別 {chart_metric_shop}**")
+            event_summary = viz_df.groupby('日付要素')[y_col].mean().sort_values(ascending=False)
+            st.bar_chart(event_summary, color=bar_color1)
+        
+        st.markdown(f"**📅 曜日別 {chart_metric_shop}**")
+        if '曜日' not in viz_df.columns and '対象日付' in viz_df.columns:
+            day_map = {'Monday': '月', 'Tuesday': '火', 'Wednesday': '水', 'Thursday': '木', 'Friday': '金', 'Saturday': '土', 'Sunday': '日'}
+            viz_df['曜日'] = viz_df['対象日付'].dt.day_name().map(day_map)
+        if '曜日' in viz_df.columns:
+            weekday_shop_stats = viz_df.groupby('曜日')[y_col].mean().sort_values(ascending=False)
+            st.bar_chart(weekday_shop_stats, color=bar_color2)
+        
     _render_monthly_trend_analysis(viz_df, chart_metric_shop, y_col)
 
 def render_feature_analysis_page(df_train, df_importance=None, df_events=None, df_raw=None, passed_shop_col=None, pre_selected_shop=None):
