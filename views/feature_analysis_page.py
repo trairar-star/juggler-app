@@ -193,19 +193,26 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
         _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs)
 
+    st.divider()
+    st.markdown("### 🔍 詳細条件別の傾向分析")
+    st.caption("ここから下の各分析項目（基本指標・イベント・曜日・特殊パターン）に共通して適用される絞り込み条件です。")
+    
+    col_f1, col_f2 = st.columns(2)
+
     # --- 曜日フィルター ---
-    if 'target_weekday' in analysis_df.columns:
-        day_options = ["すべての曜日", "平日 (月〜金)", "週末 (土・日)", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]
-        selected_day = st.selectbox("分析対象の曜日を選択", day_options)
-        
-        if selected_day != "すべての曜日":
-            if selected_day == "平日 (月〜金)":
-                analysis_df = analysis_df[analysis_df['target_weekday'] < 5]
-            elif selected_day == "週末 (土・日)":
-                analysis_df = analysis_df[analysis_df['target_weekday'] >= 5]
-            else:
-                day_idx = ["月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"].index(selected_day)
-                analysis_df = analysis_df[analysis_df['target_weekday'] == day_idx]
+    with col_f1:
+        if 'target_weekday' in analysis_df.columns:
+            day_options = ["すべての曜日", "平日 (月〜金)", "週末 (土・日)", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]
+            selected_day = st.selectbox("分析対象の曜日を絞り込み", day_options)
+            
+            if selected_day != "すべての曜日":
+                if selected_day == "平日 (月〜金)":
+                    analysis_df = analysis_df[analysis_df['target_weekday'] < 5]
+                elif selected_day == "週末 (土・日)":
+                    analysis_df = analysis_df[analysis_df['target_weekday'] >= 5]
+                else:
+                    day_idx = ["月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"].index(selected_day)
+                    analysis_df = analysis_df[analysis_df['target_weekday'] == day_idx]
 
     if analysis_df.empty:
         st.warning("選択された条件の分析データがありません。")
@@ -218,7 +225,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     analysis_df['target_rate'] = np.where(analysis_df['valid_play'], analysis_df['target'], np.nan)
     
     # ノイズ除去用のゲーム数フィルター
-    min_g = st.slider("集計対象の最低回転数", min_value=0, max_value=8000, value=3000, step=500, help="指定した回転数以上回っている台のみを集計します。")
+    with col_f2:
+        min_g = st.slider("集計対象の最低回転数", min_value=0, max_value=8000, value=3000, step=500, help="指定した回転数以上回っている台のみを集計します。")
     
     reg_df = analysis_df[analysis_df['累計ゲーム'] >= min_g].copy()
     
