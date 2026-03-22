@@ -114,7 +114,6 @@ def render_my_balance_page(df_raw):
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
             width="stretch",
-            width="stretch",
             hide_index=True
         )
 
@@ -134,7 +133,7 @@ def render_my_balance_page(df_raw):
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
-        width="stretch",
+            width="stretch",
             hide_index=True
         )
 
