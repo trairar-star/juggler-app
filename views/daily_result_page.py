@@ -144,6 +144,65 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         
     display_df['事後確率'] = display_df.apply(calc_post_prob, axis=1)
     
+    # --- 結果点数（設定5近似度）の計算 ---
+    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名'):
+        g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
+        act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
+        act_r = pd.to_numeric(row.get(r_col, 0), errors='coerce')
+        if pd.isna(g) or g <= 0: return 0.0
+        
+        machine = row.get(m_col, '')
+        matched_spec = backend.get_matched_spec_key(machine, specs)
+        p_b, p_r = 1/259.0, 1/255.0
+        if matched_spec and "設定5" in specs[matched_spec]:
+            s5 = specs[matched_spec]["設定5"]
+            if "BIG" in s5: p_b = 1.0 / s5["BIG"]
+            if "REG" in s5: p_r = 1.0 / s5["REG"]
+            
+        exp_b, exp_r = g * p_b, g * p_r
+        
+        sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
+        sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
+        
+        deficit_r = max(0, exp_r - act_r)
+        adjusted_deficit_r = max(0, deficit_r - (sigma_r * 0.5))
+        
+        deficit_b = max(0, exp_b - act_b)
+        adjusted_deficit_b = max(0, deficit_b - (sigma_b * 0.5))
+        
+        penalty_reg = st.session_state.get('penalty_reg', 15)
+        penalty_big = st.session_state.get('penalty_big', 5)
+        low_g_penalty = st.session_state.get('low_g_penalty', 30)
+        
+        score_r = max(0, 80 - (adjusted_deficit_r * penalty_reg))
+        score_b = max(0, 20 - (adjusted_deficit_b * penalty_big))
+        
+        total_score = score_r + score_b
+        
+        if g < 5000:
+            multiplier = 0.80 + (g / 5000.0) * 0.20
+            total_score *= multiplier
+            
+        if g < 1000:
+            total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
+            
+        if g >= 7000 and adjusted_deficit_r <= 0:
+            bonus = min(5.0, (g - 7000) / 500.0)
+            total_score = min(100.0, total_score + bonus)
+            
+        is_abandoned = False
+        tot_b_r = act_b + act_r
+        if g >= 500 and tot_b_r == 0: is_abandoned = True
+        elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
+        elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
+        
+        if is_abandoned:
+            total_score *= 0.5
+            
+        return total_score
+
+    display_df['結果点数'] = display_df.apply(calculate_score, axis=1)
+    
     if '推定ぶどう確率' in display_df.columns:
         display_df['ぶどう確率_str'] = display_df['推定ぶどう確率'].apply(lambda x: f"1/{x:.2f}" if pd.notna(x) else "-")
     else:
@@ -280,9 +339,10 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # Pandas Stylerを使って期待外れ台を赤くハイライト
     def apply_row_style(row):
-        if display_df.loc[row.name, 'is_bad_pred']: 
+        row_data = display_df.loc[row.name]
+        if row_data.get('is_bad_pred', False): 
             return ['background-color: rgba(255, 75, 75, 0.2)'] * len(available_cols)
-        elif display_df.loc[row.name, '結果点数'] >= 80:
+        elif row_data.get('結果点数', 0) >= 80:
             return ['background-color: rgba(255, 215, 0, 0.2)'] * len(available_cols)
         return [''] * len(available_cols)
         

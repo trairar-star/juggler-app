@@ -706,6 +706,39 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             )
             st.altair_chart(alt.layer(bar_hist, line_hist).resolve_scale(y='independent').properties(height=300), width="stretch")
 
+            st.markdown(f"**📝 過去のガチ予測ログベースの成績 ({selected_period})**")
+            st.caption("過去にAIが予測結果を保存した時点でのスコアと、実際の結果を照合した『本物の実戦成績』です。")
+            
+            rank_stats = prob_analysis_df.groupby('確率帯').agg(
+                台数=('台番号', 'count'),
+                高設定率=('is_high_setting', lambda x: x.mean() * 100),
+                有効稼働数=('valid_play', 'sum'),
+                勝数=('valid_win', 'sum'),
+                平均差枚=('差枚_actual', 'mean'),
+                合計差枚=('差枚_actual', 'sum')
+            ).reset_index()
+            rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['勝数'] / rank_stats['有効稼働数'] * 100, 0.0)
+            
+            rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+            rank_stats['sort'] = rank_stats['確率帯'].map(rank_order).fillna(99)
+            rank_stats = rank_stats.sort_values('sort').drop('sort', axis=1)
+            
+            rank_stats['信頼度'] = rank_stats['台数'].apply(get_confidence_indicator)
+            st.dataframe(
+                rank_stats,
+                column_config={
+                    "確率帯": st.column_config.TextColumn("期待度"),
+                    "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                    "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                    "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                    "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                    "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                    "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                },
+                width="stretch",
+                hide_index=True
+            )
+
             # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
             total_eval_count = len(prob_analysis_df)
             period_high_setting_rate = prob_analysis_df['is_high_setting'].mean()
