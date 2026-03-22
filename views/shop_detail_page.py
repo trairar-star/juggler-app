@@ -68,7 +68,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             st.warning("⚠️ **注意:** この機種はスペックが未登録のため、デフォルト値で代用して分析しています。")
         spec_data = {k: v for k, v in specs[matched_spec_key].items() if k.startswith("設定")}
         spec_df = pd.DataFrame(spec_data).T
-        st.dataframe(spec_df.style.format(formatter="1/{:.2f}"), use_container_width=True)
+        st.dataframe(spec_df.style.format(formatter="1/{:.2f}"), width="stretch")
     
     # --- AIのやめどきアドバイス ---
     score = float(row.get('prediction_score', 0))
@@ -203,7 +203,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             tooltip=['設定', alt.Tooltip('確率', format='.1%')]
         ).properties(height=250)
         
-        st.altair_chart(pie_chart, use_container_width=True)
+        st.altair_chart(pie_chart, width="stretch")
 
     # --- 過去の差枚推移グラフ ---
     st.markdown("**📉 過去7日間の差枚推移:**")
@@ -561,7 +561,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
                 "AI正答率": st.column_config.TextColumn("正答率", width="small", help="AIが高期待(70%以上)と予測した台が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
                 "AI推奨台勝率": st.column_config.TextColumn("勝率", width="small", help="AIが高期待(70%以上)と予測した台が、実際に差枚プラスで終わった割合と台数です。"),
             },
-            use_container_width=True,
             hide_index=True
         )
         st.divider()
@@ -653,7 +652,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None)
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
             "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%", width="small", help="AIが予測する設定5以上の確率"),
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 

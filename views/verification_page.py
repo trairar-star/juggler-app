@@ -397,7 +397,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 "設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
             },
             hide_index=True,
-            use_container_width=True
+            width="stretch"
         )
 
     # --- 1. 全体成績 (KPI) & 円グラフ ---
@@ -447,7 +447,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             tooltip=['Category', 'Count']
         ).properties(height=200)
         
-        st.altair_chart(pie_chart, use_container_width=True)
+        st.altair_chart(pie_chart, width="stretch")
 
     # 日別推移データをAI評価より先に計算する
     daily_stats = merged_df.groupby('対象日付').agg(
@@ -605,13 +605,13 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
             line_chart = base_chart.mark_line(point=True, color='#FFA726', strokeWidth=3).encode(
                 y=alt.Y('high_setting_rate', title='高設定率 (%)', axis=alt.Axis(format='%')), tooltip=['date_str', alt.Tooltip('high_setting_rate', format='.1%')]
             )
-            st.altair_chart(alt.layer(bar_chart, line_chart).resolve_scale(y='independent'), use_container_width=True)
+        st.altair_chart(alt.layer(bar_chart, line_chart).resolve_scale(y='independent'), width="stretch")
         with tab_s5:
             base_chart_s5 = alt.Chart(daily_stats).encode(x=alt.X('date_str', title='予測対象日', sort=None))
             line_s5 = base_chart_s5.mark_line(point=True, color='#AB47BC', strokeWidth=3).encode(
                 y=alt.Y('avg_s5_score', title='設定5近似度 (平均点)', scale=alt.Scale(domain=[0, 100])), tooltip=['date_str', alt.Tooltip('avg_s5_score', format='.1f', title='設定5近似度'), 'count']
             )
-            st.altair_chart(line_s5, use_container_width=True)
+            st.altair_chart(line_s5, width="stretch")
             st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。(予測対象日ベース)")
             
         with tab_ver:
@@ -695,7 +695,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                 y=alt.Y('high_setting_rate:Q', title='実際の高設定率', axis=alt.Axis(format='%')),
                 tooltip=[alt.Tooltip('score_bin_left:Q', format='.0%', title='スコア帯(下限)'), alt.Tooltip('high_setting_rate:Q', format='.1%', title='実際の高設定率')]
             )
-            st.altair_chart(alt.layer(bar_hist, line_hist).resolve_scale(y='independent').properties(height=300), use_container_width=True)
+            st.altair_chart(alt.layer(bar_hist, line_hist).resolve_scale(y='independent').properties(height=300), width="stretch")
 
             # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
             total_eval_count = len(prob_analysis_df)
@@ -955,7 +955,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                         "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                         "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                     },
-                    use_container_width=True,
+                        width="stretch",
                     hide_index=True
                 )
             else:
@@ -988,7 +988,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                     "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                     "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                 },
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
         
@@ -1087,7 +1087,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
                     "全体平均": st.column_config.NumberColumn(format="%.1f"),
                 },
                 hide_index=True,
-                use_container_width=True
+            width="stretch"
             )
 
     # --- 5. 大外れ（ワースト予測）の分析 ---
@@ -1147,6 +1147,6 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.dataframe(
         history_display_df[cols],
         column_config=config_dict,
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )

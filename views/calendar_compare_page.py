@@ -36,7 +36,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                     "高期待台数": st.column_config.NumberColumn("推奨台(70%超)", format="%d台"),
                     "全台数": st.column_config.NumberColumn("集計台数", format="%d台")
                 },
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
     else:
@@ -109,6 +109,6 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     
     st.dataframe(
         styled_pivot,
-        use_container_width=True,
+        width="stretch",
         height=400
     )

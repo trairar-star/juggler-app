@@ -281,6 +281,6 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "ぶどう確率_str": st.column_config.TextColumn("🍇確率", width="small", help="差枚数から逆算した推定ぶどう確率 (ステータスOKの台のみ)"),
             "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )

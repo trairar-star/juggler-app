@@ -45,7 +45,7 @@ def render_island_master_page(df_raw):
             
         df_island['対象台番号'] = df_island.apply(get_display_rule, axis=1)
         df_island['uid_label'] = df_island['店名'].astype(str) + " | " + df_island['島名'].astype(str) + " (" + df_island['対象台番号'].astype(str) + ")"
-        st.dataframe(df_island[['店名', '島名', '対象台番号']], use_container_width=True, hide_index=True)
+        st.dataframe(df_island[['店名', '島名', '対象台番号']], width="stretch", hide_index=True)
         
         with st.form("delete_island_form"):
             target = st.selectbox("削除する島を選択", df_island['登録日時'].unique(), format_func=lambda x: df_island[df_island['登録日時']==x].iloc[0]['uid_label'])

@@ -49,7 +49,7 @@ def render_event_management_page(df_raw):
             "イベント名": st.column_config.TextColumn("イベント"),
             "イベントランク": st.column_config.TextColumn("ランク"),
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
     

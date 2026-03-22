@@ -295,7 +295,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                             "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
                         },
                         hide_index=True,
-                        use_container_width=True
+                        width="stretch"
                     )
 
                 st.divider()

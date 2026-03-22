@@ -113,7 +113,8 @@ def render_my_balance_page(df_raw):
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
-            use_container_width=True,
+            width="stretch",
+            width="stretch",
             hide_index=True
         )
 
@@ -133,7 +134,7 @@ def render_my_balance_page(df_raw):
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
-            use_container_width=True,
+        width="stretch",
             hide_index=True
         )
 
@@ -162,7 +163,7 @@ def render_my_balance_page(df_raw):
             color=alt.condition(alt.datum.総収支 > 0, alt.value("#ef5350"), alt.value("#42a5f5")),
             tooltip=['曜日', alt.Tooltip('総収支', format='+d'), alt.Tooltip('勝率', format='.1%')]
         ).interactive()
-        st.altair_chart(weekday_chart, use_container_width=True)
+        st.altair_chart(weekday_chart, width="stretch")
         
     with col_w2:
         st.dataframe(
@@ -173,7 +174,7 @@ def render_my_balance_page(df_raw):
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -196,7 +197,7 @@ def render_my_balance_page(df_raw):
         tooltip=['日付', '累積収支']
     )
     
-    st.altair_chart(alt.layer(bar, line).resolve_scale(y='independent'), use_container_width=True)
+    st.altair_chart(alt.layer(bar, line).resolve_scale(y='independent'), width="stretch")
 
     # テーブル表示
     st.subheader("📝 稼働履歴一覧")
@@ -208,7 +209,7 @@ def render_my_balance_page(df_raw):
             "回収": st.column_config.NumberColumn("回収", format="%d 円"),
             "収支": st.column_config.NumberColumn("収支", format="%+d 円"),
         },
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
