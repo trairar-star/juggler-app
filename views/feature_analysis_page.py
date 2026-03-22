@@ -300,7 +300,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             chart_d = alt.Chart(d_stats).mark_bar(color='#FFA726').encode(
                 x=alt.X('差枚区間', title='前日の結果', sort=None),
-                y=alt.Y('target', title='翌日高設定率', axis=alt.Axis(format='%'))
+                y=alt.Y('target_rate', title='翌日高設定率', axis=alt.Axis(format='%'))
             )
             st.altair_chart(chart_d, width="stretch")
 
