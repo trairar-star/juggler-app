@@ -409,7 +409,7 @@ def save_prediction_log(df):
             except Exception:
                 worksheet.update(final_data)
                 
-        st.success(f"予測結果（各店舗Top10）を '{log_sheet_name}' シートに保存（上書き）しました！")
+        st.success(f"予測結果（各店舗上位10%）を '{log_sheet_name}' シートに保存（上書き）しました！")
         return True
     except Exception as e: 
         st.error(f"保存エラー: {e}")
@@ -966,7 +966,7 @@ def _generate_features(df, df_events, df_island, target_date):
         df['イベント名'] = df['イベント名'].fillna('通常')
         df['event_code'] = df['イベント名'].astype('category').cat.codes
         if 'イベントランク' in df.columns:
-            rank_map = {'S': 5, 'A': 4, 'B': 3, 'C': 2}
+            rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
             df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
 
     # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更

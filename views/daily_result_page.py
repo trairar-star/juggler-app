@@ -284,6 +284,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     # 並び替え
     sort_options = ["AI期待度順", "差枚が多い順", "合算確率が良い順", "REG確率が良い順", "台番号順"]
     sort_by = st.radio("並び替え", sort_options, horizontal=True)
+    display_mode = st.radio("表示件数", ["厳選台 (上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True, index=3)
     
     if sort_by == "差枚が多い順":
         display_df = display_df.sort_values('差枚', ascending=False)
@@ -341,6 +342,15 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
                 win_rate_str = "- (0/0台)"
                 
             st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%**\n\n{target_label} **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
+
+    # --- 表示件数の絞り込み ---
+    if display_mode == "厳選台 (上位10%)":
+        limit = max(3, int(len(display_df) * 0.10))
+        display_df = display_df.head(limit)
+    elif display_mode == "Top 10":
+        display_df = display_df.head(10)
+    elif display_mode == "Top 20":
+        display_df = display_df.head(20)
 
     cols = ['AI順位', '台番号', '機種名']
     if '期待度' in display_df.columns: cols.append('期待度')

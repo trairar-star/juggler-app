@@ -16,7 +16,7 @@ def render_event_management_page(df_raw):
                 reg_shop = st.selectbox("店舗", unique_shops)
                 reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
                 reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
-                reg_rank = st.selectbox("イベントの強さ (期待度)", ["S", "A", "B", "C"], index=1, help="S:激アツ, A:強い, B:普通, C:弱め")
+                reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・年イチ, S:激アツ, A:強い, B:普通, C:弱め")
                 submitted = st.form_submit_button("イベントを登録")
                 
                 if submitted:
@@ -71,7 +71,7 @@ def render_event_management_page(df_raw):
                 edit_date = st.date_input("イベント日付", value=default_date, key="edit_date")
             with e_col2:
                 edit_name = st.text_input("イベント名", value=target_row['イベント名'])
-                rank_options = ["S", "A", "B", "C"]
+                rank_options = ["SS (周年)", "S", "A", "B", "C"]
                 current_rank = target_row.get('イベントランク', 'A')
                 idx = rank_options.index(current_rank) if current_rank in rank_options else 1
                 edit_rank = st.selectbox("イベントの強さ", rank_options, index=idx)

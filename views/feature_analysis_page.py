@@ -336,8 +336,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             ).reset_index()
             event_stats['信頼度'] = event_stats['サンプル数'].apply(get_confidence_indicator)
             
-            # 並び替え順の指定 (S -> A -> B -> C -> 通常日)
-            rank_order = {'S': 1, 'A': 2, 'B': 3, 'C': 4, '通常日': 5}
+            # 並び替え順の指定
+            rank_order = {'SS (周年)': 0, 'S': 1, 'A': 2, 'B': 3, 'C': 4, '通常日': 5}
             event_stats['sort'] = event_stats['イベントランク'].map(rank_order).fillna(99)
             event_stats = event_stats.sort_values('sort').drop(columns=['sort'])
             
