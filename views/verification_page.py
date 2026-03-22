@@ -8,8 +8,23 @@ import backend
 from utils import get_confidence_indicator
 
 def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
-    st.header("✅ 精度検証 (各店舗AI設定)")
-    st.caption("あなたが保存した過去の「予測結果ログ」と、実際の結果データを照合して、当時のAIの精度を検証します。")
+    st.header("📊 予測の実績検証・AI設定")
+    st.caption("過去の予測ログと実際の結果を照合し、同じジャンルの「日別ランキング比較」「通算成績の分析」「AIの設定チューニング」を一括で行えます。")
+
+    tab_rank, tab_stats, tab_setting = st.tabs([
+        "🏆 日別ランキング比較", 
+        "📊 AI通算成績・弱点分析", 
+        "⚙️ AIモデル設定・チューニング"
+    ])
+
+    with tab_rank:
+        from views import ranking_comparison_page
+        ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw)
+
+    with tab_stats:
+        _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting)
+
+def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting):
 
     selected_version = 'すべて'
 
