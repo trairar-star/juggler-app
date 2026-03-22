@@ -198,7 +198,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                 pred_df_day = merged_df[(merged_df['対象日付'].dt.date == selected_date) & (merged_df[shop_col] == compare_shop)].copy()
                 if selected_machine != 'すべての機種':
                     pred_df_day = pred_df_day[pred_df_day['機種名'] == selected_machine]
-                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False)
+                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False).head(10)
                 
                 # 実際のランキング のデータ準備
                 target_ts = pd.Timestamp(selected_date)

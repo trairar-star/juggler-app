@@ -178,6 +178,11 @@ def main():
         st.cache_data.clear()
         st.rerun()
 
+    if st.sidebar.button("⚠️ 全データ強制再読み込み (時間かかります)"):
+        backend.clear_local_cache()
+        st.cache_data.clear()
+        st.rerun()
+
     # --- 店舗別AIパラメータの初期化 ---
     if "shop_hyperparams" not in st.session_state:
         st.session_state["shop_hyperparams"] = backend.load_shop_ai_settings()
@@ -258,7 +263,7 @@ def main():
         elif page == "🗺️ 店舗間ヒートマップ":
             calendar_compare_page.render_calendar_compare_page(df_raw, df, predict_target_date)
         elif page == "AI傾向分析 (勝利の法則)":
-            feature_analysis_page.render_feature_analysis_page(df_verify, df_importance, df_events)
+            feature_analysis_page.render_feature_analysis_page(df_verify, df_importance, df_events, df_raw, shop_col)
         elif page == "島マスター管理":
             island_master_page.render_island_master_page(df_raw)
         elif page == "イベント管理":

@@ -96,6 +96,16 @@ def get_matched_spec_key(machine_name, specs):
 # ---------------------------------------------------------
 # データ読み込み・保存関数 (Model / Logic)
 # ---------------------------------------------------------
+def clear_local_cache():
+    """ローカルの履歴キャッシュファイルを削除して全件読み直しを強制する"""
+    if os.path.exists(HISTORY_CACHE_FILE):
+        try:
+            os.remove(HISTORY_CACHE_FILE)
+            return True
+        except Exception:
+            return False
+    return True
+
 @st.cache_resource(ttl=3300)
 def _get_gspread_client():
     """認証クライアントを取得する共通関数"""
@@ -362,24 +372,25 @@ def save_prediction_log(df):
                 save_df[c] = ''
         save_df = save_df[STANDARD_HEADER].fillna('')
             
+        # --- 今回保存する「対象日」と「店舗」の既存データをあらかじめ削除する ---
+        if not df_existing.empty:
+            save_dates = save_df['予測対象日'].astype(str).unique()
+            shop_col_name = '店名' if '店名' in df_existing.columns else ('店舗名' if '店舗名' in df_existing.columns else None)
+            
+            if shop_col_name:
+                save_shops = save_df[shop_col_name].astype(str).unique()
+                mask = df_existing['予測対象日'].astype(str).isin(save_dates) & df_existing[shop_col_name].astype(str).isin(save_shops)
+                df_existing = df_existing[~mask]
+            else:
+                mask = df_existing['予測対象日'].astype(str).isin(save_dates)
+                df_existing = df_existing[~mask]
+
         # 新旧データを結合
         df_combined = pd.concat([df_existing, save_df], ignore_index=True)
         
-        # 重複判定用のキーを文字列で統一（フォーマット揺れによる重複を防止）
-        df_combined['tmp_date'] = df_combined['予測対象日'].astype(str)
-        shop_col_name = '店名' if '店名' in df_combined.columns else ('店舗名' if '店舗名' in df_combined.columns else None)
-        if shop_col_name:
-            df_combined['tmp_shop'] = df_combined[shop_col_name].astype(str)
-        df_combined['tmp_mac'] = df_combined['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-        
-        subset_cols = ['tmp_date', 'tmp_shop', 'tmp_mac'] if shop_col_name else ['tmp_date', 'tmp_mac']
-        
-        # 完全に一致するキーを持つ古いデータを削除し、一番下（最新）を残す
-        df_combined = df_combined.drop_duplicates(subset=subset_cols, keep='last')
-        
         # 保存用に台番号のフォーマットを綺麗に統一する
         if '台番号' in df_combined.columns:
-            df_combined['台番号'] = df_combined['tmp_mac']
+            df_combined['台番号'] = df_combined['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
             
         # 一時カラムを除外し、順番を固定してリスト化
         df_combined = df_combined[STANDARD_HEADER].fillna('')
