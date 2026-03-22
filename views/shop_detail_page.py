@@ -502,6 +502,137 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     html_str += "</ul></div>"
                     st.markdown(html_str, unsafe_allow_html=True)
 
+        # --- 💬 AI本日の立ち回りアドバイス (店舗個別) ---
+        if selected_shop != '全て' and not df.empty:
+            st.markdown("### 💬 AI本日の立ち回りアドバイス")
+            advice_list = []
+            
+            # 予測対象日の取得
+            pred_date = pd.NaT
+            if 'next_date' in df.columns:
+                pred_date = df['next_date'].dropna().max()
+            elif '対象日付' in df.columns:
+                pred_date = df['対象日付'].dropna().max() + pd.Timedelta(days=1)
+                
+            # --- 1. 基本設定配分 (ベース高設定率) ---
+            if base_win_rate > 0:
+                ratio = max(1, int(1 / base_win_rate))
+                advice_list.append(f"📊 **基本の設定配分**: この店舗の通常営業時の高設定(設定5基準)の投入率は約 **{base_win_rate*100:.1f}%**（およそ **{ratio}台に1台** の割合）です。")
+
+            # --- 2. 特定日・曜日の傾向 ---
+            if pd.notna(pred_date) and not df_raw_shop.empty and '対象日付' in df_raw_shop.columns:
+                target_wd = pred_date.dayofweek
+                target_digit = pred_date.day % 10
+                wd_str = ['月', '火', '水', '木', '金', '土', '日'][target_wd]
+                
+                # 特定日（日付末尾）の傾向
+                digit_df = df_raw_shop[df_raw_shop['対象日付'].dt.day % 10 == target_digit]
+                if not digit_df.empty:
+                    digit_avg_diff = digit_df['差枚'].mean()
+                    if digit_avg_diff > 50:
+                        advice_list.append(f"🔢 **特定日の傾向 ({target_digit}のつく日)**: 本日は **{target_digit}のつく日** です。過去の同日は店舗平均 **+{int(digit_avg_diff)}枚** と甘く使われており、勝率が高まるチャンス日です！")
+                    elif digit_avg_diff < -50:
+                        advice_list.append(f"🔢 **特定日の傾向 ({target_digit}のつく日)**: 本日は **{target_digit}のつく日** ですが、過去の傾向では店舗平均 **{int(digit_avg_diff)}枚** と厳しめです。イベント等が重なっていない場合は慎重な立ち回りを推奨します。")
+
+                # 曜日の傾向
+                wd_df = df_raw_shop[df_raw_shop['対象日付'].dt.dayofweek == target_wd]
+                if not wd_df.empty:
+                    wd_avg_diff = wd_df['差枚'].mean()
+                    if wd_avg_diff > 50:
+                        advice_list.append(f"📅 **曜日の傾向 ({wd_str}曜)**: この店舗は **{wd_str}曜日** に出玉を出してくる傾向があります (過去平均 **+{int(wd_avg_diff)}枚**)。曜日別の狙い目として有効です。")
+                    elif wd_avg_diff < -50:
+                        advice_list.append(f"📅 **曜日の傾向 ({wd_str}曜)**: 過去のデータ上、**{wd_str}曜日** は回収傾向が強いです (過去平均 **{int(wd_avg_diff)}枚**)。")
+
+            # --- 3. 客層レベルと後ヅモ難易度 ---
+            if not df_raw_shop.empty and '累計ゲーム' in df_raw_shop.columns:
+                avg_kado = df_raw_shop['累計ゲーム'].mean()
+                if avg_kado >= 5000:
+                    advice_list.append(f"👥 **客層レベル(後ヅモ)**: 平均稼働が **{int(avg_kado)}G** と高く、客層のレベルが非常に高い（または専業が多い）店舗です。優秀台は空きにくいため、朝イチの台選びが勝敗を分けます。")
+                elif avg_kado <= 3500:
+                    advice_list.append(f"👥 **客層レベル(後ヅモ)**: 平均稼働が **{int(avg_kado)}G** と低めです。ライトユーザーが多く見切りが早いため、夕方以降からでも履歴打ち（後ヅモ）できるチャンスが十分にあります。")
+
+            # --- 4. 還元/回収モード判定 ---
+            shop_7d_diff = df['shop_7days_avg_diff'].mean() if 'shop_7days_avg_diff' in df.columns else 0
+            if shop_7d_diff > 100:
+                advice_list.append(f"📈 **還元モード濃厚**: 直近1週間の店舗全体がプラス推移 (平均 **+{int(shop_7d_diff)}枚**) しており、ベース設定が高めです。積極的に攻める価値があります。")
+            elif shop_7d_diff < -100:
+                advice_list.append(f"📉 **回収モード警戒**: 直近1週間の店舗全体がマイナス推移 (平均 **{int(shop_7d_diff)}枚**) しており、設定状況は厳しめです。強い根拠がない台は早めの見切りを推奨します。")
+                
+            # イベント状況
+            if 'イベント名' in df.columns:
+                event_names = df['イベント名'].dropna().unique()
+                event_names = [e for e in event_names if e != '通常' and str(e).strip() != '']
+                if event_names:
+                    ev_str = "、".join(event_names)
+                    advice_list.append(f"🎉 **イベント対象日**: 本日は「**{ev_str}**」が予定されています。対象機種や過去の同イベントの傾向に注目してください。")
+
+            # 店癖に基づく立ち回り
+            if top_trends_df is not None and not top_trends_df.empty:
+                hot_conditions = top_trends_df['条件'].tolist()
+                cond_str = "、".join(hot_conditions)
+                advice_list.append(f"🎯 **有効な店癖**: この店舗では『**{cond_str}**』が高設定になる傾向が強いです。台選びの際はこれらを最優先で意識してください。")
+                
+                if any("末尾" in c for c in hot_conditions):
+                    advice_list.append("🔢 **末尾の意識**: 特定の末尾に設定を寄せる傾向があります。自分の台だけでなく、同じ末尾の別機種の挙動も常にチェックして「当たり末尾」を早期に察知しましょう。")
+                if any("据え" in c or "勝ち" in c for c in hot_conditions):
+                    advice_list.append("🔁 **据え置き狙い**: 前日出ている台をそのまま据え置く（または高設定を連日投入する）クセがあります。前日の優秀台は朝イチの有力候補です。")
+                if any("負け" in c or "凹み" in c for c in hot_conditions):
+                    advice_list.append("⤴️ **上げリセット狙い**: 前日や数日間大きく凹んでいる台に対して「お詫び（設定上げ）」をしてくる傾向があります。不発台のガックンや朝イチ挙動に注目です。")
+                if any("角" in c for c in hot_conditions):
+                    advice_list.append("🪑 **角台優遇**: 角台（または角周辺）を強くする傾向があります。迷ったら角寄りの台を選ぶのがベターです。")
+
+            # 並び・島に関するアドバイス (特徴量重要度から)
+            if df_importance is not None and not df_importance.empty:
+                imp_shop = df_importance[df_importance['shop_name'] == selected_shop]
+                if not imp_shop.empty:
+                    top_features = imp_shop.sort_values('importance', ascending=False).head(8)['feature'].tolist()
+                    if 'neighbor_avg_diff' in top_features:
+                        advice_list.append("🤝 **並び・塊に注意**: AIの分析上、この店は「両隣の差枚（並び）」が設定予測に強く影響しています。自分の台が良くても両隣が死んでいればフェイクの可能性があり、逆に両隣が強ければ「3台並び」などの対象になっている可能性があります。")
+                    if 'island_avg_diff' in top_features:
+                        advice_list.append("🏝️ **全台系・列に注意**: 「島（列）全体の差枚」の重要度が高いため、列単位での全台系や半ヅキなどをやってくる可能性があります。周囲の活気をよく観察してください。")
+
+            # 警戒パターン
+            if worst_trends_df is not None and not worst_trends_df.empty:
+                cold_conditions = worst_trends_df['条件'].tolist()
+                cold_str = "、".join(cold_conditions)
+                advice_list.append(f"⚠️ **警戒パターン**: 逆に『**{cold_str}**』の条件に当てはまる台は回収（低設定）の危険性が高いため、手を出さないのが無難です。")
+
+            # 機種別のアドバイス
+            if '機種名' in df.columns:
+                mac_advices = []
+                # 1. 過去30日間で甘く使われている機種
+                if 'machine_30days_avg_diff' in df.columns:
+                    mac_stats = df.groupby('機種名').agg(
+                        avg_diff=('machine_30days_avg_diff', 'mean'),
+                        count=('台番号', 'count')
+                    ).reset_index()
+                    mac_stats = mac_stats[mac_stats['count'] >= 3] # サンプル不足（バラエティ等）を除外
+                    if not mac_stats.empty:
+                        best_mac_hist = mac_stats.loc[mac_stats['avg_diff'].idxmax()]
+                        worst_mac_hist = mac_stats.loc[mac_stats['avg_diff'].idxmin()]
+                        
+                        if best_mac_hist['avg_diff'] > 150:
+                            mac_advices.append(f"『**{best_mac_hist['機種名']}**』(過去30日平均 **+{int(best_mac_hist['avg_diff'])}枚**)")
+                        if worst_mac_hist['avg_diff'] < -150:
+                            advice_list.append(f"🧊 **冷遇機種に警戒**: 過去30日間のデータから、この店舗では『**{worst_mac_hist['機種名']}**』がかなり辛く使われています (平均 **{int(worst_mac_hist['avg_diff'])}枚**)。この機種を打つ際は特に慎重に立ち回ってください。")
+                
+                # 2. 明日AIが特に熱いと見ている機種
+                if 'prediction_score' in df.columns:
+                    mac_pred_stats = df.groupby('機種名').agg(avg_score=('prediction_score', 'mean'), count=('台番号', 'count')).reset_index()
+                    mac_pred_stats = mac_pred_stats[mac_pred_stats['count'] >= 3]
+                    if not mac_pred_stats.empty:
+                        best_mac_pred = mac_pred_stats.loc[mac_pred_stats['avg_score'].idxmax()]
+                        if best_mac_pred['avg_score'] >= 0.50 and not any(best_mac_pred['機種名'] in adv for adv in mac_advices):
+                            mac_advices.append(f"『**{best_mac_pred['機種名']}**』(明日のAI平均期待度 **{int(best_mac_pred['avg_score']*100)}%**)")
+                                
+                if mac_advices:
+                    adv_str = " または ".join(mac_advices)
+                    advice_list.append(f"🎰 **おすすめの狙い目機種**: 現在のデータとAIの予測から、**{adv_str}** に設定が入りやすい（ベースが高い）と推測されます。機種選びに迷ったらこのあたりから攻めるのがオススメです。")
+
+            # 表示
+            st.info("\n\n".join([f"- {adv}" for adv in advice_list]))
+            st.divider()
+
         # --- 店舗別 期待度ランキング (追加) ---
         if selected_shop == '全て' and shop_col in df.columns:
             with st.expander("🏬 店舗別 期待度ランキング", expanded=True):
