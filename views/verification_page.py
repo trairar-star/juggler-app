@@ -446,6 +446,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     avg_diff = ai_recom_df['差枚_actual'].mean()
     total_diff = ai_recom_df['差枚_actual'].sum()
     
+    if pd.isna(avg_diff): avg_diff = 0
+    if pd.isna(total_diff): total_diff = 0
+    
     col_kpi, col_pie = st.columns([2, 1])
     
     with col_kpi:
@@ -493,10 +496,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     st.caption("最新の予測結果（設定5近似度）を過去の平均的なパフォーマンスと比較し、AIが自身の成長や調子を分析します。")
     
     avg_s5_score = ai_recom_df['設定5近似度'].mean() if not ai_recom_df.empty else 0
+    if pd.isna(avg_s5_score): avg_s5_score = 0
     
     avg_g = ai_recom_df['結果_累計ゲーム'].mean()
     avg_diff_r = ai_recom_df['REG不足分'].mean()
     avg_diff_b = ai_recom_df['BIG不足分'].mean()
+    
+    if pd.isna(avg_diff_r): avg_diff_r = 0
+    if pd.isna(avg_diff_b): avg_diff_b = 0
     
     # データ不足の考慮 (検証台数不足 or 学習データ不足)
     low_rel_count = (ai_recom_df['予測信頼度'] == '🔻低').sum() if '予測信頼度' in ai_recom_df.columns else 0

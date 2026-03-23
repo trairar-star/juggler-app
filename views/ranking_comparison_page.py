@@ -258,6 +258,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                     
                     # 全体の平均期待度
                     avg_pred_score = valid_pred_df['prediction_score'].mean()
+                    if pd.isna(avg_pred_score): avg_pred_score = 0
                             
                     st.info(f"👑 **{shop_machine_label}AI推奨台(上位10%)の通算実績 ({selected_period})**\n\n"
                             f"📅 **評価日数**: {total_eval_days} 日\n"
