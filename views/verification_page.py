@@ -11,6 +11,32 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.header("📊 予測の実績検証・AI設定")
     st.caption("過去の予測ログと実際の結果を照合し、同じジャンルの「日別ランキング比較」「通算成績の分析」「AIの設定チューニング」を一括で行えます。")
 
+    shop_col = '店名' if '店名' in df_verify.columns else ('店舗名' if '店舗名' in df_verify.columns else '店名')
+    
+    # 共通の店舗フィルターをページ上部に配置
+    shops = []
+    if not df_verify.empty and shop_col in df_verify.columns:
+        shops.extend(df_verify[shop_col].dropna().unique().tolist())
+    if not df_pred_log.empty:
+        shop_col_pred = '店名' if '店名' in df_pred_log.columns else '店舗名'
+        if shop_col_pred in df_pred_log.columns:
+            shops.extend(df_pred_log[shop_col_pred].dropna().unique().tolist())
+            
+    shops = ["店舗を選択してください"] + sorted(list(set(shops)))
+    default_index = 0
+    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
+    if saved_shop in shops:
+        default_index = shops.index(saved_shop)
+        
+    selected_shop = st.selectbox("🏬 分析対象の店舗を選択", shops, index=default_index, key="common_verification_shop")
+    
+    if selected_shop != "店舗を選択してください":
+        st.session_state["global_selected_shop"] = selected_shop
+
+    if selected_shop == "店舗を選択してください":
+        st.info("👆 上記のメニューから分析対象の店舗を選択してください。")
+        return
+
     tab_rank, tab_stats, tab_setting = st.tabs([
         "🏆 日別ランキング比較", 
         "📊 AI通算成績・弱点分析", 
@@ -19,12 +45,12 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
 
     with tab_rank:
         from views import ranking_comparison_page
-        ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw)
+        ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, selected_shop)
 
     with tab_stats:
-        _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting)
+        _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting, selected_shop)
 
-def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting):
+def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting, selected_shop):
 
     selected_version = 'すべて'
 
@@ -358,26 +384,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.warning(f"検証対象となるデータがありません。（指定G数以上の台、または明らかな見切り台が存在しません）")
             return
 
-    # --- 店舗フィルター ---
     st.divider() # タブ外のデータ準備からUIに戻る区切り
     if shop_col not in base_df.columns:
         st.warning("店舗データがありません。")
-        return
-
-    shops = ["店舗を選択してください"] + sorted(list(base_df[shop_col].unique()))
-    
-    default_index = 0
-    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
-    if saved_shop in shops:
-        default_index = shops.index(saved_shop)
-        
-    selected_shop = st.selectbox("分析対象の店舗を選択", shops, index=default_index, key="verification_shop")
-    
-    if selected_shop != "店舗を選択してください":
-        st.session_state["global_selected_shop"] = selected_shop
-
-    if selected_shop == "店舗を選択してください":
-        st.info("👆 上記のメニューから分析対象の店舗を選択してください。")
         return
 
     merged_df = base_df[base_df[shop_col] == selected_shop].copy()
@@ -399,8 +408,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
     merged_df['valid_high'] = merged_df['valid_play'] & (merged_df['is_high_setting'] == 1)
 
-    # レポートやKPI用に「AIが推奨した台（期待度70%以上）」のみを抽出
-    ai_recom_df = merged_df[merged_df['prediction_score'] >= 0.70].copy()
+    # 保存されている予測ログ（各店舗の上位10%）をすべて評価対象とする
+    ai_recom_df = merged_df.copy()
 
     if merged_df.empty:
         st.info("選択された店舗の分析データがありません。")
