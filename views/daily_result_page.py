@@ -119,11 +119,18 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
         sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
         
+        # 学習基準(3000G)に合わせて、G数が増えるほど「確率のブレ(σ)による免除」を減らす
+        sigma_multiplier = 0.5
+        if g >= 5000:
+            sigma_multiplier = 0.0
+        elif g >= 3000:
+            sigma_multiplier = 0.25
+            
         deficit_r = max(0, exp_r - act_r)
-        adjusted_deficit_r = max(0, deficit_r - (sigma_r * 0.5))
+        adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
         
         deficit_b = max(0, exp_b - act_b)
-        adjusted_deficit_b = max(0, deficit_b - (sigma_b * 0.5))
+        adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
         
         penalty_reg = st.session_state.get('penalty_reg', 15)
         penalty_big = st.session_state.get('penalty_big', 5)
@@ -160,15 +167,16 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         if is_abandoned:
             total_score *= 0.5
             
-        # 確率ベースの強制減点 (G数が少ない場合の「0.5σ保護」が過剰に効いてしまうのを防ぐ)
-        reg_prob_den = g / act_r if act_r > 0 else 9999
-        tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
-        
-        if reg_prob_den > 400: total_score -= 30
-        elif reg_prob_den > 300: total_score -= 15
+        # 一定のゲーム数(2000G以上)回っていて確率が悪い場合は、言い訳無用で重く減点する
+        if g >= 2000:
+            reg_prob_den = g / act_r if act_r > 0 else 9999
+            tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
             
-        if tot_prob_den > 180: total_score -= 30
-        elif tot_prob_den > 150: total_score -= 15
+            if reg_prob_den > 400: total_score -= 30
+            elif reg_prob_den > 300: total_score -= 15
+                
+            if tot_prob_den > 180: total_score -= 30
+            elif tot_prob_den > 150: total_score -= 15
             
         return max(0.0, total_score)
 

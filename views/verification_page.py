@@ -53,6 +53,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         penalty_big = st.slider("BIG 1回不足ごとの減点", 0, 50, st.session_state.get('penalty_big', 5), 1, key="penalty_big")
         low_g_penalty = st.slider("低稼働(1000G未満)の最大減点率(%)", 0, 100, st.session_state.get('low_g_penalty', 30), 5, key="low_g_penalty")
         min_g_filter = st.slider("検証から除外する最低ゲーム数", 0, 3000, st.session_state.get('min_g_filter', 0), 100, key="min_g_filter", help="客層に合わせて、指定したG数未満しか回されなかった台を採点対象から除外します。※ただし、確率的に高設定が極めて薄い（500Gノーボナ等）と判断できる「明らかな見切り台」はハズレとして減点対象に残ります。")
+        use_strict_scoring = st.checkbox("🔥 厳格な採点ルールを適用（新ロジック）", value=True, help="ONにすると「3000G以上での確率ブレ免除の半減・廃止」や「2000G以上での悪確率に対する強制減点」が適用されます。OFFにすると従来の採点ロジックに戻ります。新旧の点数変動を見比べる際に活用してください。")
 
     if df_pred_log.empty:
         st.warning("保存された予測結果ログがありません。日々の予測結果は、ログイン時に自動で保存されます。")
@@ -261,11 +262,22 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
         sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
         
+        if use_strict_scoring:
+            # 学習基準(3000G)に合わせて、G数が増えるほど「確率のブレ(σ)による免除」を減らす
+            sigma_multiplier = 0.5
+            if g >= 5000:
+                sigma_multiplier = 0.0  # 5000G以上は言い訳無用
+            elif g >= 3000:
+                sigma_multiplier = 0.25 # 3000G以上は免除を半減
+        else:
+            # 従来通り一律0.5σ免除
+            sigma_multiplier = 0.5
+            
         deficit_r = max(0, exp_r - act_r)
-        adjusted_deficit_r = max(0, deficit_r - (sigma_r * 0.5)) # 0.5σ分の下振れは許容
+        adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
         
         deficit_b = max(0, exp_b - act_b)
-        adjusted_deficit_b = max(0, deficit_b - (sigma_b * 0.5)) # 0.5σ分の下振れは許容
+        adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
         
         score_r = max(0, 80 - (adjusted_deficit_r * penalty_reg))
         score_b = max(0, 20 - (adjusted_deficit_b * penalty_big))
@@ -299,7 +311,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if is_abandoned:
             total_score *= 0.5 # 高設定の可能性が著しく低いため点数半減
             
-        return pd.Series([total_score, exp_b, exp_r, diff_b, diff_r])
+        # --- 確率ベースの強制減点 ---
+        if use_strict_scoring:
+            # 一定のゲーム数(2000G以上)回っていて確率が悪い場合は、重く減点する
+            if g >= 2000:
+                reg_prob_den = g / act_r if act_r > 0 else 9999
+                tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
+                
+                if reg_prob_den > 400: total_score -= 30
+                elif reg_prob_den > 300: total_score -= 15
+                    
+                if tot_prob_den > 180: total_score -= 30
+                elif tot_prob_den > 150: total_score -= 15
+            
+        return pd.Series([max(0.0, total_score), exp_b, exp_r, diff_b, diff_r])
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
     base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分']] = eval_df
