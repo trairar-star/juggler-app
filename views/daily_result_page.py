@@ -98,6 +98,13 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     
     
     # --- 結果点数（設定5近似度）の計算 ---
+    shop_avg_g = display_df['総回転'].mean() if not display_df.empty else 4000
+    base_g = max(2500, min(5000, shop_avg_g))
+    sigma_half_g = base_g
+    sigma_zero_g = base_g * 1.5
+    discount_target_g = base_g
+    penalty_g = base_g * 0.75
+
     specs = backend.get_machine_specs()
     def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名', diff_col='差枚'):
         g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
@@ -119,11 +126,11 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
         sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
         
-        # 学習基準(3000G)に合わせて、G数が増えるほど「確率のブレ(σ)による免除」を減らす
+        # 店舗の平均G数に合わせて、G数が増えるほど「確率のブレ(σ)による免除」を減らす
         sigma_multiplier = 0.5
-        if g >= 5000:
+        if g >= sigma_zero_g:
             sigma_multiplier = 0.0
-        elif g >= 3000:
+        elif g >= sigma_half_g:
             sigma_multiplier = 0.25
             
         deficit_r = max(0, exp_r - act_r)
@@ -141,8 +148,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         
         total_score = score_r + score_b
         
-        if g < 5000:
-            multiplier = 0.80 + (g / 5000.0) * 0.20
+        if g < discount_target_g:
+            multiplier = 0.90 + (g / float(discount_target_g)) * 0.10
             total_score *= multiplier
             
         if g < 1000:
@@ -163,8 +170,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         if is_abandoned:
             total_score *= 0.5
             
-        # 一定のゲーム数(2000G以上)回っていて確率が悪い場合は、言い訳無用で重く減点する
-        if g >= 2000:
+        # 一定のゲーム数(店舗平均の75%以上)回っていて確率が悪い場合は、言い訳無用で重く減点する
+        if g >= penalty_g:
             reg_prob_den = g / act_r if act_r > 0 else 9999
             tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
             

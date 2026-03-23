@@ -879,7 +879,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'is_new_machine': '台: 新台/配置変更(導入7日以内)',
                 'shop_7days_avg_diff': '店舗: 週間還元/回収モード(直近7日差枚)',
                 'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
-                'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)'
+                'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
+                'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
+                'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)'
             }
     
             # 全店舗の重要度データを準備

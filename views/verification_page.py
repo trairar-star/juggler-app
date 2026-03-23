@@ -240,6 +240,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         st.info("まだ結果が判明している予測がありません。")
         return
 
+    shop_avg_g_dict = base_df.groupby(shop_col)['結果_累計ゲーム'].mean().to_dict()
+
     # --- 設定5近似度の算出 (ボーナス回数の精査) ---
     specs = backend.get_machine_specs()
     def evaluate_setting5(row):
@@ -257,18 +259,27 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         exp_b, exp_r = g * p_b, g * p_r
         diff_b, diff_r = act_b - exp_b, act_r - exp_r
         
+        s_name = row.get(shop_col, '')
+        shop_avg_g = shop_avg_g_dict.get(s_name, 4000)
+        base_g = max(2500, min(5000, shop_avg_g))
+        
+        sigma_half_g = base_g
+        sigma_zero_g = base_g * 1.5
+        discount_target_g = base_g
+        penalty_g = base_g * 0.75
+
         # --- 2. 点数（設定5近似度）の確率論的な調整 ---
         # 標準偏差(σ)を計算し、「確率的なブレ（0.5σ）」の範囲内ならペナルティを免除する
         sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
         sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
         
         if use_strict_scoring:
-            # 学習基準(3000G)に合わせて、G数が増えるほど「確率のブレ(σ)による免除」を減らす
+            # 店舗の平均G数に合わせて、免除ラインを変動
             sigma_multiplier = 0.5
-            if g >= 5000:
-                sigma_multiplier = 0.0  # 5000G以上は言い訳無用
-            elif g >= 3000:
-                sigma_multiplier = 0.25 # 3000G以上は免除を半減
+            if g >= sigma_zero_g:
+                sigma_multiplier = 0.0
+            elif g >= sigma_half_g:
+                sigma_multiplier = 0.25
         else:
             # 従来通り一律0.5σ免除
             sigma_multiplier = 0.5
@@ -285,10 +296,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         total_score = score_r + score_b
         
         # --- 回転数（ゲーム数）による信頼度補正（いい塩梅の調整） ---
-        # 1. 稼働が十分でない（5000G未満）場合：まぐれ上振れの可能性を考慮し、最大20%の範囲で徐々に割り引く
-        if g < 5000:
-            # 例: 1000Gで約0.84倍、3000Gで約0.92倍、5000Gで1.0倍
-            multiplier = 0.80 + (g / 5000.0) * 0.20
+        # 1. 稼働が十分でない場合：まぐれ上振れの可能性を考慮し、最大10%の範囲で徐々に割り引く
+        if g < discount_target_g:
+            multiplier = 0.90 + (g / float(discount_target_g)) * 0.10
             total_score *= multiplier
             
         # 2. 極端な低稼働（1000G未満）：サイドバーの設定（low_g_penalty）をさらに強力に適用
@@ -313,8 +323,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             
         # --- 確率ベースの強制減点 ---
         if use_strict_scoring:
-            # 一定のゲーム数(2000G以上)回っていて確率が悪い場合は、重く減点する
-            if g >= 2000:
+            # 店舗の平均稼働の75%以上回っていて確率が悪い場合は、重く減点する
+            if g >= penalty_g:
                 reg_prob_den = g / act_r if act_r > 0 else 9999
                 tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
                 
@@ -777,9 +787,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # 要因2: 稼働（客層）
             diag_kado = {"status": "🟢", "title": "稼働状況(客層)", "msg": "検証対象の台は全体的にしっかり回されており、結果の信頼度が高いです。"}
             if avg_g_recent < 3000:
-                diag_kado = {"status": "🔴", "title": "稼働状況(客層)", "msg": f"平均稼働が{int(avg_g_recent)}Gと低すぎます。客層の見切りが早いため、AIが当てていたとしても「不発・見切り」としてハズレ扱いになっている可能性が高いです。"}
+                diag_kado = {"status": "🔴", "title": "稼働状況(客層)", "msg": f"推奨台の平均稼働が{int(avg_g_recent)}Gと低すぎます。採点基準は低稼働向けに自動補正されていますが、客層の見切りが早すぎるため、本物の高設定が回されずに埋もれてしまっている可能性が高いです。"}
             elif avg_g_recent < 4000:
-                diag_kado = {"status": "🟡", "title": "稼働状況(客層)", "msg": f"平均稼働が{int(avg_g_recent)}Gとやや低めです。高設定が埋もれてしまっている可能性があります。"}
+                diag_kado = {"status": "🟡", "title": "稼働状況(客層)", "msg": f"推奨台の平均稼働が{int(avg_g_recent)}Gとやや低めです。採点基準は店舗に合わせて自動補正されていますが、高設定が十分に出玉を伸ばしきれていない可能性があります。"}
 
             # 要因3: AI設定 (過学習 / 未学習)
             diag_ai = {"status": "🟢", "title": "AI設定(パラメータ)", "msg": "スコア分布と正解率のバランスが良く、現在の設定は良好です。"}
@@ -828,7 +838,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     
                 elif diag_kado["status"] == "🔴":
                     final_action_title = "🤔 【最終結論】店舗の客層・稼働状況を再評価する"
-                    final_action_msg = "AIの予測云々以前に、客層の見切りが早すぎて「答え合わせ」ができていない状態です。この店で勝つには、**『自分自身でしっかり回して判別する』**覚悟が必要になります。または、もっと稼働が良い店を探すのも一つの手です。"
+                    final_action_msg = "AIの予測云々以前に、客層の見切りが早すぎて高設定が埋もれやすい状態です。採点システムは低稼働に合わせて優しくなっていますが、実際の勝率を上げるには**『自分自身でしっかり回して判別する』**覚悟が必要になります。または、もっと稼働が良い店を探すのも一つの手です。"
                     st.warning(f"**{final_action_title}**\n\n{final_action_msg}")
 
                 elif diag_ai["status"] in ["🔴", "🟡"] or diag_feat["status"] in ["🔴", "🟡"]:
@@ -1082,7 +1092,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if auto_tune_btn:
             with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
                 import lightgbm as lgb
-                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff']
+                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate']
                 actual_features = [f for f in base_features if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                 
