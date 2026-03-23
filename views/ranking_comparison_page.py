@@ -170,12 +170,25 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                 rank_metric = st.radio("📊 実際のランキング基準", ["差枚", "合算確率", "REG確率"], horizontal=True, help="合算確率とREG確率は、総ゲーム数3000G以上の台のみを対象とします。")
 
                 # --- 全体実績: ランキングトップ3獲得回数 (店舗別) ---
+                # --- 全体実績: ランキングトップ3獲得回数や通算差枚 (店舗別) ---
+                period_options = {"直近1週間": 7, "直近1ヶ月": 30, "直近3ヶ月": 90, "全期間": None}
+                selected_period = st.radio("通算成績の集計期間", list(period_options.keys()), index=1, horizontal=True)
+
+                base_eval_df = merged_df[merged_df[shop_col] == compare_shop].copy()
                 if selected_machine != 'すべての機種':
                     eval_days = merged_df[(merged_df[shop_col] == compare_shop) & (merged_df['機種名'] == selected_machine)][['実際の稼働日', shop_col]].dropna().drop_duplicates()
+                    base_eval_df = base_eval_df[base_eval_df['機種名'] == selected_machine]
                     shop_machine_label = f"【{compare_shop} - {selected_machine}】"
                 else:
                     eval_days = merged_df[merged_df[shop_col] == compare_shop][['実際の稼働日', shop_col]].dropna().drop_duplicates()
                     shop_machine_label = f"【{compare_shop}】"
+                    
+                if period_options[selected_period] is not None:
+                    max_date = base_eval_df['実際の稼働日'].max()
+                    cutoff_date = max_date - pd.Timedelta(days=period_options[selected_period])
+                    base_eval_df = base_eval_df[base_eval_df['実際の稼働日'] > cutoff_date]
+
+                eval_days = base_eval_df[['実際の稼働日', shop_col]].dropna().drop_duplicates()
                     
                 top3_count = 0
                 total_eval_days = len(eval_days)
@@ -195,49 +208,116 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                     if rank_metric == "差枚":
                         raw_subset = raw_subset.dropna(subset=['差枚'])
                         top3_machines = raw_subset.sort_values('差枚', ascending=False).groupby(['対象日付', shop_col]).head(3) if not raw_subset.empty else pd.DataFrame()
+                        raw_subset['actual_rank'] = raw_subset.groupby(['対象日付', shop_col])['差枚'].rank(method='first', ascending=False)
                     elif rank_metric == "合算確率":
                         raw_subset = raw_subset[(raw_g >= 3000) & (raw_subset['合算確率分母'] > 0)]
                         top3_machines = raw_subset.sort_values('合算確率分母', ascending=True).groupby(['対象日付', shop_col]).head(3) if not raw_subset.empty else pd.DataFrame()
+                        raw_subset['actual_rank'] = raw_subset.groupby(['対象日付', shop_col])['合算確率分母'].rank(method='first', ascending=True)
                     else:
                         raw_subset = raw_subset[(raw_g >= 3000) & (raw_subset['REG確率分母'] > 0)]
                         top3_machines = raw_subset.sort_values('REG確率分母', ascending=True).groupby(['対象日付', shop_col]).head(3) if not raw_subset.empty else pd.DataFrame()
+                        raw_subset['actual_rank'] = raw_subset.groupby(['対象日付', shop_col])['REG確率分母'].rank(method='first', ascending=True)
+                        
+                    if 'actual_rank' in raw_subset.columns:
+                        top3_machines = raw_subset[raw_subset['actual_rank'] <= 3][['対象日付', shop_col, '台番号', 'actual_rank']]
+                    else:
+                        top3_machines = pd.DataFrame()
 
                     if not top3_machines.empty:
-                        top3_machines = top3_machines[['対象日付', shop_col, '台番号']]
-                        
                         top3_machines = top3_machines.rename(columns={'対象日付': '実際の稼働日'})
                         
-                        # 画面表示と同じく「各日のAI予測Top10」に絞ってから合致判定を行う
-                        valid_pred_df = merged_df[merged_df[shop_col] == compare_shop].copy()
-                        if selected_machine != 'すべての機種':
-                            valid_pred_df = valid_pred_df[valid_pred_df['機種名'] == selected_machine]
-                        valid_pred_df = valid_pred_df.sort_values('prediction_score', ascending=False).groupby('実際の稼働日').head(10)
+                    # ログに保存されている「上位10%」をそのまま評価対象とする
+                    valid_pred_df = base_eval_df.copy()
+                    valid_pred_df['ai_daily_rank'] = valid_pred_df.groupby(['実際の稼働日', shop_col])['prediction_score'].rank(method='first', ascending=False)
+                    
+                    if not top3_machines.empty:
+                        match_df = pd.merge(valid_pred_df, top3_machines, on=['実際の稼働日', shop_col, '台番号'], how='left')
+                        match_df['is_top3'] = match_df['actual_rank'].notna().astype(int)
+                    else:
+                        match_df = valid_pred_df.copy()
+                        match_df['is_top3'] = 0
+                    
+                    # 少なくとも1台がTop3に入った日数
+                    top3_days = match_df[match_df['is_top3'] == 1].drop_duplicates(subset=['実際の稼働日', shop_col])
+                    top3_count = len(top3_days)
+                    
+                    # AI推奨台(保存ログ全体)の通算勝率の計算
+                    pred_g = pd.to_numeric(valid_pred_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+                    pred_diff = pd.to_numeric(valid_pred_df['差枚_actual'], errors='coerce').fillna(0)
+                    valid_for_win = valid_pred_df[
+                        (pred_g >= 3000) | ((pred_g < 3000) & (pred_diff.abs() >= 1000))
+                    ]
+                    win_rate_str = "- (0/0台)"
+                    if not valid_for_win.empty:
+                        total_win = (valid_for_win['差枚_actual'] > 0).sum()
+                        total_valid = len(valid_for_win)
+                        win_rate_str = f"{total_win/total_valid:.1%} ({total_win}/{total_valid}台)"
                         
-                        match_df = pd.merge(valid_pred_df, top3_machines, on=['実際の稼働日', shop_col, '台番号'], how='inner')
-                        top3_count = len(match_df.drop_duplicates(subset=['実際の稼働日', shop_col]))
-                        
-                        # AI推奨台(Top10)の通算勝率の計算
-                        pred_g = pd.to_numeric(valid_pred_df['結果_累計ゲーム'], errors='coerce').fillna(0)
-                        pred_diff = pd.to_numeric(valid_pred_df['差枚_actual'], errors='coerce').fillna(0)
-                        valid_for_win = valid_pred_df[
-                            (pred_g >= 3000) | ((pred_g < 3000) & (pred_diff.abs() >= 1000))
-                        ]
-                        win_rate_str = "- (0/0台)"
-                        if not valid_for_win.empty:
-                            total_win = (valid_for_win['差枚_actual'] > 0).sum()
-                            total_valid = len(valid_for_win)
-                            win_rate_str = f"{total_win/total_valid:.1%} ({total_win}/{total_valid}台)"
+                    # AI推奨台の過去累計差枚
+                    total_diff_sum = pred_diff.sum()
+                    
+                    # 全体の平均期待度
+                    avg_pred_score = valid_pred_df['prediction_score'].mean()
                             
-                    st.info(f"👑 **{shop_machine_label}AI推奨台の通算実績 (過去 {total_eval_days} 日)**\n\n"
+                    st.info(f"👑 **{shop_machine_label}AI推奨台(上位10%)の通算実績 ({selected_period})**\n\n"
+                            f"📅 **評価日数**: {total_eval_days} 日\n"
                             f"🏆 **トップ3獲得**: **{top3_count} 日** ランクイン (獲得率: {top3_count/total_eval_days:.1%})\n"
                             f"📈 **推奨台の勝率**: **{win_rate_str}**\n\n"
+                            f"💰 **推奨台の合計差枚**: **{int(total_diff_sum):+d} 枚**\n"
+                            f"🎯 **平均期待度**: **{avg_pred_score*100:.1f}%**\n\n"
                             f"※トップ3は実際のランキング({rank_metric}順)に基づく。勝率は有効稼働(3000G以上 or 差枚±1000枚以上)の台のみを対象に集計しています。")
+                    
+                    # 各AI順位ごとの通算実績
+                    with st.expander("📊 AI順位ごとの通算成績", expanded=False):
+                        rank_stats = match_df.groupby('ai_daily_rank').agg(
+                            検証台数=('台番号', 'count'),
+                            平均期待度=('prediction_score', 'mean'),
+                            合計差枚=('差枚_actual', 'sum'),
+                            平均差枚=('差枚_actual', 'mean'),
+                            トップ3獲得数=('is_top3', 'sum')
+                        ).reset_index()
+                        rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(int)
+                        rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
+                        rank_stats = rank_stats.sort_values('ai_daily_rank')
+                        
+                        st.dataframe(
+                            rank_stats,
+                            column_config={
+                                "ai_daily_rank": st.column_config.NumberColumn("AI予測順位"),
+                                "検証台数": st.column_config.NumberColumn("台数"),
+                                "平均期待度": st.column_config.NumberColumn("平均期待度", format="%.1f%%"),
+                                "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d 枚"),
+                                "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
+                                "トップ3獲得数": st.column_config.NumberColumn("Top3的中", format="%d 回"),
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
 
-                # AI予測ランキング のデータ準備
+                # 実際のランキング のデータ準備 (平均ゲーム数計算のため先に実行)
+                target_ts = pd.Timestamp(selected_date)
+                actual_date = pd.NaT
+                if compare_shop in shop_operating_dates:
+                    for d in shop_operating_dates[compare_shop]:
+                        if d >= target_ts:
+                            actual_date = d
+                            break
+                            
+                if pd.notna(actual_date) and not df_raw_temp.empty:
+                    actual_df_day = df_raw_temp[
+                        (df_raw_temp[shop_col] == compare_shop) & 
+                        (df_raw_temp['対象日付'] == actual_date)
+                    ].copy()
+                    if selected_machine != 'すべての機種':
+                        actual_df_day = actual_df_day[actual_df_day['機種名'] == selected_machine]
+                else:
+                    actual_df_day = pd.DataFrame()
+
+                # AI予測ランキング のデータ準備 (保存されている推奨台すべて＝約上位10%)
                 pred_df_day = merged_df[(merged_df['対象日付'].dt.date == selected_date) & (merged_df[shop_col] == compare_shop)].copy()
                 if selected_machine != 'すべての機種':
                     pred_df_day = pred_df_day[pred_df_day['機種名'] == selected_machine]
-                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False).head(10)
+                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False)
                 
                 shop_avg_g_actual = actual_df_day['累計ゲーム'].mean() if not actual_df_day.empty else 4000
                 base_g = max(2500, min(5000, shop_avg_g_actual))
@@ -325,25 +405,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         
                     return max(0.0, total_score)
 
-                # 実際のランキング のデータ準備
-                target_ts = pd.Timestamp(selected_date)
-                actual_date = pd.NaT
-                if compare_shop in shop_operating_dates:
-                    for d in shop_operating_dates[compare_shop]:
-                        if d >= target_ts:
-                            actual_date = d
-                            break
-                            
-                if pd.notna(actual_date) and not df_raw_temp.empty:
-                    actual_df_day = df_raw_temp[
-                        (df_raw_temp[shop_col] == compare_shop) & 
-                        (df_raw_temp['対象日付'] == actual_date)
-                    ].copy()
-                    if selected_machine != 'すべての機種':
-                        actual_df_day = actual_df_day[actual_df_day['機種名'] == selected_machine]
-                else:
-                    actual_df_day = pd.DataFrame()
-
                 # --- 実際のランキングTop10を事前に計算 (照合用) ---
                 actual_top10_machines = []
                 if not actual_df_day.empty:
@@ -375,7 +436,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                 if selected_machine != 'すべての機種':
                     st.markdown(f"##### 🤖 AI推奨台 ({selected_machine})")
                 else:
-                    st.markdown("##### 🤖 AI推奨台 (全体)")
+                    st.markdown("##### 🤖 AI推奨台 (上位10%)")
                 
                 if not pred_df_day.empty:
                     pred_g = pd.to_numeric(pred_df_day['結果_累計ゲーム'], errors='coerce').fillna(0)
