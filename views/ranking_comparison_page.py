@@ -281,12 +281,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
                         rank_stats = rank_stats.sort_values('ai_daily_rank')
                         
-                        # 1位〜N位までの累積成績を計算
-                        rank_stats['累積台数'] = rank_stats['検証台数'].cumsum()
-                        rank_stats['累積差枚'] = rank_stats['合計差枚'].cumsum()
-                        rank_stats['累積平均差枚'] = rank_stats['累積差枚'] / rank_stats['累積台数']
-                        rank_stats['累積Top3'] = rank_stats['トップ3獲得数'].cumsum()
-                        
                         # 全体の合計行を追加
                         total_count = rank_stats['検証台数'].sum()
                         total_diff = rank_stats['合計差枚'].sum()
@@ -296,8 +290,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                         
                         total_row = pd.DataFrame([{
                             'ai_daily_rank': '全体', '検証台数': total_count, '平均期待度': avg_pred,
-                            '合計差枚': total_diff, '平均差枚': avg_diff, 'トップ3獲得数': total_top3,
-                            '累積台数': np.nan, '累積差枚': np.nan, '累積平均差枚': np.nan, '累積Top3': np.nan
+                            '合計差枚': total_diff, '平均差枚': avg_diff, 'トップ3獲得数': total_top3
                         }])
                         
                         rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(str) + "位"
@@ -312,10 +305,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                                 "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d 枚"),
                                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
                                 "トップ3獲得数": st.column_config.NumberColumn("Top3的中", format="%d 回"),
-                                "累積台数": st.column_config.NumberColumn("累積台数", format="%d 台"),
-                                "累積差枚": st.column_config.NumberColumn("累積差枚", format="%+d 枚"),
-                                "累積平均差枚": st.column_config.NumberColumn("累積平均差枚", format="%+d 枚"),
-                                "累積Top3": st.column_config.NumberColumn("累積Top3", format="%d 回"),
                             },
                             hide_index=True,
                             use_container_width=True
