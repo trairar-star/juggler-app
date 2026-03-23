@@ -302,9 +302,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw):
                     
                     valid_play = (g >= 3000) or (abs(diff) >= 1000)
                     
-                    if not valid_play and not is_abandoned:
-                        return np.nan
-                        
                     if is_abandoned:
                         total_score *= 0.5
                         

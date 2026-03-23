@@ -160,10 +160,6 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         
         valid_play = (g >= 3000) or (abs(diff) >= 1000)
         
-        # 有効稼働(3000G or ±1000枚)でもなく、明らかな見切り台でもない場合は「判別不能ノイズ」として採点対象外
-        if not valid_play and not is_abandoned:
-            return np.nan
-            
         if is_abandoned:
             total_score *= 0.5
             

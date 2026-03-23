@@ -389,6 +389,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
     merged_df['valid_high'] = merged_df['valid_play'] & (merged_df['is_high_setting'] == 1)
 
+    # レポートやKPI用に「AIが推奨した台（期待度70%以上）」のみを抽出
+    ai_recom_df = merged_df[merged_df['prediction_score'] >= 0.70].copy()
+
     if merged_df.empty:
         st.info("選択された店舗の分析データがありません。")
         return
@@ -397,7 +400,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     if selected_version == 'すべて' and 'ai_version' in merged_df.columns:
         st.markdown("##### 🔍 バージョン別 成績比較")
         st.caption("過去に試したAI設定ごとの成績一覧です。どの設定が最も優秀だったかを比較できます。")
-        ver_stats = merged_df.groupby('ai_version').agg(
+        ver_stats = ai_recom_df.groupby('ai_version').agg(
             検証台数=('台番号', 'count'),
             高設定数=('valid_high', 'sum'),
             有効稼働数=('valid_play', 'sum'),
@@ -423,15 +426,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         )
 
     # --- 1. 全体成績 (KPI) & 円グラフ ---
-    total_count = len(merged_df)
-    valid_count = merged_df['valid_play'].sum()
-    high_set_count = merged_df['valid_high'].sum()
+    total_count = len(ai_recom_df)
+    valid_count = ai_recom_df['valid_play'].sum()
+    high_set_count = ai_recom_df['valid_high'].sum()
     low_set_count = valid_count - high_set_count
     high_setting_rate = high_set_count / valid_count if valid_count > 0 else 0
-    win_count = merged_df['valid_win'].sum()
+    win_count = ai_recom_df['valid_win'].sum()
     win_rate = win_count / valid_count if valid_count > 0 else 0
-    avg_diff = merged_df['差枚_actual'].mean()
-    total_diff = merged_df['差枚_actual'].sum()
+    avg_diff = ai_recom_df['差枚_actual'].mean()
+    total_diff = ai_recom_df['差枚_actual'].sum()
     
     col_kpi, col_pie = st.columns([2, 1])
     
@@ -452,18 +455,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             'Count': [high_set_count, low_set_count]
         })
         
-        pie_chart = alt.Chart(pie_data).mark_arc(innerRadius=35).encode(
-            theta=alt.Theta(field="Count", type="quantitative"),
-            color=alt.Color(field="Category", type="nominal", 
-                            scale=alt.Scale(domain=['高設定', '低設定'], range=['#FF4B4B', '#4B4BFF']),
-                            legend=alt.Legend(title="設定挙動", orient="bottom")),
-            tooltip=['Category', 'Count']
-        ).properties(height=200)
-        
-        st.altair_chart(pie_chart, width="stretch")
+        if valid_count > 0:
+            pie_chart = alt.Chart(pie_data).mark_arc(innerRadius=35).encode(
+                theta=alt.Theta(field="Count", type="quantitative"),
+                color=alt.Color(field="Category", type="nominal", 
+                                scale=alt.Scale(domain=['高設定', '低設定'], range=['#FF4B4B', '#4B4BFF']),
+                                legend=alt.Legend(title="設定挙動", orient="bottom")),
+                tooltip=['Category', 'Count']
+            ).properties(height=200)
+            st.altair_chart(pie_chart, width="stretch")
+        else:
+            st.caption("※有効稼働データなし")
 
     # 日別推移データをAI評価より先に計算する
-    daily_stats = merged_df.groupby('対象日付').agg(
+    daily_stats = ai_recom_df.groupby('対象日付').agg(
         high_setting_count=('valid_high', 'sum'),
         valid_count=('valid_play', 'sum'),
         total_profit=('差枚_actual', 'sum'),
@@ -477,14 +482,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     st.subheader("🤖 AIの振り返りレポート (過去の自分との比較)")
     st.caption("最新の予測結果（設定5近似度）を過去の平均的なパフォーマンスと比較し、AIが自身の成長や調子を分析します。")
     
-    avg_s5_score = merged_df['設定5近似度'].mean()
-    avg_g = merged_df['結果_累計ゲーム'].mean()
-    avg_diff_r = merged_df['REG不足分'].mean()
-    avg_diff_b = merged_df['BIG不足分'].mean()
+    avg_s5_score = ai_recom_df['設定5近似度'].mean() if not ai_recom_df.empty else 0
+    
+    avg_g = ai_recom_df['結果_累計ゲーム'].mean()
+    avg_diff_r = ai_recom_df['REG不足分'].mean()
+    avg_diff_b = ai_recom_df['BIG不足分'].mean()
     
     # データ不足の考慮 (検証台数不足 or 学習データ不足)
-    low_rel_count = (merged_df['予測信頼度'] == '🔻低').sum() if '予測信頼度' in merged_df.columns else 0
-    mid_rel_count = (merged_df['予測信頼度'] == '🔸中').sum() if '予測信頼度' in merged_df.columns else 0
+    low_rel_count = (ai_recom_df['予測信頼度'] == '🔻低').sum() if '予測信頼度' in ai_recom_df.columns else 0
+    mid_rel_count = (ai_recom_df['予測信頼度'] == '🔸中').sum() if '予測信頼度' in ai_recom_df.columns else 0
     low_rel_rate = low_rel_count / total_count if total_count > 0 else 0
     mid_rel_rate = mid_rel_count / total_count if total_count > 0 else 0
     comment_prefix = ""
@@ -588,8 +594,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     st.info(f"{comment_prefix}{final_comment}\n\n※全体平均 REG過不足: **{avg_diff_r:+.1f}回** / BIG過不足: **{avg_diff_b:+.1f}回**")
     
     # --- 特に優秀だった台トップ3 ---
-    if not merged_df.empty:
-        top3_df = merged_df[merged_df['設定5近似度'] > 0].sort_values('設定5近似度', ascending=False).head(3)
+    if not ai_recom_df.empty:
+        top3_df = ai_recom_df[ai_recom_df['設定5近似度'] > 0].sort_values('設定5近似度', ascending=False).head(3)
         if not top3_df.empty:
             st.markdown("##### 🌟 特に高設定挙動だった推奨台 トップ3")
             for _, row in top3_df.iterrows():
@@ -629,10 +635,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.caption("※点数が高いほど、推奨台が実際に設定5以上の確率でBIG/REGを引けていたことを示します。(予測対象日ベース)")
             
         with tab_ver:
-            if '実行日時' in merged_df.columns:
-                merged_df['実行日時'] = pd.to_datetime(merged_df['実行日時'], errors='coerce')
-                merged_df['実行日'] = merged_df['実行日時'].dt.date
-                exec_stats = merged_df.groupby('実行日').agg(
+            if '実行日時' in ai_recom_df.columns:
+                ai_recom_df['実行日時'] = pd.to_datetime(ai_recom_df['実行日時'], errors='coerce')
+                ai_recom_df['実行日'] = ai_recom_df['実行日時'].dt.date
+                exec_stats = ai_recom_df.groupby('実行日').agg(
                     avg_s5_score=('設定5近似度', 'mean'),
                     high_setting_count=('valid_high', 'sum'),
                     valid_count=('valid_play', 'sum'),
@@ -799,7 +805,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     diag_shop = {"status": "🔴", "title": "店舗の素直さ(予測困難)", "msg": "データ・稼働・AI設定は悪くないにも関わらず、AI推奨台が結果を出せていません。店長が「完全ランダム」で設定を入れているか、前日の凹み台などを「意図的にフェイクとして使う」など、非常に読みにくい（騙してくる）店舗である可能性が高いです。"}
 
             with st.expander("🤖 総合原因分析 (AIの自己診断レポート)", expanded=True):
-                st.markdown("精度検証の結果から、予測がうまくいっているか、あるいは**何が原因で精度が落ちているか**を5つの観点で総合的に診断します。")
+                st.markdown("精度検証の結果から、予測がうまくいっているか、あるいは**何が原因で精度が落ちているか**を総合的に診断します。")
                 
                 for diag in [diag_data, diag_kado, diag_ai, diag_feat, diag_shop]:
                     st.markdown(f"**{diag['status']} {diag['title']}**: {diag['msg']}")
