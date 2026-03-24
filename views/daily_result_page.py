@@ -269,6 +269,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         return [''] * len(available_cols)
         
     styled_display_df = display_df[available_cols].style.apply(apply_row_style, axis=1)
+    if '差枚' in available_cols:
+        styled_display_df = styled_display_df.bar(subset=['差枚'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
 
     st.dataframe(
         styled_display_df,

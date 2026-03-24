@@ -995,18 +995,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         st.caption("AIのパラメータを手掌握で調整するか、「自動チューニング」を試してください。")
         
         if "shop_hyperparams" not in st.session_state:
-            st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
+            st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0}}
             
         default_hp = st.session_state["shop_hyperparams"]["デフォルト"]
         current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
         
         with st.form(f"hp_form_{selected_shop}"):
-            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, current_hp.get('train_months', 3), step=1)
-            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, current_hp.get('n_estimators', 300), step=50)
-            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, current_hp.get('learning_rate', 0.03), step=0.01)
-            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, current_hp.get('num_leaves', 15), step=1)
-            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, current_hp.get('max_depth', 4), step=1)
-            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, current_hp.get('min_child_samples', 50), step=10)
+            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1)
+            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50)
+            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01)
+            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1)
+            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1)
+            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10)
+            hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくすると、AIが「予測に不要」と判断した特徴量を完全に無視(重み0)しやすくなります。特徴量が多い時に有効です。")
+            hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくすると、特定の特徴量だけに極端に依存することを防ぎます。")
             
             cols = st.columns(3)
             submitted = cols[0].form_submit_button("この店舗の設定を保存して再分析", type="primary")
@@ -1016,7 +1018,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if submitted:
             st.session_state["shop_hyperparams"][selected_shop] = {
                 'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
-                'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples
+                'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples,
+                'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda
             }
             backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
             st.cache_data.clear(); st.rerun()
@@ -1030,7 +1033,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if auto_tune_btn:
             with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
                 import lightgbm as lgb
-                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate']
+                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
                 actual_features = [f for f in base_features if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                 
@@ -1052,16 +1055,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sample_weights = 0.995 ** days_diff
                     
                     param_candidates = [
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50},
-                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 80},
-                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30},
-                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50},
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100},
-                        {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60},
-                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20},
-                        {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40},
-                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40},
-                        {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 0.5, 'reg_lambda': 0.5}, # 少し断捨離
+                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.0}, # L1強め
+                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 12, 'max_depth': 3, 'min_child_samples': 80, 'reg_alpha': 0.1, 'reg_lambda': 1.0}, # L2強め
+                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100, 'reg_alpha': 2.0, 'reg_lambda': 0.0}, # 断捨離マックス
+                        {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
+                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
+                        {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
                     ]
                     
                     best_score = -9999
@@ -1090,7 +1095,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     
                     st.session_state["shop_hyperparams"][selected_shop] = {
                         'train_months': hp_train_months, 'n_estimators': best_params['n_estimators'], 'learning_rate': best_params['learning_rate'],
-                        'num_leaves': best_params['num_leaves'], 'max_depth': best_params['max_depth'], 'min_child_samples': best_params['min_child_samples']
+                        'num_leaves': best_params['num_leaves'], 'max_depth': best_params['max_depth'], 'min_child_samples': best_params['min_child_samples'],
+                        'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0)
                     }
                     backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                     st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")

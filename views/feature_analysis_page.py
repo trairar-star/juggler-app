@@ -888,7 +888,13 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
                 'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
                 'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
-                'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)'
+                'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)',
+                'event_x_machine_avg_diff': '複合: イベント×機種の平均差枚',
+                'event_x_end_digit_avg_diff': '複合: イベント×末尾の平均差枚',
+                'cons_minus_total_diff': '台: 連続マイナス期間の合計吸い込み(枚)',
+                'machine_no_30days_avg_diff': '台番号: その場所の強さ(直近30日差枚)',
+                'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
+                'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)'
             }
     
             # 全店舗の重要度データを準備
@@ -903,6 +909,28 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 imp_shop['特徴量名'] = imp_shop['feature'].map(lambda x: feature_name_map.get(x, x))
                 imp_shop = imp_shop.sort_values('importance', ascending=False)
     
+            st.info("💡 **グラフの見方**: バーの長さが「重要度（予測への影響力）」を、**色**が「影響の方向（プラスかマイナスか）」を表します。\n\n"
+                    "- 🟥 **赤系 (プラス)**: その値が大きいほど、高設定になりやすい（例: 前日差枚が多いほど据え置きされやすい）\n"
+                    "- 🟦 **青系 (マイナス)**: その値が小さいほど、高設定になりやすい（例: 前日差枚が少ないほど上げられやすい）")
+            
+            # 相関データが存在しない過去のキャッシュへのフォールバック
+            if 'correlation' not in imp_all.columns:
+                imp_all['correlation'] = 0.0
+            if not imp_shop.empty and 'correlation' not in imp_shop.columns:
+                imp_shop['correlation'] = 0.0
+
+            color_condition = alt.condition(
+                alt.datum.correlation >= 0,
+                alt.value("#FF7043"),  # プラスならオレンジ/赤系
+                alt.value("#42A5F5")   # マイナスなら青系
+            )
+            
+            tooltip_def = [
+                alt.Tooltip('特徴量名:N', title='特徴量'),
+                alt.Tooltip('importance:Q', title='重要度'),
+                alt.Tooltip('correlation:Q', title='相関係数(方向)', format='+.2f')
+            ]
+
             if not imp_shop.empty:
                 # 店舗別モデルの重要度順でリストを作成し、両方のグラフのY軸ソート順を統一する
                 sort_order = imp_shop['特徴量名'].tolist()
@@ -914,20 +942,22 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 
                 with col1:
                     st.markdown(f"**【{selected_shop}】専用モデル**")
-                    chart_shop = alt.Chart(imp_shop).mark_bar(color='#AB47BC').encode(
+                    chart_shop = alt.Chart(imp_shop).mark_bar().encode(
                         x=alt.X('importance:Q', title='重要度スコア'),
                         y=alt.Y('特徴量名:N', title='特徴量', sort=sort_order, axis=alt.Axis(labelLimit=0)),
-                        tooltip=['特徴量名', 'importance']
+                        color=color_condition,
+                        tooltip=tooltip_def
                     ).properties(height=500).interactive()
                     st.altair_chart(chart_shop, width="stretch")
                     
                 with col2:
                     st.markdown("**【全店舗】共通モデル**")
                     if not imp_all.empty:
-                        chart_all = alt.Chart(imp_all).mark_bar(color='#5C6BC0').encode(
+                        chart_all = alt.Chart(imp_all).mark_bar().encode(
                             x=alt.X('importance:Q', title='重要度スコア'),
                             y=alt.Y('特徴量名:N', title=None, sort=sort_order, axis=alt.Axis(labelLimit=0)),
-                            tooltip=['特徴量名', 'importance']
+                            color=color_condition,
+                            tooltip=tooltip_def
                         ).properties(height=500).interactive()
                         st.altair_chart(chart_all, width="stretch")
                     else:
@@ -936,10 +966,11 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             elif not imp_all.empty:
                 # 店舗別モデルがなく、全体モデルのみの場合
                 st.caption(f"【{selected_shop}】専用の学習モデルはまだありません（データ不足）。代わりに全店舗共通の傾向を表示します。")
-                chart_imp = alt.Chart(imp_all).mark_bar(color='#5C6BC0').encode(
+                chart_imp = alt.Chart(imp_all).mark_bar().encode(
                     x=alt.X('importance:Q', title='重要度スコア'),
                     y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
-                    tooltip=['特徴量名', 'importance']
+                    color=color_condition,
+                    tooltip=tooltip_def
                 ).properties(height=500).interactive()
                 
                 st.altair_chart(chart_imp, width="stretch")

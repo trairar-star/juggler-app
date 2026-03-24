@@ -60,6 +60,13 @@ MACHINE_SPECS = {
         "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2, "ぶどう": 5.81},
         "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6, "ぶどう": 5.66},
     },
+    "ミスタージャグラー": {
+        "BIG獲得": 240, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 268.6, "REG": 374.5, "合算": 156.4, "ぶどう": 6.08},
+        "設定4": {"BIG": 249.2, "REG": 291.3, "合算": 134.3, "ぶどう": 5.92},
+        "設定5": {"BIG": 240.9, "REG": 257.0, "合算": 124.4, "ぶどう": 5.87},
+        "設定6": {"BIG": 237.4, "REG": 237.4, "合算": 118.7, "ぶどう": 5.79},
+    },
     "マイジャグラーV": {
         "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
         "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8, "ぶどう": 5.90},
@@ -697,7 +704,7 @@ def load_my_balance():
         return df
     except: return pd.DataFrame()
 
-def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
+def save_my_balance(date_obj, shop, machine, number, invest, recovery, hours, memo):
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -708,12 +715,18 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
             existing_data = worksheet.get_all_values()
             if existing_data:
                 header = existing_data[0]
+                # 既存シートに「稼働時間」列がなければ追加する
+                if '稼働時間' not in header:
+                    header.insert(-1, '稼働時間')
+                    idx = header.index('稼働時間')
+                    for i in range(1, len(existing_data)):
+                        existing_data[i].insert(idx, '')
             else:
-                header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', 'メモ']
+                header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', 'メモ']
                 existing_data = []
         except: 
-            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="10")
-            header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', 'メモ']
+            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="11")
+            header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', 'メモ']
             existing_data = []
         
         timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
@@ -723,7 +736,7 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
         new_row_dict = {
             '登録日時': timestamp, '日付': date_str, '店名': shop,
             '台番号': str(number), '機種名': machine, '投資': str(invest),
-            '回収': str(recovery), '収支': str(balance), 'メモ': memo
+            '回収': str(recovery), '収支': str(balance), '稼働時間': str(hours), 'メモ': memo
         }
         
         final_data = [header]
@@ -768,7 +781,7 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, memo):
         st.error(f"収支保存エラー: {e}")
         return False
 
-def update_my_balance(old_timestamp, date_obj, shop, machine, number, invest, recovery, memo):
+def update_my_balance(old_timestamp, date_obj, shop, machine, number, invest, recovery, hours, memo):
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -786,6 +799,7 @@ def update_my_balance(old_timestamp, date_obj, shop, machine, number, invest, re
             idx_inv = header.index('投資')
             idx_rec = header.index('回収')
             idx_bal = header.index('収支')
+            idx_hours = header.index('稼働時間') if '稼働時間' in header else -1
             idx_memo = header.index('メモ')
         except: return False
         
@@ -802,6 +816,8 @@ def update_my_balance(old_timestamp, date_obj, shop, machine, number, invest, re
                 worksheet.update_cell(i, idx_inv + 1, invest)
                 worksheet.update_cell(i, idx_rec + 1, recovery)
                 worksheet.update_cell(i, idx_bal + 1, balance)
+                if idx_hours != -1:
+                    worksheet.update_cell(i, idx_hours + 1, hours)
                 worksheet.update_cell(i, idx_memo + 1, memo)
                 return True
         return False
@@ -829,7 +845,7 @@ def delete_my_balance(target_timestamp):
 def load_shop_ai_settings():
     """店舗別のAI設定をスプレッドシートから読み込む"""
     default_settings = {
-        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}
+        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0}
     }
     try:
         gc = _get_gspread_client()
@@ -853,6 +869,8 @@ def load_shop_ai_settings():
                     'num_leaves': int(record.get('num_leaves')),
                     'max_depth': int(record.get('max_depth')),
                     'min_child_samples': int(record.get('min_child_samples')),
+                    'reg_alpha': float(record.get('reg_alpha', 0.0)),
+                    'reg_lambda': float(record.get('reg_lambda', 0.0)),
                 }
             except (ValueError, TypeError):
                 continue
@@ -876,7 +894,7 @@ def save_shop_ai_settings(shop_hyperparams):
         sheet_name = 'shop_ai_settings'
         try: worksheet = sh.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="10")
-        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples']
+        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda']
         data_to_write = [header] + [[shop_name] + [params.get(k) for k in header[1:]] for shop_name, params in shop_hyperparams.items()]
         worksheet.clear(); worksheet.update('A1', data_to_write)
         return True
@@ -1085,6 +1103,15 @@ def _generate_features(df, df_events, df_island, target_date):
     if '日付要素' in df.columns:
         df['shifted_diff_ev'] = df.groupby('日付要素')['差枚'].shift(1)
         df['event_avg_diff'] = df.groupby('日付要素')['shifted_diff_ev'].expanding().mean().reset_index(level=0, drop=True).fillna(0)
+        
+    if shop_col and 'イベント名' in df.columns:
+        if '機種名' in df.columns:
+            df['shifted_diff_ev_mac'] = df.groupby([shop_col, 'イベント名', '機種名'])['差枚'].shift(1)
+            df['event_x_machine_avg_diff'] = df.groupby([shop_col, 'イベント名', '機種名'])['shifted_diff_ev_mac'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+            
+        if '末尾番号' in df.columns:
+            df['shifted_diff_ev_end'] = df.groupby([shop_col, 'イベント名', '末尾番号'])['差枚'].shift(1)
+            df['event_x_end_digit_avg_diff'] = df.groupby([shop_col, 'イベント名', '末尾番号'])['shifted_diff_ev_end'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
 
     df = df.sort_values(sort_keys).reset_index(drop=True)
     df['shifted_diff'] = df.groupby(group_keys)['差枚'].shift(1)
@@ -1108,7 +1135,7 @@ def _generate_features(df, df_events, df_island, target_date):
     df['win_rate_7days'] = df.groupby(group_keys)['shifted_is_win'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     
     # 一時的に作成した不要な列を削除
-    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win'], errors='ignore')
+    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win', 'shifted_diff_ev_mac', 'shifted_diff_ev_end'], errors='ignore')
 
     # 現在のソート順を保持（mergeによる順序崩れ防止）
     df['original_order'] = np.arange(len(df))
@@ -1137,8 +1164,18 @@ def _generate_features(df, df_events, df_island, target_date):
         machine_daily_avg['machine_30days_avg_diff'] = machine_daily_avg.groupby([shop_col, '機種名'])['machine_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
         df = pd.merge(df, machine_daily_avg[[shop_col, '機種名', '対象日付', 'machine_30days_avg_diff']], on=[shop_col, '機種名', '対象日付'], how='left')
 
+    if shop_col:
+        # --- ③台番号（場所）ごとの扱い指標 (過去30日間のその台番号の平均差枚) ---
+        machine_no_daily_avg = df.groupby([shop_col, '台番号', '対象日付'])['差枚'].mean().reset_index(name='machine_no_daily_avg_diff')
+        machine_no_daily_avg = machine_no_daily_avg.sort_values([shop_col, '台番号', '対象日付'])
+        machine_no_daily_avg['machine_no_30days_avg_diff'] = machine_no_daily_avg.groupby([shop_col, '台番号'])['machine_no_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
+        df = pd.merge(df, machine_no_daily_avg[[shop_col, '台番号', '対象日付', 'machine_no_30days_avg_diff']], on=[shop_col, '台番号', '対象日付'], how='left')
+
     # ソート順を元に戻す
     df = df.sort_values('original_order').drop(columns=['original_order']).reset_index(drop=True)
+    
+    df['prev_bonus_balance'] = df['REG'] - df['BIG']
+    df['prev_unlucky_gap'] = (df['REG'] * 200) - df['差枚']
 
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
@@ -1151,6 +1188,7 @@ def _generate_features(df, df_events, df_island, target_date):
     # 差枚が+500枚未満の日はすべて「実質マイナス（回収・不発）」としてカウントを継続
     df['is_not_released'] = (df['差枚'] < 500).astype(int)
     df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_not_released'].cumsum()
+    df['cons_minus_total_diff'] = df.groupby(group_keys + ['temp_reset_group'])['差枚'].cumsum()
     df = df.drop(columns=['temp_reset_group', 'is_released', 'is_not_released'])
 
     # --- 連続低稼働日数のカウント（テコ入れ狙い） ---
@@ -1175,8 +1213,8 @@ def _generate_features(df, df_events, df_island, target_date):
     else:
         df['is_new_machine'] = 0
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate']:
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -1186,7 +1224,7 @@ def _generate_features(df, df_events, df_island, target_date):
 # --- 内部関数: モデル学習 ---
 def _train_models(train_df, predict_df, features, shop_hyperparams):
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
-    default_hp = shop_hyperparams.get("デフォルト", {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50})
+    default_hp = shop_hyperparams.get("デフォルト", {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0})
     
     X, y = train_df[features], train_df['target']
     sample_weights = None
@@ -1200,6 +1238,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     nl = default_hp.get('num_leaves', 15)
     md = default_hp.get('max_depth', 4)
     mcs = default_hp.get('min_child_samples', 50)
+    r_alpha = default_hp.get('reg_alpha', 0.0)
+    r_lambda = default_hp.get('reg_lambda', 0.0)
 
     # カテゴリ変数として扱う特徴量のリストを定義
     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in features]
@@ -1208,12 +1248,14 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     model = lgb.LGBMClassifier(
         objective='binary', random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+        reg_alpha=r_alpha, reg_lambda=r_lambda,
         subsample=0.8, subsample_freq=1, colsample_bytree=0.8
     )
     model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
     reg_model = lgb.LGBMRegressor(
         random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+        reg_alpha=r_alpha, reg_lambda=r_lambda,
         subsample=0.8, subsample_freq=1, colsample_bytree=0.8
     )
     reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
@@ -1226,12 +1268,25 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
         train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
     
+    # 相関計算用ヘルパー関数
+    def get_correlations(df_sub, feature_list):
+        corrs = []
+        for f in feature_list:
+            if f in df_sub.columns and pd.api.types.is_numeric_dtype(df_sub[f]):
+                c = df_sub[f].corr(df_sub['target'])
+                corrs.append(c if not pd.isna(c) else 0.0)
+            else:
+                corrs.append(0.0)
+        return corrs
+
+    corrs_all = get_correlations(train_df, features)
     feature_importances_list = []
     feature_importances_list.append(pd.DataFrame({
         'shop_name': '全店舗',
         'category': '全体',
         'feature': features,
-        'importance': model.feature_importances_
+        'importance': model.feature_importances_,
+        'correlation': corrs_all
     }))
     
     # --- 店舗個別モデルの学習と推論の上書き ---
@@ -1243,6 +1298,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             s_nl = shop_hp.get('num_leaves', 15)
             s_md = shop_hp.get('max_depth', 4)
             s_mcs = shop_hp.get('min_child_samples', 50)
+            s_ra = shop_hp.get('reg_alpha', 0.0)
+            s_rl = shop_hp.get('reg_lambda', 0.0)
             
             shop_train = train_df[train_df[shop_col] == shop]
             if len(shop_train) >= 150: # ノイズ過学習防止のため、最低サンプル数を引き上げ
@@ -1253,22 +1310,26 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 shop_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
+                    reg_alpha=s_ra, reg_lambda=s_rl,
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 shop_reg = lgb.LGBMRegressor(
                     random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
+                    reg_alpha=s_ra, reg_lambda=s_rl,
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 
                 try:
                     shop_model.fit(X_shop, y_shop, sample_weight=sw_shop, categorical_feature=cat_features)
                     shop_reg.fit(X_shop, shop_train['next_diff'], sample_weight=sw_shop, categorical_feature=cat_features)
+                    corrs_shop = get_correlations(shop_train, features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': shop,
                         'category': '店舗',
                         'feature': features,
-                        'importance': shop_model.feature_importances_
+                        'importance': shop_model.feature_importances_,
+                        'correlation': corrs_shop
                     }))
                     
                     # その店舗の推論結果を専用モデルで上書きする
@@ -1277,7 +1338,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                         if len(shop_pred_idx) > 0:
                             predict_df.loc[shop_pred_idx, 'prediction_score'] = shop_model.predict_proba(predict_df.loc[shop_pred_idx, features])[:, 1]
                             predict_df.loc[shop_pred_idx, '予測差枚数'] = shop_reg.predict(predict_df.loc[shop_pred_idx, features]).astype(int)
-                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.2(m{shop_hp.get('train_months',3)}_n{s_n_est}_l{s_nl}_lr{s_lr}_d{s_md}_c{s_mcs})"
+                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.3(m{shop_hp.get('train_months',3)}_n{s_n_est}_d{s_md}_ra{s_ra})"
                     if not train_df.empty:
                         shop_train_idx = train_df[train_df[shop_col] == shop].index
                         if len(shop_train_idx) > 0:
@@ -1298,15 +1359,18 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 wd_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+                    reg_alpha=r_alpha, reg_lambda=r_lambda,
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
+                    corrs_wd = get_correlations(wd_train, features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': weekdays_map.get(wd, f"曜日{wd}"),
                         'category': '曜日',
                         'feature': features,
-                        'importance': wd_model.feature_importances_
+                        'importance': wd_model.feature_importances_,
+                        'correlation': corrs_wd
                     }))
                 except: pass
                 
@@ -1324,15 +1388,18 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 ev_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+                    reg_alpha=r_alpha, reg_lambda=r_lambda,
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
+                    corrs_ev = get_correlations(ev_train, features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': ev_type,
                         'category': 'イベント',
                         'feature': features,
-                        'importance': ev_model.feature_importances_
+                        'importance': ev_model.feature_importances_,
+                        'correlation': corrs_ev
                     }))
                 except: pass
 
@@ -1516,6 +1583,21 @@ def _postprocess_predictions(predict_df, train_df):
         if w_avg > 150:
             wd_name = ['月', '火', '水', '木', '金', '土', '日'][int(row['target_weekday'])] if 'target_weekday' in row and 0 <= row['target_weekday'] <= 6 else ''
             reasons.append(f"{wd_name}曜日はこの店の得意日(平均+{int(w_avg)}枚)です。")
+
+        # --- クロス分析 (イベント×機種 / 末尾) の根拠追加 ---
+        ev_label = f"イベント「{evt_name}」" if evt_name != '通常' and pd.notna(evt_name) else "通常営業日"
+        
+        evt_mac_avg = row.get('event_x_machine_avg_diff', 0)
+        if evt_mac_avg > 200:
+            reasons.append(f"【特効機種】過去の{ev_label}において、この機種は非常に甘く使われています(平均+{int(evt_mac_avg)}枚)。")
+        elif evt_mac_avg < -300:
+            reasons.append(f"【警戒機種】過去の{ev_label}において、この機種は回収傾向(平均{int(evt_mac_avg)}枚)ですが、AIはこの台単体を評価しています。")
+            
+        evt_end_avg = row.get('event_x_end_digit_avg_diff', 0)
+        if evt_end_avg > 200:
+            end_digit = int(row.get('末尾番号', -1))
+            if end_digit != -1:
+                reasons.append(f"【当たり末尾】過去の{ev_label}において、末尾『{end_digit}』は対象になりやすい強い傾向があります(平均+{int(evt_end_avg)}枚)。")
 
         if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
         n_avg = row.get('neighbor_avg_diff', 0)

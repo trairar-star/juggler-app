@@ -15,6 +15,7 @@ from views import daily_result_page
 from views import calendar_compare_page
 from views import verification_page
 from views import ranking_comparison_page
+from views import realtime_judgement_page
 from utils import get_confidence_indicator
 
 # ---------------------------------------------------------
@@ -139,7 +140,7 @@ def main():
     if "global_selected_shop" not in st.session_state:
         st.session_state["global_selected_shop"] = "全て"
         
-    pages = ["店舗別詳細データ", "📊 予測の実績検証・AI設定", "📅 日別 結果＆予測確認", "🗺️ 店舗間ヒートマップ", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    pages = ["店舗別詳細データ", "⏱️ リアルタイム設定判別", "📊 予測の実績検証・AI設定", "📅 日別 結果＆予測確認", "🗺️ 店舗間ヒートマップ", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -252,7 +253,10 @@ def main():
             st.toast("✅ 本日の予測結果を自動保存しました！")
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
-        if page == "📊 予測の実績検証・AI設定":
+        if page == "⏱️ リアルタイム設定判別":
+            df_pred_log = backend.load_prediction_log()
+            realtime_judgement_page.render_realtime_judgement_page(df_pred_log)
+        elif page == "📊 予測の実績検証・AI設定":
             df_pred_log = backend.load_prediction_log()
             verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw)
         elif page == "📅 日別 結果＆予測確認":

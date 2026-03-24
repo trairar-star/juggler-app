@@ -410,6 +410,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             return [''] * len(row)
                             
                         styled_pred_df = pred_df_day[display_cols_pred].style.apply(highlight_positive, axis=1)
+                        if '差枚_actual' in display_cols_pred:
+                            styled_pred_df = styled_pred_df.bar(subset=['差枚_actual'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
 
                         st.dataframe(
                             styled_pred_df,
@@ -469,6 +471,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             return [''] * len(row)
                             
                         styled_df = actual_df_day[display_cols].style.apply(highlight_top3, axis=1)
+                        if '差枚' in display_cols:
+                            styled_df = styled_df.bar(subset=['差枚'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
                         
                         st.dataframe(
                             styled_df,

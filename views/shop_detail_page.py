@@ -477,30 +477,55 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
     tab_pred, tab_trend = st.tabs(["🔮 明日の予測ランキング", "🔬 過去の傾向分析 (勝利の法則)"])
 
     with tab_pred:
-        # --- 🎊 周年記念イベント アラート ---
+        # --- 🎊 周年記念イベント アラート & カウントダウン ---
         if selected_shop == '全て' and df_events is not None and not df_events.empty:
             pred_date = pd.NaT
             if 'next_date' in df.columns:
-                pred_date = df['next_date'].max()
+                pred_date = df['next_date'].dropna().max()
             elif '対象日付' in df.columns:
-                pred_date = df['対象日付'].max() + pd.Timedelta(days=1)
+                pred_date = df['対象日付'].dropna().max() + pd.Timedelta(days=1)
                 
             if pd.notna(pred_date):
-                anniv_events = df_events[
-                    (df_events['イベント日付'].dt.date == pred_date.date()) & 
+                current_date = pred_date.date()
+                
+                # 今日〜30日後までの周年イベントを取得
+                future_events = df_events[
+                    (df_events['イベント日付'].dt.date >= current_date) & 
+                    (df_events['イベント日付'].dt.date <= current_date + pd.Timedelta(days=30)) &
                     ((df_events['イベントランク'].astype(str) == 'SS (周年)') | (df_events['イベント名'].astype(str).str.contains('周年')))
-                ]
-                if not anniv_events.empty:
-                    html_str = f"""
-                    <div style="background-color: #ffebee; border: 2px solid #f44336; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                        <h3 style="color: #c62828; margin-top: 0;">🎊 【特報】周年記念イベント！ ({pred_date.strftime('%m/%d')})</h3>
-                        <p style="color: #b71c1c; font-size: 1.1em; font-weight: bold;">本日は以下の店舗で「周年記念」クラスの超特大イベントが予定されています！</p>
-                        <ul style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 0;">
-                    """
-                    for _, r in anniv_events.iterrows():
-                        html_str += f"<li>{r['店名']}：{r['イベント名']}</li>"
-                    html_str += "</ul></div>"
-                    st.markdown(html_str, unsafe_allow_html=True)
+                ].copy()
+                
+                if not future_events.empty:
+                    future_events['days_left'] = (future_events['イベント日付'].dt.date - current_date).dt.days
+                    future_events = future_events.sort_values('days_left')
+                    
+                    today_events = future_events[future_events['days_left'] == 0]
+                    upcoming_events = future_events[future_events['days_left'] > 0]
+                    
+                    if not today_events.empty:
+                        html_str = f"""
+                        <div style="background-color: #ffebee; border: 2px solid #f44336; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <h3 style="color: #c62828; margin-top: 0;">🎊 【特報】本日 周年記念イベント！ ({pred_date.strftime('%m/%d')})</h3>
+                            <p style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 10px;">本日は以下の店舗で「周年記念」クラスの超特大イベントが予定されています！</p>
+                            <ul style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 0;">
+                        """
+                        for _, r in today_events.iterrows():
+                            html_str += f"<li>{r['店名']}：{r['イベント名']}</li>"
+                        html_str += "</ul></div>"
+                        st.markdown(html_str, unsafe_allow_html=True)
+                        
+                    if not upcoming_events.empty:
+                        html_str = f"""
+                        <div style="background-color: #fff8e1; border: 2px solid #ffb300; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <h4 style="color: #f57f17; margin-top: 0; margin-bottom: 10px;">⏳ 開催間近！ 周年イベント カウントダウン</h4>
+                            <ul style="color: #e65100; font-size: 1.05em; font-weight: bold; margin-bottom: 0; padding-left: 20px;">
+                        """
+                        for _, r in upcoming_events.iterrows():
+                            days = r['days_left']
+                            date_str = r['イベント日付'].strftime('%m/%d')
+                            html_str += f"<li>{r['店名']}：{r['イベント名']} ({date_str}) ･･･ <span style='color: #d84315; font-size: 1.2em;'>あと {days} 日！</span></li>"
+                        html_str += "</ul></div>"
+                        st.markdown(html_str, unsafe_allow_html=True)
 
         # --- 💬 AI本日の立ち回りアドバイス (店舗個別) ---
         if selected_shop != '全て' and not df.empty:
@@ -581,7 +606,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 if any("角" in c for c in hot_conditions):
                     advice_list.append("🪑 **角台優遇**: 角台（または角周辺）を強くする傾向があります。迷ったら角寄りの台を選ぶのがベターです。")
 
-            # 並び・島に関するアドバイス (特徴量重要度から)
+            # 並び・島・特殊パターンに関するアドバイス (特徴量重要度から攻略ポイントを自動生成)
             if df_importance is not None and not df_importance.empty:
                 imp_shop = df_importance[df_importance['shop_name'] == selected_shop]
                 if not imp_shop.empty:
@@ -590,6 +615,18 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         advice_list.append("🤝 **並び・塊に注意**: AIの分析上、この店は「両隣の差枚（並び）」が設定予測に強く影響しています。自分の台が良くても両隣が死んでいればフェイクの可能性があり、逆に両隣が強ければ「3台並び」などの対象になっている可能性があります。")
                     if 'island_avg_diff' in top_features:
                         advice_list.append("🏝️ **全台系・列に注意**: 「島（列）全体の差枚」の重要度が高いため、列単位での全台系や半ヅキなどをやってくる可能性があります。周囲の活気をよく観察してください。")
+                    if 'machine_no_30days_avg_diff' in top_features:
+                        advice_list.append("📍 **定位置・看板台を意識**: 「台番号ごとの過去成績」が非常に重視されています。この店には『いつも設定が入りやすい特定の場所（看板台）』が存在する可能性が高いです。")
+                    if 'cons_minus_total_diff' in top_features:
+                        advice_list.append("📈 **強烈なお詫び・反発狙い**: 「連続マイナス中の合計吸い込み量」が重要視されています。単に凹んでいるだけでなく『客のヘイトが溜まっている（極端に吸い込んだ）台』への上げリセットを狙うのが有効です。")
+                    if 'event_x_machine_avg_diff' in top_features:
+                        advice_list.append("🎯 **特効機種の存在**: 「イベント×機種の強さ」が重視されています。普段の営業や特定のイベントで『露骨に甘くなる機種』が存在するクセがあります。")
+                    if 'event_x_end_digit_avg_diff' in top_features:
+                        advice_list.append("🔢 **当たり末尾の存在**: 「イベント×末尾の強さ」が重視されています。イベント日は『特定の末尾』に当たりを寄せてくる傾向が強いため、周りの状況（同じ末尾の挙動）を要チェックです。")
+                    if 'prev_unlucky_gap' in top_features:
+                        advice_list.append("🔄 **高設定の不発・据え置き**: 「前日の不発度合い（REGは引けたが差枚マイナス）」が重視されています。前日悔しい思いをした高設定挙動の不発台は、そのまま翌日も据え置かれるチャンス大です。")
+                    if 'prev_bonus_balance' in top_features:
+                        advice_list.append("⚖️ **BIG・REGの偏り反発**: 「前日のREG先行具合」が重視されています。REGに極端に偏って負けた台（BB欠損）は、翌日の狙い目として非常に優秀です。")
 
             # 警戒パターン
             if worst_trends_df is not None and not worst_trends_df.empty:
