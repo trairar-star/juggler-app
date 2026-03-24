@@ -353,18 +353,22 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             有効稼働数=('valid_play', 'sum'),
             勝数=('valid_win', 'sum'),
             平均差枚=('差枚_actual', 'mean'),
-            設定5近似度=('設定5近似度', 'mean')
+            設定5近似度=('設定5近似度', 'mean'),
+            平均期待度=('prediction_score', 'mean')
         ).reset_index().sort_values('設定5近似度', ascending=False)
         ver_stats['勝率'] = np.where(ver_stats['有効稼働数'] > 0, ver_stats['勝数'] / ver_stats['有効稼働数'] * 100, 0.0)
         ver_stats['高設定率'] = np.where(ver_stats['有効稼働数'] > 0, ver_stats['高設定数'] / ver_stats['有効稼働数'] * 100, 0.0)
+        ver_stats['平均期待度'] = ver_stats['平均期待度'] * 100
         
         st.dataframe(
-            ver_stats,
+            ver_stats[['ai_version', '平均期待度', '検証台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '設定5近似度']],
             column_config={
                 "ai_version": st.column_config.TextColumn("バージョン設定"),
+                "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                 "検証台数": st.column_config.NumberColumn("台数", format="%d台"),
-                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
-                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=1),
+                "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
                 "設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
             },
@@ -684,10 +688,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 有効稼働数=('valid_play', 'sum'),
                 勝数=('valid_win', 'sum'),
                 平均差枚=('差枚_actual', 'mean'),
-                合計差枚=('差枚_actual', 'sum')
+                合計差枚=('差枚_actual', 'sum'),
+                平均期待度=('prediction_score', 'mean')
             ).reset_index()
             rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['勝数'] / rank_stats['有効稼働数'] * 100, 0.0)
             rank_stats['高設定率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['高設定数'] / rank_stats['有効稼働数'] * 100, 0.0)
+            rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
             
             rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
             rank_stats['sort'] = rank_stats['確率帯'].map(rank_order).fillna(99)
@@ -695,10 +701,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             
             rank_stats['信頼度'] = rank_stats['台数'].apply(get_confidence_indicator)
             st.dataframe(
-                rank_stats,
+                rank_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
                 column_config={
                     "確率帯": st.column_config.TextColumn("期待度"),
+                    "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                     "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
                     "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                     "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
                     "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
@@ -813,9 +821,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 有効稼働数=('valid_play', 'sum'),
                 勝数=('valid_win', 'sum'),
                 平均差枚=('差枚_actual', 'mean'),
-                合計差枚=('差枚_actual', 'sum')
+                合計差枚=('差枚_actual', 'sum'),
+                平均期待度=('prediction_score', 'mean')
             ).reset_index()
             rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['勝数'] / rank_stats['有効稼働数'] * 100, 0.0)
+            rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
             
             # ソート順序固定
             rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
@@ -824,10 +834,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             
             rank_stats['信頼度'] = rank_stats['台数'].apply(get_confidence_indicator)
             st.dataframe(
-                rank_stats,
+                rank_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
                 column_config={
                     "確率帯": st.column_config.TextColumn("期待度"),
+                    "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                     "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
                     "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                     "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
                     "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
@@ -1130,10 +1142,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     有効稼働数=('valid_play', 'sum'),
                     勝数=('valid_win', 'sum'),
                     平均差枚=('next_diff', 'mean'),
-                    合計差枚=('next_diff', 'sum')
+                    合計差枚=('next_diff', 'sum'),
+                    平均期待度=('prediction_score', 'mean')
                 ).reset_index()
                 sim_stats['勝率'] = np.where(sim_stats['有効稼働数'] > 0, sim_stats['勝数'] / sim_stats['有効稼働数'] * 100, 0.0)
                 sim_stats['高設定率'] = np.where(sim_stats['有効稼働数'] > 0, sim_stats['高設定数'] / sim_stats['有効稼働数'] * 100, 0.0)
+                sim_stats['平均期待度'] = sim_stats['平均期待度'] * 100
                 
                 rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
                 sim_stats['sort'] = sim_stats['確率帯'].map(rank_order).fillna(99)
@@ -1141,10 +1155,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 sim_stats['信頼度'] = sim_stats['台数'].apply(get_confidence_indicator)
                 
                 st.dataframe(
-                    sim_stats,
+                    sim_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
                     column_config={
                         "確率帯": st.column_config.TextColumn("期待度"),
+                        "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                         "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                        "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
                         "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                         "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
                         "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),

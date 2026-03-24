@@ -262,10 +262,12 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             勝数=('is_win', 'sum'),
                             合計差枚=('差枚_actual', 'sum'),
                             平均差枚=('差枚_actual', 'mean'),
-                            トップ3獲得数=('is_top3', 'sum')
+                            トップ3獲得数=('is_top3', 'sum'),
+                            平均期待度=('prediction_score', 'mean')
                         ).reset_index()
                         
                         rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, (rank_stats['勝数'] / rank_stats['有効稼働数']) * 100, 0.0)
+                        rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
                         rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(int)
                         rank_stats = rank_stats.sort_values('ai_daily_rank')
                         
@@ -277,11 +279,14 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         total_top3 = rank_stats['トップ3獲得数'].sum()
                         avg_diff = total_diff / total_count if total_count > 0 else 0
                         total_win_rate = (total_win / total_valid) * 100 if total_valid > 0 else 0.0
+                        total_avg_score = match_df['prediction_score'].mean() * 100 if not match_df.empty else 0.0
                         
                         rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(str) + "位"
                         total_row = pd.DataFrame([{
                             'ai_daily_rank': '合計/平均',
+                            '平均期待度': total_avg_score,
                             '検証台数': total_count,
+                            '有効稼働数': total_valid,
                             '勝率': total_win_rate,
                             '合計差枚': total_diff,
                             '平均差枚': avg_diff,
@@ -290,10 +295,12 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         rank_stats = pd.concat([rank_stats, total_row], ignore_index=True)
                         
                         st.dataframe(
-                            rank_stats[['ai_daily_rank', '検証台数', '勝率', '合計差枚', '平均差枚', 'トップ3獲得数']],
+                            rank_stats[['ai_daily_rank', '平均期待度', '検証台数', '有効稼働数', '勝率', '合計差枚', '平均差枚', 'トップ3獲得数']],
                             column_config={
                                 "ai_daily_rank": st.column_config.TextColumn("AI予測順位"),
+                                "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                                 "検証台数": st.column_config.NumberColumn("台数"),
+                                "有効稼働数": st.column_config.NumberColumn("有効稼働"),
                                 "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
                                 "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d 枚"),
                                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
