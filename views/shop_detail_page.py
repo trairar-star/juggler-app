@@ -252,69 +252,69 @@ def _calculate_shop_trends(df_train, shop_col, specs):
         train_shop = df_train[df_train[shop_col] == s]
         if len(train_shop) == 0: continue
         
-        s_base_win_rate = train_shop['target'].mean()
+        s_base_win_rate = train_shop['target'].mean() * 100
         trends = []
         
         if 'is_corner' in train_shop.columns:
             subset = train_shop[train_shop['is_corner'] == 1]
-            if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
         if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'REG確率' in train_shop.columns:
             spec_reg_5 = train_shop['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
             subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['REG確率'] >= spec_reg_5)]
-            if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行・BB欠損 (高設定不発狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行・BB欠損 (高設定不発狙い)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
             if 'BIG確率' in train_shop.columns:
                 train_shop_tmp = train_shop.copy()
                 train_shop_tmp['BIG分母'] = train_shop_tmp['BIG確率'].apply(lambda x: 1/x if x > 0 else 9999)
                 subset_bb = train_shop_tmp[(train_shop_tmp['BIG分母'] >= 400) & (train_shop_tmp['REG確率'] >= spec_reg_5)]
-                if len(subset_bb) >= 5: trends.append({"id": "bb_deficit", "条件": "超不発台 (BIG 1/400以下 & REG高設定)", "高設定率": subset_bb['target'].mean(), "サンプル": len(subset_bb)})
+                if len(subset_bb) >= 5: trends.append({"id": "bb_deficit", "条件": "超不発台 (BIG 1/400以下 & REG高設定)", "高設定率": subset_bb['target'].mean() * 100, "サンプル": len(subset_bb)})
         if '連続マイナス日数' in train_shop.columns:
             subset = train_shop[train_shop['連続マイナス日数'] >= 3]
-            if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
         if '差枚' in train_shop.columns:
             subset = train_shop[train_shop['差枚'] <= -1000]
-            if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
             if '累計ゲーム' in train_shop.columns:
                 subset_taco = train_shop[(train_shop['差枚'] <= -1000) & (train_shop['累計ゲーム'] >= 7000)]
-                if len(subset_taco) >= 5: trends.append({"id": "taco_lose", "条件": "タコ粘り大凹み (7000G~ & -1000枚以下)", "高設定率": subset_taco['target'].mean(), "サンプル": len(subset_taco)})
+                if len(subset_taco) >= 5: trends.append({"id": "taco_lose", "条件": "タコ粘り大凹み (7000G~ & -1000枚以下)", "高設定率": subset_taco['target'].mean() * 100, "サンプル": len(subset_taco)})
             subset = train_shop[train_shop['差枚'] >= 1000]
-            if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
             if 'is_win' in train_shop.columns:
                 subset = train_shop[(train_shop['差枚'] >= 1000) & (train_shop['is_win'] == 1)]
-                if len(subset) >= 5: trends.append({"id": "prev_win_reg", "条件": "前日大勝ち (+1000枚以上) & 高設定挙動の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "prev_win_reg", "条件": "前日大勝ち (+1000枚以上) & 高設定挙動の据え置き", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
             else:
                 subset = train_shop[train_shop['差枚'] >= 1000]
-                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
         if 'prev_差枚' in train_shop.columns and '差枚' in train_shop.columns:
             subset_v = train_shop[(train_shop['prev_差枚'] < 0) & (train_shop['差枚'] >= 0)]
-            if len(subset_v) >= 5: trends.append({"id": "v_recovery", "条件": "V字反発 (前々日負け → 前日勝ち)", "高設定率": subset_v['target'].mean(), "サンプル": len(subset_v)})
+            if len(subset_v) >= 5: trends.append({"id": "v_recovery", "条件": "V字反発 (前々日負け → 前日勝ち)", "高設定率": subset_v['target'].mean() * 100, "サンプル": len(subset_v)})
             
             subset_cont_lose = train_shop[(train_shop['prev_差枚'] <= -1000) & (train_shop['差枚'] <= -1000)]
-            if len(subset_cont_lose) >= 5: trends.append({"id": "cont_big_lose", "条件": "連続大負け (-1000枚以下2日連続)", "高設定率": subset_cont_lose['target'].mean(), "サンプル": len(subset_cont_lose)})
+            if len(subset_cont_lose) >= 5: trends.append({"id": "cont_big_lose", "条件": "連続大負け (-1000枚以下2日連続)", "高設定率": subset_cont_lose['target'].mean() * 100, "サンプル": len(subset_cont_lose)})
         if 'target_date_end_digit' in train_shop.columns:
             for d in [0, 5, 7]:
                 subset = train_shop[train_shop['target_date_end_digit'] == d]
-                if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日 (予測日)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日 (予測日)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
         if '末尾番号' in train_shop.columns:
             best_m, best_wr, best_count = -1, 0, 0
             for m in range(10):
                 subset = train_shop[train_shop['末尾番号'] == m]
                 if len(subset) >= 10:
-                    wr = subset['target'].mean()
+                    wr = subset['target'].mean() * 100
                     if wr > best_wr: best_m, best_wr, best_count = m, wr, len(subset)
             if best_m != -1: trends.append({"id": f"end_{int(best_m)}", "条件": f"末尾【{int(best_m)}】", "高設定率": best_wr, "サンプル": best_count})
 
         if '差枚' in train_shop.columns and 'REG確率' in train_shop.columns:
             subset = train_shop[(train_shop['差枚'] >= 2000) & (train_shop['REG確率'] < (1/350))]
-            if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
         if 'mean_7days_diff' in train_shop.columns and 'win_rate_7days' in train_shop.columns:
             subset = train_shop[(train_shop['mean_7days_diff'] >= 500) & (train_shop['win_rate_7days'] < 0.5)]
-            if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 高設定率50%未満)", "高設定率": subset['target'].mean(), "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 高設定率50%未満)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
         
         s_top_trends_df = None
         s_worst_trends_df = None
         if trends:
             all_trends_df = pd.DataFrame(trends)
-            all_trends_df['通常時との差'] = (all_trends_df['高設定率'] - s_base_win_rate) * 100
+            all_trends_df['通常時との差'] = (all_trends_df['高設定率'] - s_base_win_rate)
             s_top_trends_df = all_trends_df[all_trends_df['通常時との差'] > 5].sort_values('高設定率', ascending=False).head(3)
             s_worst_trends_df = all_trends_df[all_trends_df['通常時との差'] < -5].sort_values('高設定率', ascending=True).head(2)
 
@@ -516,8 +516,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 
             # --- 1. 基本設定配分 (ベース高設定率) ---
             if base_win_rate > 0:
-                ratio = max(1, int(1 / base_win_rate))
-                advice_list.append(f"📊 **基本の設定配分**: この店舗の通常営業時の高設定(設定5基準)の投入率は約 **{base_win_rate*100:.1f}%**（およそ **{ratio}台に1台** の割合）です。")
+                ratio = max(1, int(100 / base_win_rate))
+                advice_list.append(f"📊 **基本の設定配分**: この店舗の通常営業時の高設定(設定5基準)の投入率は約 **{base_win_rate:.1f}%**（およそ **{ratio}台に1台** の割合）です。")
 
             # --- 2. 特定日・曜日の傾向 ---
             if pd.notna(pred_date) and not df_raw_shop.empty and '対象日付' in df_raw_shop.columns:

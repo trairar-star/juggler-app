@@ -35,9 +35,9 @@ def _render_monthly_trend_analysis(viz_df):
                 m2.metric("☀️ 中旬 (8-24)", f"{int(val_mid):+d} 枚")
                 m3.metric("🌑 月末 (25-)", f"{int(val_end):+d} 枚")
             else:
-                m1.metric("🌙 月初 (1-7)", f"{val_start:.1%}")
-                m2.metric("☀️ 中旬 (8-24)", f"{val_mid:.1%}")
-                m3.metric("🌑 月末 (25-)", f"{val_end:.1%}")
+                m1.metric("🌙 月初 (1-7)", f"{val_start:.1f}%")
+                m2.metric("☀️ 中旬 (8-24)", f"{val_mid:.1f}%")
+                m3.metric("🌑 月末 (25-)", f"{val_end:.1f}%")
             
             st.markdown("👇 **期間を選択すると、その期間に強い機種が表示されます**")
             selected_period = st.radio("期間選択", ['月初 (1-7日)', '中旬 (8-24日)', '月末 (25日-)'], horizontal=True, label_visibility="collapsed")
@@ -48,14 +48,14 @@ def _render_monthly_trend_analysis(viz_df):
                     st.markdown(f"🎰 **{selected_period} の機種別ランキング**")
                     machine_rank = period_df.groupby('機種名').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), 設置台数=('台番号', 'nunique')).sort_values('高設定率', ascending=False).reset_index()
                     machine_rank['信頼度'] = machine_rank['設置台数'].apply(get_confidence_indicator)
-                    st.dataframe(machine_rank, column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "設置台数": st.column_config.NumberColumn(format="%d 台"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+                    st.dataframe(machine_rank, column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "設置台数": st.column_config.NumberColumn(format="%d 台"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
                     
                     st.markdown(f" **{selected_period} の末尾番号傾向 (0-9)**")
                     if '末尾番号' in period_df.columns:
                         digit_rank = period_df.groupby('末尾番号').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).sort_index().reset_index()
                         digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
                         st.bar_chart(digit_rank.set_index('末尾番号')[chart_metric_shop], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#AB47BC")
-                        st.dataframe(digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, width="stretch")
+                        st.dataframe(digit_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, width="stretch")
                         
                     st.markdown(f"📅 **{selected_period} の曜日別傾向**")
                     if '曜日' in period_df.columns:
@@ -65,14 +65,14 @@ def _render_monthly_trend_analysis(viz_df):
                         wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
                         wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
                         st.bar_chart(wd_rank.set_index('曜日')[chart_metric_shop], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#AB47BC")
-                        st.dataframe(wd_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+                        st.dataframe(wd_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
     
                     if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
                         st.markdown(f"🔥 **{selected_period} のイベント別傾向**")
                         ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(chart_metric_shop, ascending=False)
                         ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
                         st.bar_chart(ev_rank.set_index('日付要素')[chart_metric_shop], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#AB47BC")
-                        st.dataframe(ev_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=1), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+                        st.dataframe(ev_rank.style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
     
             st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
             day_stats = trend_df.groupby('day')[y_col].mean()
@@ -87,12 +87,12 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
             if top_trends_df is not None and not top_trends_df.empty:
                 st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りやすい『激アツ条件 (🔥)』です。")
                 top_trends_df['信頼度'] = top_trends_df['サンプル'].apply(get_confidence_indicator)
-                st.dataframe(top_trends_df, column_config={"条件": st.column_config.TextColumn("激アツ条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+                st.dataframe(top_trends_df, column_config={"条件": st.column_config.TextColumn("激アツ条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
             if worst_trends_df is not None and not worst_trends_df.empty:
                 st.caption("AIが過去データから見つけた、この店舗で特に翌日に高設定が入りにくい『警戒条件 (⚠️)』です。")
                 worst_trends_df['信頼度'] = worst_trends_df['サンプル'].apply(get_confidence_indicator)
-                st.dataframe(worst_trends_df, column_config={"条件": st.column_config.TextColumn("警戒条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.2f", min_value=0, max_value=1, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
-            st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1%}** です。")
+                st.dataframe(worst_trends_df, column_config={"条件": st.column_config.TextColumn("警戒条件"), "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100, help="条件合致時の高設定率"), "通常時との差": st.column_config.NumberColumn("差分", format="%+.1fpt", help="通常時との高設定率の差"), "サンプル": st.column_config.NumberColumn("台数", format="%d台", help="サンプル数"), "信頼度": st.column_config.TextColumn("信頼", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
+            st.caption(f"※この店舗の通常時の平均高設定率は **{base_win_rate:.1f}%** です。")
         
         viz_df = df_raw_shop.copy()
         if not viz_df.empty:
@@ -106,7 +106,7 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
                 (viz_df['累計ゲーム'] >= 3000) & 
                 ((viz_df['REG確率'] >= spec_reg) | ((viz_df['合算確率'] >= spec_tot) & (viz_df['REG確率'] >= spec_reg3)))
             ).astype(int)
-            viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan)
+            viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan) * 100
         else:
             viz_df['高設定_rate'] = np.nan
         
@@ -215,7 +215,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     analysis_df['REG分母'] = analysis_df['REG確率'].apply(lambda x: int(1/x) if x > 0 else 9999)
     
     analysis_df['valid_play'] = (analysis_df['next_累計ゲーム'] >= 3000) | ((analysis_df['next_累計ゲーム'] < 3000) & (analysis_df['next_diff'].abs() >= 1000))
-    analysis_df['target_rate'] = np.where(analysis_df['valid_play'], analysis_df['target'], np.nan)
+    analysis_df['target_rate'] = np.where(analysis_df['valid_play'], analysis_df['target'], np.nan) * 100
     
     # ノイズ除去用のゲーム数フィルター
     with col_f2:
@@ -248,8 +248,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             base = alt.Chart(reg_stats).encode(x=alt.X('REG区間', title='前日のREG確率区分'))
             
             bar = base.mark_bar(color='#66BB6A', opacity=0.7).encode(
-                y=alt.Y('高設定率', axis=alt.Axis(format='%', title='高設定率')),
-                tooltip=['REG区間', alt.Tooltip('高設定率', format='.1%'), 'サンプル数', '信頼度']
+                y=alt.Y('高設定率', axis=alt.Axis(title='高設定率 (%)')),
+                tooltip=['REG区間', alt.Tooltip('高設定率', format='.1f', title='高設定率 (%)'), 'サンプル数', '信頼度']
             )
             
             line = base.mark_line(color='#FF7043', point=True).encode(
@@ -292,8 +292,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             chart_d = alt.Chart(d_stats).mark_bar(color='#FFA726').encode(
                 x=alt.X('差枚区間', title='前日の結果', sort=None),
-                y=alt.Y('target_rate', title='翌日高設定率', axis=alt.Axis(format='%')),
-                tooltip=['差枚区間', alt.Tooltip('target_rate', format='.1%', title='翌日高設定率')]
+                y=alt.Y('target_rate', title='翌日高設定率 (%)'),
+                tooltip=['差枚区間', alt.Tooltip('target_rate', format='.1f', title='翌日高設定率 (%)')]
             )
             st.altair_chart(chart_d, width="stretch")
 
@@ -320,7 +320,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             # 機種別基準を適用した 'is_win' を高設定フラグとして利用
             event_df['valid_play'] = (event_df['next_累計ゲーム'] >= 3000) | ((event_df['next_累計ゲーム'] < 3000) & (event_df['next_diff'].abs() >= 1000))
-            event_df['高設定挙動'] = np.where(event_df['valid_play'], event_df.get('is_win', (event_df['REG分母'] <= 260).astype(int)), np.nan)
+            event_df['高設定挙動'] = np.where(event_df['valid_play'], event_df.get('is_win', (event_df['REG分母'] <= 260).astype(int)), np.nan) * 100
             
             event_stats = event_df.groupby('イベントランク').agg(
                 高設定投入率=('高設定挙動', 'mean'),
@@ -339,8 +339,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 with col_e1:
                     chart_e = alt.Chart(event_stats).mark_bar(color='#AB47BC', opacity=0.8).encode(
                         x=alt.X('イベントランク', sort=[k for k in rank_order.keys()], title='イベントの強さ'),
-                        y=alt.Y('高設定投入率', axis=alt.Axis(format='%', title='高設定(設定5基準)の割合')),
-                        tooltip=['イベントランク', alt.Tooltip('高設定投入率', format='.1%'), 'サンプル数', '信頼度']
+                        y=alt.Y('高設定投入率', axis=alt.Axis(title='高設定(設定5基準)の割合 (%)')),
+                        tooltip=['イベントランク', alt.Tooltip('高設定投入率', format='.1f', title='高設定投入率 (%)'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_e, width="stretch")
                 
@@ -348,7 +348,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     st.dataframe(
                         event_stats,
                         column_config={
-                            "高設定投入率": st.column_config.ProgressColumn("高設定割合", format="%.1f%%", min_value=0, max_value=1),
+                            "高設定投入率": st.column_config.ProgressColumn("高設定割合", format="%.1f%%", min_value=0, max_value=100),
                             "平均差枚": st.column_config.NumberColumn("台平均差枚", format="%+d 枚"),
                             "サンプル数": st.column_config.NumberColumn("集計台数", format="%d 台"),
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
@@ -389,14 +389,14 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('曜日', sort=[weekdays_map[i] for i in range(7)], title='予測日の曜日'),
                             y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                             color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                            tooltip=['曜日', alt.Tooltip('高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['曜日', alt.Tooltip('高設定率', format='.1f', title='高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_wd, width="stretch")
                     with col_w2:
                         st.dataframe(
                             wd_stats[['曜日', '高設定率', '平均翌日差枚', 'サンプル数', '信頼度']],
                             column_config={
-                                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -423,14 +423,14 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('末尾番号', title='末尾番号', sort=None),
                             y=alt.Y('平均翌日差枚', title='平均翌日差枚 (枚)'),
                             color=alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
-                            tooltip=['末尾番号', alt.Tooltip('高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['末尾番号', alt.Tooltip('高設定率', format='.1f', title='高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_end, width="stretch")
                     with col_e2:
                         st.dataframe(
                             end_stats[['末尾番号', '高設定率', '平均翌日差枚', 'サンプル数', '信頼度']],
                             column_config={
-                                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -447,8 +447,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
         if not reg_df.empty:
             chart_metric = st.radio("📊 グラフの表示指標", ["平均翌日差枚", "翌日高設定率"], horizontal=True)
             y_field = "平均翌日差枚" if chart_metric == "平均翌日差枚" else "翌日高設定率"
-            y_title = "平均翌日差枚 (枚)" if chart_metric == "平均翌日差枚" else "翌日高設定率"
-            y_format = "" if chart_metric == "平均翌日差枚" else "%"
+            y_title = "平均翌日差枚 (枚)" if chart_metric == "平均翌日差枚" else "翌日高設定率 (%)"
+            y_format = "" if chart_metric == "平均翌日差枚" else ".1f"
             y_axis = alt.Axis(format=y_format, title=y_title) if y_format else alt.Axis(title=y_title)
             color_cond = alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")) if chart_metric == "平均翌日差枚" else alt.value("#AB47BC")
     
@@ -496,7 +496,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         st.dataframe(
                             rl_stats,
                             column_config={
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
@@ -508,7 +508,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('REG先行分類', title='REG先行の分類'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['REG先行分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['REG先行分類', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_rl, width="stretch")
     
@@ -543,7 +543,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         dp_stats,
                         column_config={
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                            "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                             "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                         },
                         hide_index=True,
@@ -554,7 +554,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         x=alt.X('前日結果', title='前日差枚'),
                         y=alt.Y(y_field, axis=y_axis),
                         color=color_cond,
-                        tooltip=['前日結果', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                        tooltip=['前日結果', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                     ).interactive()
                     st.altair_chart(chart_dp, width="stretch")
     
@@ -582,7 +582,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             bl_stats,
                             column_config={
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -593,7 +593,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('G数区間', title='前日の総ゲーム数'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['G数区間', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['G数区間', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_bl, width="stretch")
                 else:
@@ -640,7 +640,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             t2_stats,
                             column_config={
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -651,7 +651,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('2日間トレンド', title='2日間の成績パターン'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['2日間トレンド', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['2日間トレンド', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_t2, width="stretch")
     
@@ -688,7 +688,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         st.dataframe(
                             r_stats,
                             column_config={
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
@@ -700,7 +700,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('マイナス継続状況', title='マイナス継続状況'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['マイナス継続状況', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['マイナス継続状況', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_r, width="stretch")
     
@@ -745,7 +745,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             stab_stats,
                             column_config={
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -756,7 +756,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('安定度分類', title='台の性質'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['安定度分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['安定度分類', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_stab, width="stretch")
     
@@ -803,7 +803,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             bb_stats,
                             column_config={
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -814,7 +814,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('BB欠損分類', title='BB欠損の度合い'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['BB欠損分類', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['BB欠損分類', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_bb, width="stretch")
     
@@ -848,7 +848,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             rel_stats,
                             column_config={
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)"),
-                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=1),
+                                "翌日高設定率": st.column_config.ProgressColumn("翌日高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
                             },
                             hide_index=True,
@@ -859,7 +859,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             x=alt.X('相対稼働率', title='店舗平均に対する稼働割合'),
                             y=alt.Y(y_field, axis=y_axis),
                             color=color_cond,
-                            tooltip=['相対稼働率', alt.Tooltip('翌日高設定率', format='.1%'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            tooltip=['相対稼働率', alt.Tooltip('翌日高設定率', format='.1f', title='翌日高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
                         ).interactive()
                         st.altair_chart(chart_rel, width="stretch")
     

@@ -101,7 +101,7 @@ def render_my_balance_page(df_raw):
         st.subheader("🏬 店舗別 成績")
         shop_rank = df_balance.groupby('店名').agg(
             総収支=('収支', 'sum'),
-            勝率=('収支', lambda x: (x > 0).mean()),
+            勝率=('収支', lambda x: (x > 0).mean() * 100),
             稼働数=('収支', 'count')
         ).sort_values('総収支', ascending=False).reset_index()
         
@@ -110,7 +110,7 @@ def render_my_balance_page(df_raw):
             column_config={
                 "店名": st.column_config.TextColumn("店舗"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
-                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
             width="stretch",
@@ -121,7 +121,7 @@ def render_my_balance_page(df_raw):
         st.subheader("🎰 機種別 成績")
         machine_rank = df_balance.groupby('機種名').agg(
             総収支=('収支', 'sum'),
-            勝率=('収支', lambda x: (x > 0).mean()),
+            勝率=('収支', lambda x: (x > 0).mean() * 100),
             稼働数=('収支', 'count')
         ).sort_values('総収支', ascending=False).reset_index()
         
@@ -130,7 +130,7 @@ def render_my_balance_page(df_raw):
             column_config={
                 "機種名": st.column_config.TextColumn("機種"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
-                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
             width="stretch",
@@ -149,7 +149,7 @@ def render_my_balance_page(df_raw):
     # 集計
     weekday_rank = df_balance.groupby(['曜日_num', '曜日']).agg(
         総収支=('収支', 'sum'),
-        勝率=('収支', lambda x: (x > 0).mean()),
+        勝率=('収支', lambda x: (x > 0).mean() * 100),
         稼働数=('収支', 'count')
     ).reset_index().sort_values('曜日_num')
     
@@ -160,7 +160,7 @@ def render_my_balance_page(df_raw):
             x=alt.X('曜日', sort=[weekdays_map[i] for i in range(7)], title='曜日'),
             y=alt.Y('総収支', title='総収支 (円)'),
             color=alt.condition(alt.datum.総収支 > 0, alt.value("#ef5350"), alt.value("#42a5f5")),
-            tooltip=['曜日', alt.Tooltip('総収支', format='+d'), alt.Tooltip('勝率', format='.1%')]
+            tooltip=['曜日', alt.Tooltip('総収支', format='+d'), alt.Tooltip('勝率', format='.1f', title='勝率(%)')]
         ).interactive()
         st.altair_chart(weekday_chart, width="stretch")
         
@@ -170,7 +170,7 @@ def render_my_balance_page(df_raw):
             column_config={
                 "曜日": st.column_config.TextColumn("曜日"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
-                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=1),
+                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
                 "稼働数": st.column_config.NumberColumn("回数"),
             },
             width="stretch",

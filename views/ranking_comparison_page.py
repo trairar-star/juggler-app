@@ -257,7 +257,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             トップ3獲得数=('is_top3', 'sum')
                         ).reset_index()
                         
-                        rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['勝数'] / rank_stats['有効稼働数'], 0.0)
+                        rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, (rank_stats['勝数'] / rank_stats['有効稼働数']) * 100, 0.0)
                         rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(int)
                         rank_stats = rank_stats.sort_values('ai_daily_rank')
                         
@@ -268,7 +268,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         total_diff = rank_stats['合計差枚'].sum()
                         total_top3 = rank_stats['トップ3獲得数'].sum()
                         avg_diff = total_diff / total_count if total_count > 0 else 0
-                        total_win_rate = total_win / total_valid if total_valid > 0 else 0
+                        total_win_rate = (total_win / total_valid) * 100 if total_valid > 0 else 0.0
                         
                         rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(str) + "位"
                         total_row = pd.DataFrame([{
@@ -286,7 +286,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             column_config={
                                 "ai_daily_rank": st.column_config.TextColumn("AI予測順位"),
                                 "検証台数": st.column_config.NumberColumn("台数"),
-                                "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=1.0),
+                                "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
                                 "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d 枚"),
                                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
                                 "トップ3獲得数": st.column_config.NumberColumn("Top3的中", format="%d 回"),
