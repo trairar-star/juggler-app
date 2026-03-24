@@ -77,6 +77,9 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
     # 保存当時のスコアと予測結果を使用
     if 'prediction_score_saved' in base_df.columns:
         base_df['prediction_score'] = base_df['prediction_score_saved']
+    if 'prediction_score' in base_df.columns:
+        base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce')
+        
     if '予測差枚数_saved' in base_df.columns:
         base_df['予測差枚数'] = base_df['予測差枚数_saved']
     if '機種名_saved' in base_df.columns:
@@ -87,6 +90,11 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
         df_raw_temp = df_raw.copy()
         df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
         df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+        
+        # 実績データ側の店舗カラム名を統一
+        raw_shop_col = '店名' if '店名' in df_raw_temp.columns else ('店舗名' if '店舗名' in df_raw_temp.columns else None)
+        if raw_shop_col and raw_shop_col != shop_col:
+            df_raw_temp = df_raw_temp.rename(columns={raw_shop_col: shop_col})
     else:
         df_raw_temp = pd.DataFrame()
 

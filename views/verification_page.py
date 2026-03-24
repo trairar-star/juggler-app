@@ -98,11 +98,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 
                 if 'ai_version' in df_pred_log.columns:
                     df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
-                    # 実行日時が一番新しいログのバージョンをデフォルトにする
-                    latest_version = df_pred_log.sort_values('実行日時', ascending=False)['ai_version'].iloc[0] if not df_pred_log.empty else 'すべて'
                     versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
-                    default_idx = versions.index(latest_version) if latest_version in versions else 0
-                    selected_version = st.selectbox("AIバージョンで絞り込み", versions, index=default_idx)
+                    # 過去のデータも表示されるよう、デフォルトで「すべて」を選択する
+                    selected_version = st.selectbox("AIバージョンで絞り込み", versions, index=0)
                     if selected_version != 'すべて':
                         df_pred_log = df_pred_log[df_pred_log['ai_version'] == selected_version]
 
@@ -184,6 +182,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     # 保存当時のスコアと予測結果を使用
     if 'prediction_score_saved' in base_df.columns:
         base_df['prediction_score'] = base_df['prediction_score_saved']
+    if 'prediction_score' in base_df.columns:
+        base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce')
+        
     if '予測差枚数_saved' in base_df.columns:
         base_df['予測差枚数'] = base_df['予測差枚数_saved']
     if '機種名_saved' in base_df.columns:
@@ -200,6 +201,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         df_raw_temp = df_raw.copy()
         df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
         df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+        
+        # 実績データ側の店舗カラム名を統一 (紐付け失敗を防ぐ)
+        raw_shop_col = '店名' if '店名' in df_raw_temp.columns else ('店舗名' if '店舗名' in df_raw_temp.columns else None)
+        if raw_shop_col and raw_shop_col != shop_col:
+            df_raw_temp = df_raw_temp.rename(columns={raw_shop_col: shop_col})
     else:
         df_raw_temp = pd.DataFrame()
 
