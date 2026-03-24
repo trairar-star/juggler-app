@@ -99,89 +99,22 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     
     # --- 結果点数（設定5近似度）の計算 ---
     shop_avg_g = display_df['総回転'].mean() if not display_df.empty else 4000
-    base_g = max(2500, min(5000, shop_avg_g))
-    sigma_half_g = base_g
-    sigma_zero_g = base_g * 1.5
-    discount_target_g = base_g
-    penalty_g = base_g * 0.75
 
-    specs = backend.get_machine_specs()
-    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名', diff_col='差枚'):
+    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名'):
         g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
         act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
         act_r = pd.to_numeric(row.get(r_col, 0), errors='coerce')
-        diff = pd.to_numeric(row.get(diff_col, 0), errors='coerce')
-        if pd.isna(g) or g <= 0: return np.nan
-        
         machine = row.get(m_col, '')
-        matched_spec = backend.get_matched_spec_key(machine, specs)
-        p_b, p_r = 1/259.0, 1/255.0
-        if matched_spec and "設定5" in specs[matched_spec]:
-            s5 = specs[matched_spec]["設定5"]
-            if "BIG" in s5: p_b = 1.0 / s5["BIG"]
-            if "REG" in s5: p_r = 1.0 / s5["REG"]
-            
-        exp_b, exp_r = g * p_b, g * p_r
-        
-        sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
-        sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
-        
-        # 店舗の平均G数に合わせて、G数が増えるほど「確率のブレ(σ)による免除」を減らす
-        sigma_multiplier = 0.5
-        if g >= sigma_zero_g:
-            sigma_multiplier = 0.0
-        elif g >= sigma_half_g:
-            sigma_multiplier = 0.25
-            
-        deficit_r = max(0, exp_r - act_r)
-        adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
-        
-        deficit_b = max(0, exp_b - act_b)
-        adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
         
         penalty_reg = st.session_state.get('penalty_reg', 15)
         penalty_big = st.session_state.get('penalty_big', 5)
         low_g_penalty = st.session_state.get('low_g_penalty', 30)
         
-        score_r = max(0, 80 - (adjusted_deficit_r * penalty_reg))
-        score_b = max(0, 20 - (adjusted_deficit_b * penalty_big))
-        
-        total_score = score_r + score_b
-        
-        if g < discount_target_g:
-            multiplier = 0.90 + (g / float(discount_target_g)) * 0.10
-            total_score *= multiplier
-            
-        if g < 1000:
-            total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
-            
-        if g >= 7000 and adjusted_deficit_r <= 0:
-            bonus = min(5.0, (g - 7000) / 500.0)
-            total_score = min(100.0, total_score + bonus)
-            
-        is_abandoned = False
-        tot_b_r = act_b + act_r
-        if g >= 500 and tot_b_r == 0: is_abandoned = True
-        elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
-        elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
-        
-        valid_play = (g >= 3000) or (abs(diff) >= 1000)
-        
-        if is_abandoned:
-            total_score *= 0.5
-            
-        # 一定のゲーム数(店舗平均の75%以上)回っていて確率が悪い場合は、言い訳無用で重く減点する
-        if g >= penalty_g:
-            reg_prob_den = g / act_r if act_r > 0 else 9999
-            tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
-            
-            if reg_prob_den > 400: total_score -= 30
-            elif reg_prob_den > 300: total_score -= 15
-                
-            if tot_prob_den > 180: total_score -= 30
-            elif tot_prob_den > 150: total_score -= 15
-            
-        return max(0.0, total_score)
+        return backend.calculate_setting_score(
+            g=g, act_b=act_b, act_r=act_r, machine_name=machine,
+            shop_avg_g=shop_avg_g, penalty_reg=penalty_reg, penalty_big=penalty_big,
+            low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
+        )
 
     display_df['結果点数'] = display_df.apply(calculate_score, axis=1)
     

@@ -269,98 +269,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     shop_avg_g_dict = base_df.groupby(shop_col)['結果_累計ゲーム'].mean().to_dict()
 
     # --- 設定5近似度の算出 (ボーナス回数の精査) ---
-    specs = backend.get_machine_specs()
     def evaluate_setting5(row):
         g = row.get('結果_累計ゲーム', 0)
         act_b = row.get('結果_BIG', 0)
         act_r = row.get('結果_REG', 0)
-        if pd.isna(g) or g <= 0: return pd.Series([0, 0, 0, 0, 0, 0])
         machine = row.get('機種名', '')
-        matched_spec = backend.get_matched_spec_key(machine, specs)
-        p_b, p_r = 1/259.0, 1/255.0 # デフォルト
-        if matched_spec and "設定5" in specs[matched_spec]:
-            s5 = specs[matched_spec]["設定5"]
-            if "BIG" in s5: p_b = 1.0 / s5["BIG"]
-            if "REG" in s5: p_r = 1.0 / s5["REG"]
-        exp_b, exp_r = g * p_b, g * p_r
-        diff_b, diff_r = act_b - exp_b, act_r - exp_r
         
         s_name = row.get(shop_col, '')
         shop_avg_g = shop_avg_g_dict.get(s_name, 4000)
-        base_g = max(2500, min(5000, shop_avg_g))
-        
-        sigma_half_g = base_g
-        sigma_zero_g = base_g * 1.5
-        discount_target_g = base_g
-        penalty_g = base_g * 0.75
-
-        # --- 2. 点数（設定5近似度）の確率論的な調整 ---
-        # 標準偏差(σ)を計算し、「確率的なブレ（0.5σ）」の範囲内ならペナルティを免除する
-        sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
-        sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
-        
-        if use_strict_scoring:
-            # 店舗の平均G数に合わせて、免除ラインを変動
-            sigma_multiplier = 0.5
-            if g >= sigma_zero_g:
-                sigma_multiplier = 0.0
-            elif g >= sigma_half_g:
-                sigma_multiplier = 0.25
-        else:
-            # 従来通り一律0.5σ免除
-            sigma_multiplier = 0.5
-            
-        deficit_r = max(0, exp_r - act_r)
-        adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
-        
-        deficit_b = max(0, exp_b - act_b)
-        adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
-        
-        score_r = max(0, 80 - (adjusted_deficit_r * penalty_reg))
-        score_b = max(0, 20 - (adjusted_deficit_b * penalty_big))
-        
-        total_score = score_r + score_b
-        
-        # --- 回転数（ゲーム数）による信頼度補正（いい塩梅の調整） ---
-        # 1. 稼働が十分でない場合：まぐれ上振れの可能性を考慮し、最大10%の範囲で徐々に割り引く
-        if g < discount_target_g:
-            multiplier = 0.90 + (g / float(discount_target_g)) * 0.10
-            total_score *= multiplier
-            
-        # 2. 極端な低稼働（1000G未満）：サイドバーの設定（low_g_penalty）をさらに強力に適用
-        if g < 1000:
-            total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
-            
-        # 3. 超高稼働（7000G以上）：本物の高設定の証拠として、不足が少ない優秀台にボーナス加点
-        if g >= 7000 and adjusted_deficit_r <= 0: # 確率的に全く不足していない場合
-            # 7000Gで+0点、8000Gで+2点、9500G以上で最大+5点のボーナス
-            bonus = min(5.0, (g - 7000) / 500.0)
-            total_score = min(100.0, total_score + bonus)
-            
-        # 4. 明らかな「見切り台（確率的に高設定が極めて薄い）」への追加ペナルティ
-        is_abandoned = False
-        tot_b_r = act_b + act_r
-        if g >= 500 and tot_b_r == 0: is_abandoned = True
-        elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
-        elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
-        
-        if is_abandoned:
-            total_score *= 0.5 # 高設定の可能性が著しく低いため点数半減
-            
-        # --- 確率ベースの強制減点 ---
-        if use_strict_scoring:
-            # 店舗の平均稼働の75%以上回っていて確率が悪い場合は、重く減点する
-            if g >= penalty_g:
-                reg_prob_den = g / act_r if act_r > 0 else 9999
-                tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
-                
-                if reg_prob_den > 400: total_score -= 30
-                elif reg_prob_den > 300: total_score -= 15
-                    
-                if tot_prob_den > 180: total_score -= 30
-                elif tot_prob_den > 150: total_score -= 15
-            
-        return pd.Series([max(0.0, total_score), exp_b, exp_r, diff_b, diff_r])
+        score, exp_b, exp_r, diff_b, diff_r = backend.calculate_setting_score(
+            g=g, act_b=act_b, act_r=act_r, machine_name=machine, shop_avg_g=shop_avg_g,
+            penalty_reg=penalty_reg, penalty_big=penalty_big, low_g_penalty=low_g_penalty,
+            use_strict_scoring=use_strict_scoring, return_details=True
+        )
+        return pd.Series([score, exp_b, exp_r, diff_b, diff_r])
         
     eval_df = base_df.apply(evaluate_setting5, axis=1)
     base_df[['設定5近似度', '期待BIG', '期待REG', 'BIG不足分', 'REG不足分']] = eval_df

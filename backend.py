@@ -93,6 +93,113 @@ def get_matched_spec_key(machine_name, specs):
             return spec_key
     return "ジャグラー（デフォルト）"
 
+def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000, 
+                            penalty_reg=15, penalty_big=5, low_g_penalty=30, 
+                            use_strict_scoring=True, return_details=False):
+    """
+    稼働データから「設定5近似度（100点満点）」を計算する共通関数
+    """
+    import math
+    if pd.isna(g) or g <= 0:
+        if return_details:
+            return 0.0, 0.0, 0.0, 0.0, 0.0
+        return np.nan
+
+    specs = get_machine_specs()
+    matched_spec = get_matched_spec_key(machine_name, specs)
+    p_b, p_r = 1/259.0, 1/255.0 # デフォルト
+    if matched_spec and "設定5" in specs[matched_spec]:
+        s5 = specs[matched_spec]["設定5"]
+        if "BIG" in s5: p_b = 1.0 / s5["BIG"]
+        if "REG" in s5: p_r = 1.0 / s5["REG"]
+        
+    exp_b, exp_r = g * p_b, g * p_r
+    diff_b, diff_r = act_b - exp_b, act_r - exp_r
+    
+    base_g = max(2500, min(5000, shop_avg_g))
+    sigma_half_g = base_g
+    sigma_zero_g = base_g * 1.5
+    discount_target_g = base_g
+    penalty_g = base_g * 0.75
+
+    sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
+    sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
+    
+    if use_strict_scoring:
+        sigma_multiplier = 0.5
+        if g >= sigma_zero_g:
+            sigma_multiplier = 0.0
+        elif g >= sigma_half_g:
+            sigma_multiplier = 0.25
+    else:
+        sigma_multiplier = 0.5
+        
+    deficit_r = max(0, exp_r - act_r)
+    adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
+    
+    deficit_b = max(0, exp_b - act_b)
+    adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
+    
+    adj_penalty_reg = penalty_reg
+    adj_penalty_big = penalty_big
+    
+    if matched_spec and "設定1" in specs[matched_spec] and "設定5" in specs[matched_spec]:
+        s1 = specs[matched_spec]["設定1"]
+        s5 = specs[matched_spec]["設定5"]
+        diff_b_spec = max(0, s1.get("BIG", 300) - s5.get("BIG", 300))
+        diff_r_spec = max(0, s1.get("REG", 400) - s5.get("REG", 400))
+        
+        if diff_b_spec > 0 or diff_r_spec > 0:
+            adj_b = diff_b_spec * 1.5
+            adj_r = diff_r_spec
+            total_adj = adj_b + adj_r
+            if total_adj > 0:
+                total_penalty = penalty_reg + penalty_big
+                adj_penalty_big = total_penalty * (adj_b / total_adj)
+                adj_penalty_reg = total_penalty * (adj_r / total_adj)
+    
+    score_r = max(0, 80 - (adjusted_deficit_r * adj_penalty_reg))
+    score_b = max(0, 20 - (adjusted_deficit_b * adj_penalty_big))
+    
+    total_score = score_r + score_b
+    
+    if g < discount_target_g:
+        multiplier = 0.90 + (g / float(discount_target_g)) * 0.10
+        total_score *= multiplier
+        
+    if g < 1000:
+        total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
+        
+    if g >= 7000 and adjusted_deficit_r <= 0:
+        bonus = min(5.0, (g - 7000) / 500.0)
+        total_score = min(100.0, total_score + bonus)
+        
+    is_abandoned = False
+    tot_b_r = act_b + act_r
+    if g >= 500 and tot_b_r == 0: is_abandoned = True
+    elif g >= 1000 and tot_b_r > 0 and (g / tot_b_r) >= 400: is_abandoned = True
+    elif g >= 1500 and tot_b_r > 0 and (g / tot_b_r) >= 300: is_abandoned = True
+    
+    if is_abandoned:
+        total_score *= 0.5
+        
+    if use_strict_scoring:
+        if g >= penalty_g:
+            reg_prob_den = g / act_r if act_r > 0 else 9999
+            tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
+            
+            if reg_prob_den > 400: total_score -= 30
+            elif reg_prob_den > 300: total_score -= 15
+                
+            if tot_prob_den > 180: total_score -= 30
+            elif tot_prob_den > 150: total_score -= 15
+            
+    final_score = max(0.0, total_score)
+    
+    if return_details:
+        return final_score, exp_b, exp_r, diff_b, diff_r
+    return final_score
+
 # ---------------------------------------------------------
 # データ読み込み・保存関数 (Model / Logic)
 # ---------------------------------------------------------

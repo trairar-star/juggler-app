@@ -99,8 +99,13 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
             viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
             spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
             spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+            spec_reg3 = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+            
             viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & (viz_df['差枚'].abs() >= 1000))
-            viz_df['高設定'] = ((viz_df['REG確率'] >= spec_reg) | (viz_df['合算確率'] >= spec_tot)).astype(int)
+            viz_df['高設定'] = (
+                (viz_df['累計ゲーム'] >= 3000) & 
+                ((viz_df['REG確率'] >= spec_reg) | ((viz_df['合算確率'] >= spec_tot) & (viz_df['REG確率'] >= spec_reg3)))
+            ).astype(int)
             viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan)
         else:
             viz_df['高設定_rate'] = np.nan
@@ -270,7 +275,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             chart_g = alt.Chart(g_stats).mark_bar().encode(
                 x=alt.X('G数区間', title='前日の回転数'),
                 y=alt.Y('next_diff', title='翌日の平均差枚'),
-                color=alt.condition(alt.datum.next_diff > 0, alt.value("#FF7043"), alt.value("#42A5F5"))
+                color=alt.condition(alt.datum.next_diff > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                tooltip=['G数区間', alt.Tooltip('next_diff', format='+.0f', title='翌日の平均差枚')]
             )
             st.altair_chart(chart_g, width="stretch")
     
@@ -286,7 +292,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             chart_d = alt.Chart(d_stats).mark_bar(color='#FFA726').encode(
                 x=alt.X('差枚区間', title='前日の結果', sort=None),
-                y=alt.Y('target_rate', title='翌日高設定率', axis=alt.Axis(format='%'))
+                y=alt.Y('target_rate', title='翌日高設定率', axis=alt.Axis(format='%')),
+                tooltip=['差枚区間', alt.Tooltip('target_rate', format='.1%', title='翌日高設定率')]
             )
             st.altair_chart(chart_d, width="stretch")
 
@@ -897,6 +904,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 imp_shop = imp_shop.sort_values('importance', ascending=False)
     
             if not imp_shop.empty:
+                # 店舗別モデルの重要度順でリストを作成し、両方のグラフのY軸ソート順を統一する
+                sort_order = imp_shop['特徴量名'].tolist()
+                
                 # 店舗別モデルと全体モデルを比較表示
                 st.caption(f"AIが【{selected_shop}】の台を予測する際に重視したデータ（左）と、全店舗共通の傾向（右）を比較します。")
                 
@@ -906,7 +916,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     st.markdown(f"**【{selected_shop}】専用モデル**")
                     chart_shop = alt.Chart(imp_shop).mark_bar(color='#AB47BC').encode(
                         x=alt.X('importance:Q', title='重要度スコア'),
-                        y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
+                        y=alt.Y('特徴量名:N', title='特徴量', sort=sort_order, axis=alt.Axis(labelLimit=0)),
                         tooltip=['特徴量名', 'importance']
                     ).properties(height=500).interactive()
                     st.altair_chart(chart_shop, width="stretch")
@@ -916,7 +926,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     if not imp_all.empty:
                         chart_all = alt.Chart(imp_all).mark_bar(color='#5C6BC0').encode(
                             x=alt.X('importance:Q', title='重要度スコア'),
-                            y=alt.Y('特徴量名:N', title=None, sort='-x', axis=alt.Axis(labelLimit=0)),
+                            y=alt.Y('特徴量名:N', title=None, sort=sort_order, axis=alt.Axis(labelLimit=0)),
                             tooltip=['特徴量名', 'importance']
                         ).properties(height=500).interactive()
                         st.altair_chart(chart_all, width="stretch")
