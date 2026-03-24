@@ -203,12 +203,9 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     if not top3_machines.empty:
                         top3_machines = top3_machines.rename(columns={'対象日付': '実際の稼働日'})
                         
-                    # 画面表示と同じく「各日のAI予測上位10%」に絞ってから合致判定を行う
+                    # 保存されている予測ログはすでに「上位10%」に絞られているため、そのまま順位をつけて合致判定を行う
                     valid_pred_df = base_eval_df.copy()
                     valid_pred_df['ai_daily_rank'] = valid_pred_df.groupby(['実際の稼働日', shop_col])['prediction_score'].rank(method='first', ascending=False)
-                    daily_counts = valid_pred_df.groupby(['実際の稼働日', shop_col])['台番号'].transform('count')
-                    valid_pred_df['top_k_threshold'] = daily_counts.apply(lambda x: max(3, int(x * 0.10)))
-                    valid_pred_df = valid_pred_df[valid_pred_df['ai_daily_rank'] <= valid_pred_df['top_k_threshold']]
                     
                     if not top3_machines.empty:
                         match_df = pd.merge(valid_pred_df, top3_machines, on=['実際の稼働日', shop_col, '台番号'], how='left')
@@ -316,10 +313,9 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     actual_df_day = pd.DataFrame()
 
                 # AI予測ランキング のデータ準備
+                # (保存されているログはすでに上位10%に絞られているため、そのまま全件表示する)
                 pred_df_day = merged_df[merged_df['対象日付'].dt.date == selected_date].copy()
-                pred_total_machines = len(pred_df_day)
-                pred_top_k = max(3, int(pred_total_machines * 0.10)) if pred_total_machines > 0 else 10
-                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False).head(pred_top_k)
+                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False)
                 
                 shop_avg_g_actual = actual_df_day['累計ゲーム'].mean() if not actual_df_day.empty else 4000
 
