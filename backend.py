@@ -418,6 +418,23 @@ def save_prediction_log(df):
     if df.empty:
         st.warning("保存するデータがありません。")
         return False
+    
+    save_df_initial = df.copy()
+    
+    # --- 保存する前に、各店舗の上位10%（最低3台）に絞り込む ---
+    if 'prediction_score' in save_df_initial.columns:
+        shop_col = '店名' if '店名' in save_df_initial.columns else ('店舗名' if '店舗名' in save_df_initial.columns else None)
+        if shop_col:
+            save_df_initial = save_df_initial.groupby(shop_col, group_keys=False).apply(
+                lambda x: x.sort_values('prediction_score', ascending=False).head(max(3, int(len(x) * 0.10)))
+            )
+        else:
+            save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
+            
+        if save_df_initial.empty:
+            st.warning("保存する推奨台がありません。")
+            return False
+
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
