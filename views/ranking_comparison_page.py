@@ -211,7 +211,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     if not top3_machines.empty:
                         top3_machines = top3_machines.rename(columns={'対象日付': '実際の稼働日'})
                         
-                    # 保存されている予測ログはすでに「上位10%」に絞られているため、そのまま順位をつけて合致判定を行う
+                    # 保存されている予測ログはすでに上位10%に絞られているため、そのまま使用する
                     valid_pred_df = base_eval_df.copy()
                     valid_pred_df['ai_daily_rank'] = valid_pred_df.groupby(['実際の稼働日', shop_col])['prediction_score'].rank(method='first', ascending=False)
                     
@@ -321,7 +321,6 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     actual_df_day = pd.DataFrame()
 
                 # AI予測ランキング のデータ準備
-                # (保存されているログはすでに上位10%に絞られているため、そのまま全件表示する)
                 pred_df_day = merged_df[merged_df['対象日付'].dt.date == selected_date].copy()
                 pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False)
                 

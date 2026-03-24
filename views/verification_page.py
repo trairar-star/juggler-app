@@ -336,7 +336,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val))).astype(int)
     merged_df['valid_high'] = merged_df['valid_play'] & (merged_df['is_high_setting'] == 1)
 
-    # 保存されている予測ログ（各店舗の上位10%）をすべて評価対象とする
+    # 保存されている予測ログはすでに「各店舗の上位10%」に絞られているため、そのまま使用する
     ai_recom_df = merged_df.copy()
 
     if merged_df.empty:

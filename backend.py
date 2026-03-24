@@ -418,18 +418,6 @@ def save_prediction_log(df):
     if df.empty:
         st.warning("保存するデータがありません。")
         return False
-    if 'prediction_score' in df.columns:
-        shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
-        if shop_col:
-            # 各店舗の総台数に対して10%（最低3台）の件数を計算し、上位のみを抽出する
-            df = df.groupby(shop_col, group_keys=False).apply(
-                lambda x: x.sort_values('prediction_score', ascending=False).head(max(3, int(len(x) * 0.10)))
-            )
-        else:
-            df = df.sort_values('prediction_score', ascending=False).head(max(3, int(len(df) * 0.10)))
-        if df.empty:
-            st.warning("保存する推奨台がありません。")
-            return False
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -466,7 +454,7 @@ def save_prediction_log(df):
         else:
             df_existing = pd.DataFrame(columns=STANDARD_HEADER)
             
-        save_df = df.copy()
+        save_df = save_df_initial.copy()
         save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:
             save_df['ai_version'] = "不明"
