@@ -72,7 +72,9 @@ def render_my_balance_page(df_raw):
     total_balance = df_balance['収支'].sum()
     total_invest = df_balance['投資'].sum()
     total_recovery = df_balance['回収'].sum()
-    df_balance['稼働時間'] = pd.to_numeric(df_balance.get('稼働時間', 0), errors='coerce').fillna(0)
+    if '稼働時間' not in df_balance.columns:
+        df_balance['稼働時間'] = 0.0
+    df_balance['稼働時間'] = pd.to_numeric(df_balance['稼働時間'], errors='coerce').fillna(0)
     total_hours = df_balance['稼働時間'].sum()
     hourly_wage = total_balance / total_hours if total_hours > 0 else 0
     win_count = (df_balance['収支'] > 0).sum()
