@@ -96,13 +96,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             with st.expander("⚙️ AI設定・バージョンで絞り込み", expanded=True):
                 st.caption("モデルの設定（学習回数や葉の数など）ごとに成績を分けて確認・比較できます。")
                 
-                if 'ai_version' in df_pred_log.columns:
-                    df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
-                    versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
-                    # 過去のデータも表示されるよう、デフォルトで「すべて」を選択する
-                    selected_version = st.selectbox("AIバージョンで絞り込み", versions, index=0)
-                    if selected_version != 'すべて':
-                        df_pred_log = df_pred_log[df_pred_log['ai_version'] == selected_version]
+                if 'ai_version' not in df_pred_log.columns:
+                    df_pred_log['ai_version'] = 'v1.0 (記録なし)'
+                df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
+                versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
+                # 過去のデータも表示されるよう、デフォルトで「すべて」を選択する
+                selected_version = st.selectbox("AIバージョンで絞り込み", versions, index=0)
+                if selected_version != 'すべて':
+                    df_pred_log = df_pred_log[df_pred_log['ai_version'] == selected_version]
 
                 date_range = st.date_input(
                     "保存日の範囲",
@@ -196,6 +197,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     else:
         base_df['予測信頼度'] = "-"
         
+    if 'ai_version_saved' in base_df.columns:
+        base_df['ai_version'] = base_df['ai_version_saved']
+    elif 'ai_version_current' in base_df.columns:
+        base_df['ai_version'] = base_df['ai_version_current']
+        
     # --- 実際の成績を df_raw から直接取得 (未稼働台のデータ落ちを防ぐ) ---
     if '台番号' in df_raw.columns:
         df_raw_temp = df_raw.copy()
@@ -263,7 +269,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     for col in base_df.columns.copy():
         if col.endswith('_current'):
             orig_col = col.replace('_current', '')
-            if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠', 'next_diff', 'next_BIG', 'next_REG', 'next_累計ゲーム']:
+            if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠', 'next_diff', 'next_BIG', 'next_REG', 'next_累計ゲーム', 'ai_version']:
                 base_df[orig_col] = base_df[col]
 
     base_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
