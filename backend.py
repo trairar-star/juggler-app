@@ -1285,6 +1285,9 @@ def _generate_features(df, df_events, df_island, target_date):
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
 
+    # 確実に存在する特徴量のみに絞り込み、学習時の KeyError を防止
+    features = [f for f in features if f in df.columns]
+
     return df, features
 
 # --- 内部関数: モデル学習 ---
