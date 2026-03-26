@@ -1040,6 +1040,21 @@ def _generate_features(df, df_events, df_island, target_date):
             p_val = np.where(is_prev, prev_diff, np.nan)
             n_val = np.where(is_next, next_diff, np.nan)
             df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
+            
+            # 両隣(並び3台)の合算REG確率を計算
+            prev_reg = df['REG'].shift(1)
+            next_reg = df['REG'].shift(-1)
+            prev_g = df['累計ゲーム'].shift(1)
+            next_g = df['累計ゲーム'].shift(-1)
+            
+            neighbor_reg_sum = df['REG'] + np.where(is_prev, prev_reg, 0) + np.where(is_next, next_reg, 0)
+            neighbor_g_sum = df['累計ゲーム'] + np.where(is_prev, prev_g, 0) + np.where(is_next, next_g, 0)
+            df['neighbor_reg_prob'] = np.where(neighbor_g_sum > 0, neighbor_reg_sum / neighbor_g_sum, 0)
+            
+    if shop_col and '末尾番号' in df.columns and '対象日付' in df.columns:
+        df['end_digit_total_g'] = df.groupby([shop_col, '対象日付', '末尾番号'])['累計ゲーム'].transform('sum')
+        df['end_digit_total_reg'] = df.groupby([shop_col, '対象日付', '末尾番号'])['REG'].transform('sum')
+        df['end_digit_reg_prob'] = np.where(df['end_digit_total_g'] > 0, df['end_digit_total_reg'] / df['end_digit_total_g'], 0)
 
     sort_keys = [shop_col, '台番号', '対象日付'] if shop_col else ['台番号', '対象日付']
     group_keys = [shop_col, '台番号'] if shop_col else ['台番号']
@@ -1047,9 +1062,44 @@ def _generate_features(df, df_events, df_island, target_date):
     
     for col in ['差枚', 'REG確率', '累計ゲーム', '最終ゲーム']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
+        
+    for col in ['neighbor_reg_prob', 'end_digit_reg_prob']:
+        if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
     
     if '推定ぶどう確率' in df.columns:
-        df['prev_推定ぶどう確率'] = df.groupby(group_keys)['推定ぶどう確率'].shift(1)
+        df['prev_推定ぶどう確率_raw'] = df.groupby(group_keys)['推定ぶどう確率'].shift(1)
+        
+        # --- ④ 店単位で補正かける ---
+        # 店舗ごとの推定ぶどう確率の平均値を算出（客層による小役取得率や、差枚計算のズレを吸収）
+        if shop_col:
+            shop_grape_avg = df.groupby(shop_col)['prev_推定ぶどう確率_raw'].transform('mean')
+            global_grape_avg = df['prev_推定ぶどう確率_raw'].mean()
+            # 店舗のクセを補正（例: 平均が6.2の店は、全体平均6.0に合わせるため -0.2 の補正をかける）
+            shop_correction = global_grape_avg - shop_grape_avg
+            df['prev_推定ぶどう確率_adj'] = df['prev_推定ぶどう確率_raw'] + shop_correction
+        else:
+            df['prev_推定ぶどう確率_adj'] = df['prev_推定ぶどう確率_raw']
+
+        # --- ①〜③ ぶどうを「良台の裏取り(補助指標)」に限定するフィルター ---
+        cond_reg = df['prev_REG確率'] >= (1/280.0)
+        cond_diff = df['prev_差枚'] > 0
+        cond_games_high = df['prev_累計ゲーム'] >= 4000
+        cond_games_mid = (df['prev_累計ゲーム'] >= 3000) & (df['prev_累計ゲーム'] < 4000)
+        
+        is_good_base = cond_reg & cond_diff
+        
+        val_high = df['prev_推定ぶどう確率_adj']
+        # 3000〜4000Gの場合はブレが大きいため、平均値(6.0)側に引っ張って「弱く反映」させる
+        val_mid = df['prev_推定ぶどう確率_adj'] * 0.5 + 6.0 * 0.5
+        
+        # 条件を満たす「裏取り」の状況のみAIに数値を渡し、それ以外はNaN(無効化)してノイズを防ぐ
+        df['prev_推定ぶどう確率'] = np.where(
+            is_good_base & cond_games_high, val_high,
+            np.where(
+                is_good_base & cond_games_mid, val_mid,
+                np.nan
+            )
+        )
 
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
     if 'BIG' in df.columns: df['next_BIG'] = df.groupby(group_keys)['BIG'].shift(-1)
@@ -1147,7 +1197,7 @@ def _generate_features(df, df_events, df_island, target_date):
     df['win_rate_7days'] = df.groupby(group_keys)['shifted_is_win'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     
     # 一時的に作成した不要な列を削除
-    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win', 'shifted_diff_ev_mac', 'shifted_diff_ev_end'], errors='ignore')
+    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win', 'shifted_diff_ev_mac', 'shifted_diff_ev_end', 'prev_推定ぶどう確率_adj'], errors='ignore')
 
     # 現在のソート順を保持（mergeによる順序崩れ防止）
     df['original_order'] = np.arange(len(df))
@@ -1191,6 +1241,10 @@ def _generate_features(df, df_events, df_island, target_date):
 
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
+        df['island_total_g'] = df.groupby(['island_id', '対象日付'])['累計ゲーム'].transform('sum')
+        df['island_total_reg'] = df.groupby(['island_id', '対象日付'])['REG'].transform('sum')
+        df['island_reg_prob'] = np.where(df['island_total_g'] > 0, df['island_total_reg'] / df['island_total_g'], 0)
+        df['prev_island_reg_prob'] = df.groupby(group_keys)['island_reg_prob'].shift(1).fillna(0)
 
     # --- 上げリセット（設定変更）検知用の特徴量 ---
     # 差枚が+500枚以上になったら「設定が入り放出された」とみなしリセット
@@ -1225,8 +1279,8 @@ def _generate_features(df, df_events, df_island, target_date):
     else:
         df['is_new_machine'] = 0
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -1530,13 +1584,14 @@ def _postprocess_predictions(predict_df, train_df):
         machine_name = row.get('機種名', '')
         matched_spec_key = get_matched_spec_key(machine_name, specs)
 
-        # ぶどう確率の根拠追加
-        prev_grape = row.get('prev_推定ぶどう確率')
+        # ぶどう確率の根拠追加 (生の推測値を使用)
+        prev_grape_raw = row.get('prev_推定ぶどう確率_raw', row.get('prev_推定ぶどう確率'))
         prev_games = row.get('prev_累計ゲーム', 0)
-        if pd.notna(prev_grape) and prev_grape > 0 and prev_games >= 4000:
+        if pd.notna(prev_grape_raw) and prev_grape_raw > 0 and prev_games >= 4000:
             spec_grape_5 = specs[matched_spec_key].get('設定5', {}).get('ぶどう', 5.9)
-            if prev_grape <= spec_grape_5:
-                reasons.append(f"【🍇小役優秀】前日は{int(prev_games)}G稼働で推定ぶどう確率が1/{prev_grape:.2f}と設定5以上の数値を叩き出しており、高設定の強い裏付けになっています。")
+            # 店補正済みの値が裏付けフィルターを通過している（NaNでない）場合のみ根拠として採用
+            if pd.notna(row.get('prev_推定ぶどう確率')) and prev_grape_raw <= spec_grape_5:
+                reasons.append(f"【🍇小役優秀】前日は{int(prev_games)}G稼働で推定ぶどう確率が1/{prev_grape_raw:.2f}と優秀です。REG確率・差枚も伴っており、高設定の強い裏付け（裏取り）となっています。")
 
         mac_30d = row.get('machine_30days_avg_diff', 0)
         if mac_30d > 150:

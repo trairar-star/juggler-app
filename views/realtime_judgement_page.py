@@ -22,6 +22,9 @@ def render_realtime_judgement_page(df_pred_log):
         
         prior_high_prob = 0.5 
         selected_machine = machine_list[0]
+        sel_shop = ""
+        df_today = pd.DataFrame()
+        shop_col = '店名'
         
         if use_ai:
             st.info("本日の予測データから、対象の台の「事前期待度」を自動取得します。")
@@ -33,9 +36,7 @@ def render_realtime_judgement_page(df_pred_log):
                     df_today['予測対象日_str'] = pd.to_datetime(df_today['予測対象日'], errors='coerce').dt.strftime('%Y-%m-%d')
                     df_today = df_today[df_today['予測対象日_str'] == today_str]
                 else:
-                    df_today = pd.DataFrame()
-            else:
-                df_today = pd.DataFrame()
+                    pass # 空のまま
 
             if not df_today.empty:
                 shop_col = '店名' if '店名' in df_today.columns else '店舗名'
@@ -57,8 +58,11 @@ def render_realtime_judgement_page(df_pred_log):
                     mac_name = target_row.get('機種名', '')
                     matched = backend.get_matched_spec_key(mac_name, specs)
                     selected_machine = matched if matched else machine_list[0]
+                    reason = target_row.get('根拠', '')
                         
                     st.success(f"✅ AI事前期待度 **{prior_high_prob*100:.1f}%** をセットしました！ ({selected_machine})")
+                    if reason and reason != '-':
+                        st.info(f"💡 **AI推奨根拠 (店癖など)**: {reason}")
                 else:
                     st.warning("店舗と台番号を選択してください。リストにない場合はAI推奨台外（または手入力）になります。")
                     prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f")
@@ -72,12 +76,103 @@ def render_realtime_judgement_page(df_pred_log):
             prior_high_prob = st.slider("事前期待度（高設定が入っているベースの確率）", 0.0, 1.0, 0.15, 0.01, format="%.2f", help="イベントの強さや店長のクセを加味した、打ち始める前の期待度です。通常営業なら10%〜15%程度がリアルです。")
 
         col1, col2 = st.columns(2)
-        with col1:
-            g_count = st.number_input("現在の総回転数 (G)", min_value=0, value=3000, step=100)
-            diff_coins = st.number_input("現在の差枚数 (枚) ※任意", value=0, step=100, help="ぶどう確率の逆算に使用します。不明な場合は0のままでOKです。")
+        # ボーナス回数を利用して総回転数を逆算するため、先に右カラム(col2)のボーナス入力を受け取ります
         with col2:
             b_count = st.number_input("BIG回数", min_value=0, value=10, step=1)
             r_count = st.number_input("REG回数", min_value=0, value=10, step=1)
+            reg_hamari = st.number_input("現在のREG間ハマり (G) ※任意", min_value=0, value=0, step=50, help="ヤメ時判定に使用します。")
+
+        with col1:
+            g_input_mode = st.radio("総回転数の入力方法", ["直接入力", "合算確率から逆算"], horizontal=True)
+            if g_input_mode == "直接入力":
+                g_count = st.number_input("現在の総回転数 (G)", min_value=0, value=3000, step=100)
+            else:
+                total_prob_den = st.number_input("現在の合算確率 (1/◯)", min_value=1.0, value=150.0, step=0.1, help="データサイトの合算確率分母（例: 150.5）を入力してください。")
+                g_count = int(total_prob_den * (b_count + r_count))
+                st.info(f"💡 逆算された総回転数: **{g_count}G**")
+
+            diff_coins = st.number_input("現在の差枚数 (枚) ※任意", value=0, step=100, help="ぶどう確率の逆算に使用します。不明な場合は0のままでOKです。")
+            peak_drop = st.number_input("ピークからの差枚落ち (枚) ※任意", min_value=0, value=0, step=100, help="最高出玉から何枚減っているか。ヤメ時判定に使用します。")
+            
+        use_gassan = False
+        gassan_g, gassan_b, gassan_r = 0, 0, 0
+        
+        shop_trend_text = ""
+        suggested_mode = "指定なし"
+        
+        if use_ai and sel_shop and not df_today.empty:
+            df_shop_today = df_today[df_today[shop_col] == sel_shop]
+            if not df_shop_today.empty and '根拠' in df_shop_today.columns:
+                all_reasons = "".join(df_shop_today['根拠'].dropna().astype(str).tolist())
+                
+                trends = []
+                if "末尾" in all_reasons:
+                    trends.append("🔢 **末尾**")
+                    suggested_mode = "末尾"
+                if "並び" in all_reasons or "両隣" in all_reasons:
+                    trends.append("🤝 **並び (両隣)**")
+                    suggested_mode = "並び"
+                if "島" in all_reasons or "塊" in all_reasons or "列" in all_reasons:
+                    trends.append("🏝️ **島 (列・塊)**")
+                    suggested_mode = "島"
+                    
+                if trends:
+                    shop_trend_text = " / ".join(trends) + " 傾向あり"
+
+        st.divider()
+        st.subheader("🤝 複数台合算モード (シマ判別)")
+        st.caption("対象の複数台のデータを合算することで、大数の法則により設定が見抜きやすくなります。全台系や並び探しの最強ツールです。")
+        
+        if shop_trend_text:
+            st.info(f"💡 **AIによる店舗傾向の分析**: {shop_trend_text}\n\n店舗のクセに合わせて、合算する対象を選択するとより正確な判別が可能です。")
+            
+        use_gassan = st.checkbox("複数台合算モードを使用する", value=False)
+        
+        if use_gassan:
+            mode_options = ["並び (両隣など)", "同じ末尾", "同じ島 (列・塊)", "その他 (手動)"]
+            default_index = 0
+            if suggested_mode == "末尾": default_index = 1
+            elif suggested_mode == "島": default_index = 2
+            
+            gassan_type = st.radio("合算の対象", mode_options, index=default_index, horizontal=True)
+            
+            gassan_count = st.number_input("合算する【他台】の台数", min_value=1, max_value=20, value=2, step=1, help="両隣なら「2」、左右2台ずつなら「4」を指定してください。")
+            
+            input_mode = st.radio("入力方法", ["合計値を一括入力", "1台ずつ個別に入力"], horizontal=True)
+            
+            gassan_g, gassan_b, gassan_r = 0, 0, 0
+            
+            if input_mode == "合計値を一括入力":
+                st.caption(f"合算対象とする他台({gassan_count}台分)の「合計データ」を入力してください。")
+                gc1, gc2, gc3 = st.columns(3)
+                with gc1:
+                    gassan_g = st.number_input("他台の 合計回転数 (G)", min_value=0, value=3000, step=100)
+                with gc2:
+                    gassan_b = st.number_input("他台の 合計BIG回数", min_value=0, value=10, step=1)
+                with gc3:
+                    gassan_r = st.number_input("他台の 合計REG回数", min_value=0, value=10, step=1)
+            else:
+                st.caption(f"他台({gassan_count}台)のデータを1台ずつ入力してください。（合計値は自動計算されます）")
+                hc1, hc2, hc3, hc4 = st.columns([1, 2, 2, 2])
+                hc2.caption("回転数(G)")
+                hc3.caption("BIG")
+                hc4.caption("REG")
+                for i in range(int(gassan_count)):
+                    c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
+                    with c1: st.markdown(f"<div style='padding-top:8px;'>他台{i+1}</div>", unsafe_allow_html=True)
+                    with c2: tmp_g = st.number_input("G", min_value=0, value=0, step=100, key=f"g_g_{i}", label_visibility="collapsed")
+                    with c3: tmp_b = st.number_input("B", min_value=0, value=0, step=1, key=f"g_b_{i}", label_visibility="collapsed")
+                    with c4: tmp_r = st.number_input("R", min_value=0, value=0, step=1, key=f"g_r_{i}", label_visibility="collapsed")
+                    gassan_g += tmp_g
+                    gassan_b += tmp_b
+                    gassan_r += tmp_r
+                    
+            total_g_disp = g_count + gassan_g
+            total_b_disp = b_count + gassan_b
+            total_r_disp = r_count + gassan_r
+            total_reg_prob = int(total_g_disp / total_r_disp) if total_r_disp > 0 else 0
+            
+            st.success(f"✅ **合算データ (自台＋他台{gassan_count}台)**: 総回転 **{total_g_disp}G** / BIG **{total_b_disp}回** / REG **{total_r_disp}回** (合算REG確率: 1/{total_reg_prob})")
             
         st.divider()
         st.subheader("⏱️ 時間・期待値設定")
@@ -107,6 +202,10 @@ def render_realtime_judgement_page(df_pred_log):
         
     remain_games = int((remain_minutes / 60.0) * speed)
     if remain_games < 0: remain_games = 0
+
+    total_g = g_count + gassan_g
+    total_b = b_count + gassan_b
+    total_r = r_count + gassan_r
 
     # --- 推論計算 ---
     ms = specs[selected_machine]
@@ -145,13 +244,13 @@ def render_realtime_judgement_page(df_pred_log):
     log_likelihoods = []
     for i in range(1, 7):
         p_b, p_r = 1.0 / full_specs[i]["BIG"], 1.0 / full_specs[i]["REG"]
-        exp_b, exp_r = g_count * p_b, g_count * p_r
-        ll_b = b_count * math.log(exp_b) - exp_b if exp_b > 0 else 0
-        ll_r = r_count * math.log(exp_r) - exp_r if exp_r > 0 else 0
+        exp_b, exp_r = total_g * p_b, total_g * p_r
+        ll_b = total_b * math.log(exp_b) - exp_b if exp_b > 0 else 0
+        ll_r = total_r * math.log(exp_r) - exp_r if exp_r > 0 else 0
         ll_g = 0
         if use_grape:
             p_g = 1.0 / full_specs[i]["ぶどう"]
-            exp_g = g_count * p_g
+            exp_g = g_count * p_g # ぶどう確率は自台の回転数のみをベースに計算
             ll_g = grape_count * math.log(exp_g) - exp_g if exp_g > 0 else 0
         log_likelihoods.append(ll_b + ll_r + ll_g)
         
@@ -206,7 +305,25 @@ def render_realtime_judgement_page(df_pred_log):
         if use_grape:
             st.metric("🍇 推定ぶどう確率", f"1/{(g_count / grape_count if grape_count > 0 else 0):.2f}")
             
+        # --- ヤメ時ロジック（アラート） ---
+        alerts = []
+        if reg_hamari >= 600:
+            alerts.append(f"⚠️ **REG間 {reg_hamari}G ハマり**: 判別要素として大きなマイナスです。低設定の可能性が高まっています。")
+        elif reg_hamari >= 400:
+            alerts.append(f"⚠️ **REG間 {reg_hamari}G ハマり**: 雲行きが怪しくなってきました。")
+            
+        if peak_drop >= 1500:
+            alerts.append(f"⚠️ **ピークから {peak_drop}枚 減少**: 出玉推移として危険水域です。高設定でも起こり得ますが、設定変更（下げ）のリスクが高いです。")
+        elif peak_drop >= 1000:
+            alerts.append(f"⚠️ **ピークから {peak_drop}枚 減少**: 大きな波の下降トレンドにいます。反発がなければ撤退も視野に。")
+            
         st.markdown("### 💡 AIジャッジ")
+        
+        if alerts:
+            st.error("\n".join(alerts))
+            if total_expected_diff > 0:
+                st.caption("※期待値はプラス計算ですが、上記の危険信号が点灯しているため、ヤメ時（撤退）を慎重に判断してください。")
+        
         if remain_games <= 0:
             st.info("🕒 **【稼働終了】**\n閉店時間を過ぎているか、残り時間がありません。")
         elif total_expected_diff > 300:
