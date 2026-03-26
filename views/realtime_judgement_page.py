@@ -144,13 +144,21 @@ def render_realtime_judgement_page(df_pred_log):
             
             if input_mode == "合計値を一括入力":
                 st.caption(f"合算対象とする他台({gassan_count}台分)の「合計データ」を入力してください。")
+                
+                gassan_g_input_mode = st.radio("他台の合計回転数の入力方法", ["直接入力", "合算確率から逆算"], horizontal=True, key="gassan_g_input_mode")
+                
                 gc1, gc2, gc3 = st.columns(3)
-                with gc1:
-                    gassan_g = st.number_input("他台の 合計回転数 (G)", min_value=0, value=3000, step=100)
                 with gc2:
                     gassan_b = st.number_input("他台の 合計BIG回数", min_value=0, value=10, step=1)
                 with gc3:
                     gassan_r = st.number_input("他台の 合計REG回数", min_value=0, value=10, step=1)
+                with gc1:
+                    if gassan_g_input_mode == "直接入力":
+                        gassan_g = st.number_input("他台の 合計回転数 (G)", min_value=0, value=3000, step=100)
+                    else:
+                        gassan_total_prob_den = st.number_input("他台の 合算確率 (1/◯)", min_value=1.0, value=150.0, step=0.1, help="データサイトの合算確率分母（例: 150.5）を入力してください。")
+                        gassan_g = int(gassan_total_prob_den * (gassan_b + gassan_r))
+                        st.info(f"💡 逆算総回転数: **{gassan_g}G**")
             else:
                 st.caption(f"他台({gassan_count}台)のデータを1台ずつ入力してください。（合計値は自動計算されます）")
                 hc1, hc2, hc3, hc4 = st.columns([1, 2, 2, 2])
