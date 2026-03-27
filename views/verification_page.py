@@ -803,7 +803,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     final_action_title = "⚙️ 【最終結論】アプリ内のAI設定をチューニングする"
                     tuning_hints = []
                     # 現在のパラメータを取得
-                    current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
+                    fallback_hp = st.session_state["shop_hyperparams"].get("デフォルト", {})
+                    current_hp = st.session_state["shop_hyperparams"].get(selected_shop, fallback_hp)
                     
                     if "過学習" in diag_ai["title"]: 
                         # 具体的な数値を提示
