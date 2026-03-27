@@ -1043,9 +1043,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         
         with st.form(f"hp_form_{selected_shop}"):
             hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1, help="AIが学習に使う過去データの期間です。店の傾向が頻繁に変わるなら短く（1〜3ヶ月）、安定しているなら長く（6ヶ月以上）設定するのが有効です。")
-            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、やりすぎると過学習（過去の偶然を必勝法と勘違いする）のリスクが増えます。学習率とセットで調整します。")
+            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、やりすぎると過学習（過去の偶然を必勝法と勘違いする）のリスクが増えます。学習率とセットで調整し、上げすぎると逆に期待度が下がる場合は過学習を疑ってください。")
             hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01, help="1回の学習でどれだけ賢くなるかの度合い。小さいほど慎重に学習し、過学習しにくくなりますが、多くの学習回数が必要になります。基本的には0.01〜0.05の範囲が推奨されます。")
-            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1, help="モデルが作成できる分岐（葉）の最大数。大きいほど複雑な条件分岐を作れますが、過学習しやすくなります。深さ制限とセットで調整します。")
+            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1, help="モデルが作成できる分岐（葉）の最大数。大きいほど複雑な条件分岐を作れますが、過学習しやすくなります。深さ制限とセットで調整し、上げすぎると逆に期待度が下がる場合は過学習を疑ってください。")
             hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1, help="条件分岐の深さ。-1は無制限。深いほど複雑な条件の組み合わせ（例:『AかつBかつC』）を学習できますが、過学習しやすくなります。通常は3〜7程度が適切です。")
             hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10, help="1つの分岐（葉）を作るために必要な最小サンプル数。大きいほど、より多くのデータに当てはまる一般的なルールを作るようになり、過学習を抑制します。過学習気味ならこの値を大きくします。")
             hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくすると、AIが「予測に不要」と判断した特徴量（例: この店では関係ない『角台』など）を完全に無視しやすくなります。特徴量が多い時に有効です。")
