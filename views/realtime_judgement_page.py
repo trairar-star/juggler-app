@@ -162,18 +162,61 @@ def render_realtime_judgement_page(df_pred_log):
             else:
                 st.caption(f"他台({gassan_count}台)のデータを1台ずつ入力してください。（合計値は自動計算されます）")
                 hc1, hc2, hc3, hc4 = st.columns([1, 2, 2, 2])
+                
+                # Initialize sums for individual inputs
+                gassan_g_sum_from_individual_inputs = 0
+                gassan_b_sum = 0
+                gassan_r_sum = 0
+
                 hc2.caption("回転数(G)")
                 hc3.caption("BIG")
                 hc4.caption("REG")
                 for i in range(int(gassan_count)):
                     c1, c2, c3, c4 = st.columns([1, 2, 2, 2])
                     with c1: st.markdown(f"<div style='padding-top:8px;'>他台{i+1}</div>", unsafe_allow_html=True)
-                    with c2: tmp_g = st.number_input("G", min_value=0, value=0, step=100, key=f"g_g_{i}", label_visibility="collapsed")
-                    with c3: tmp_b = st.number_input("B", min_value=0, value=0, step=1, key=f"g_b_{i}", label_visibility="collapsed")
-                    with c4: tmp_r = st.number_input("R", min_value=0, value=0, step=1, key=f"g_r_{i}", label_visibility="collapsed")
-                    gassan_g += tmp_g
-                    gassan_b += tmp_b
-                    gassan_r += tmp_r
+                    with c2: tmp_g = st.number_input("G", min_value=0, value=0, step=100, key=f"g_g_{i}", label_visibility="collapsed") # 個別のG数入力
+                    with c3: tmp_b = st.number_input("B", min_value=0, value=0, step=1, key=f"g_b_{i}", label_visibility="collapsed") # 個別のBIG入力
+                    with c4: tmp_r = st.number_input("R", min_value=0, value=0, step=1, key=f"g_r_{i}", label_visibility="collapsed") # 個別のREG入力
+                    gassan_g_sum_from_individual_inputs += tmp_g
+                    gassan_b_sum += tmp_b
+                    gassan_r_sum += tmp_r
+                
+                # Assign the summed values to gassan_b and gassan_r
+                gassan_b = gassan_b_sum
+                gassan_r = gassan_r_sum
+
+                # Now, after summing up individual inputs, provide an option to calculate gassan_g from combined probability
+                st.markdown("---")
+                st.caption("他台の合計ゲーム数の計算方法を選択してください:")
+                gassan_g_calc_mode = st.radio(
+                    "他台の合計ゲーム数",
+                    ["個別のG数入力の合計を使用", "合計BIG/REG回数と合算確率から逆算"],
+                    horizontal=True,
+                    key="gassan_g_calc_mode_individual"
+                )
+
+                if gassan_g_calc_mode == "個別のG数入力の合計を使用":
+                    gassan_g = gassan_g_sum_from_individual_inputs
+                else: # "合計BIG/REG回数と合算確率から逆算"
+                    if gassan_b + gassan_r == 0:
+                        st.warning("合計BIG回数と合計REG回数が0のため、合算確率から総ゲーム数を逆算できません。個別のG数入力の合計を使用します。")
+                        gassan_g = gassan_g_sum_from_individual_inputs # Fallback to direct sum
+                    else:
+                        gassan_total_prob_den_for_individual = st.number_input(
+                            "他台の合計合算確率 (1/◯)",
+                            min_value=1.0,
+                            value=150.0,
+                            step=0.1,
+                            key="gassan_total_prob_den_for_individual",
+                            help="入力された合計BIG/REG回数とこの合算確率から、他台の合計ゲーム数を逆算します。"
+                        )
+                        gassan_g = int(gassan_total_prob_den_for_individual * (gassan_b + gassan_r))
+                        st.info(f"💡 逆算された他台の合計総回転数: **{gassan_g}G**")
+
+                if gassan_g > 0 or gassan_b > 0 or gassan_r > 0:
+                    other_total_prob = (gassan_b + gassan_r) / gassan_g if gassan_g > 0 else 0
+                    other_total_prob_str = f"1/{int(1/other_total_prob)}" if other_total_prob > 0 else "-"
+                    st.info(f"💡 他台の合計: 総回転 **{gassan_g}G** / BIG **{gassan_b}回** / REG **{gassan_r}回** (合算確率: {other_total_prob_str})")
                     
             total_g_disp = g_count + gassan_g
             total_b_disp = b_count + gassan_b

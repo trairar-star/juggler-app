@@ -802,10 +802,26 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 elif diag_ai["status"] in ["🔴", "🟡"] or diag_feat["status"] in ["🔴", "🟡"]:
                     final_action_title = "⚙️ 【最終結論】アプリ内のAI設定をチューニングする"
                     tuning_hints = []
-                    if "過学習" in diag_ai["title"]: tuning_hints.append("「深さ制限(max_depth)」を下げる、または「最小データ数」を増やす")
-                    if "評価甘め" in diag_ai["title"]: tuning_hints.append("「葉の数(num_leaves)」を下げる、または「学習率」を下げる")
-                    if "評価慎重" in diag_ai["title"]: tuning_hints.append("「学習回数」を増やす、または「葉の数」を上げる")
-                    if "条件厳格化" in diag_feat["title"]: tuning_hints.append("「深さ制限」を下げる、または「最小データ数」を増やす")
+                    # 現在のパラメータを取得
+                    current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
+                    
+                    if "過学習" in diag_ai["title"]: 
+                        # 具体的な数値を提示
+                        new_depth = max(3, current_hp.get('max_depth', 4) - 1)
+                        new_samples = min(200, current_hp.get('min_child_samples', 50) + 20)
+                        tuning_hints.append(f"「深さ制限(max_depth)」を **{new_depth}** に下げる、または「最小データ数」を **{new_samples}** に増やす")
+                    if "評価甘め" in diag_ai["title"]: 
+                        new_leaves = max(10, current_hp.get('num_leaves', 15) - 5)
+                        new_lr = max(0.01, current_hp.get('learning_rate', 0.03) - 0.01)
+                        tuning_hints.append(f"「葉の数(num_leaves)」を **{new_leaves}** に下げる、または「学習率」を **{new_lr:.2f}** に下げる")
+                    if "評価慎重" in diag_ai["title"]: 
+                        new_est = min(1000, current_hp.get('n_estimators', 300) + 100)
+                        new_leaves = min(127, current_hp.get('num_leaves', 15) + 5)
+                        tuning_hints.append(f"「学習回数」を **{new_est}** に増やす、または「葉の数」を **{new_leaves}** に上げる")
+                    if "条件厳格化" in diag_feat["title"]:
+                        new_depth = max(3, current_hp.get('max_depth', 4) - 1)
+                        new_samples = min(200, current_hp.get('min_child_samples', 50) + 20)
+                        tuning_hints.append(f"「深さ制限」を **{new_depth}** に下げる、または「最小データ数」を **{new_samples}** に増やす")
                     
                     final_action_msg = "データ量も店舗の素直さも悪くありませんが、AIの「クセの覚え方」が現在の店舗の状況とズレています。すぐ下の**【店舗専用 AIモデル設定】**から、以下の調整を試して再分析してください。\n\n"
                     for hint in set(tuning_hints):
@@ -1016,7 +1032,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
 
     with tab_setting:
         st.subheader(f"⚙️ 【{selected_shop}】専用 AIモデル設定")
-        st.caption("AIのパラメータを手掌握で調整するか、「自動チューニング」を試してください。")
+        st.caption("AIのパラメータを手動で調整するか、「自動チューニング」を試してください。各項目の意味が分からない場合は、まずは「自動チューニング」の実行をおすすめします。")
         
         if "shop_hyperparams" not in st.session_state:
             st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0}}
@@ -1025,19 +1041,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
         
         with st.form(f"hp_form_{selected_shop}"):
-            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1)
-            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50)
-            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01)
-            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1)
-            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1)
-            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10)
-            hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくすると、AIが「予測に不要」と判断した特徴量を完全に無視(重み0)しやすくなります。特徴量が多い時に有効です。")
-            hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくすると、特定の特徴量だけに極端に依存することを防ぎます。")
+            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1, help="AIが学習に使う過去データの期間です。店の傾向が頻繁に変わるなら短く（1〜3ヶ月）、安定しているなら長く（6ヶ月以上）設定するのが有効です。")
+            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、やりすぎると過学習（過去の偶然を必勝法と勘違いする）のリスクが増えます。学習率とセットで調整します。")
+            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01, help="1回の学習でどれだけ賢くなるかの度合い。小さいほど慎重に学習し、過学習しにくくなりますが、多くの学習回数が必要になります。基本的には0.01〜0.05の範囲が推奨されます。")
+            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1, help="モデルが作成できる分岐（葉）の最大数。大きいほど複雑な条件分岐を作れますが、過学習しやすくなります。深さ制限とセットで調整します。")
+            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1, help="条件分岐の深さ。-1は無制限。深いほど複雑な条件の組み合わせ（例:『AかつBかつC』）を学習できますが、過学習しやすくなります。通常は3〜7程度が適切です。")
+            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10, help="1つの分岐（葉）を作るために必要な最小サンプル数。大きいほど、より多くのデータに当てはまる一般的なルールを作るようになり、過学習を抑制します。過学習気味ならこの値を大きくします。")
+            hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくすると、AIが「予測に不要」と判断した特徴量（例: この店では関係ない『角台』など）を完全に無視しやすくなります。特徴量が多い時に有効です。")
+            hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくすると、AIが特定の特徴量だけに極端に依存することを防ぎ、よりバランスの取れた予測をするようになります。")
             
-            cols = st.columns(3)
-            submitted = cols[0].form_submit_button("この店舗の設定を保存して再分析", type="primary")
-            reset_btn = cols[1].form_submit_button("全店舗共通設定に戻す")
-            auto_tune_btn = cols[2].form_submit_button("✨ 自動チューニング")
+            cols = st.columns(4)
+            submitted = cols[0].form_submit_button("保存して再分析", type="primary")
+            test_btn = cols[1].form_submit_button("🧪 カンニングなしテスト", help="現在スライダーで設定している値を使って、直近1ヶ月の結果を『カンニングなし』で予測するテストを実行します。")
+            auto_tune_btn = cols[2].form_submit_button("✨ 自動チューニング", help=f"AIが【{selected_shop}】の過去データから最適なパラメータの組み合わせを自動で探索し、設定します。どの設定が良いか分からない場合にまずお試しください。")
+            reset_btn = cols[3].form_submit_button("リセット")
             
         if submitted:
             st.session_state["shop_hyperparams"][selected_shop] = {
@@ -1053,6 +1070,97 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 del st.session_state["shop_hyperparams"][selected_shop]
                 backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                 st.cache_data.clear(); st.rerun()
+                
+        if test_btn:
+            with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
+                import lightgbm as lgb
+                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                actual_features = [f for f in base_features if f in df_verify.columns]
+                cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+                
+                shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
+                
+                if len(shop_df) < 50:
+                    st.error("データが少なすぎてテストを実行できません。")
+                else:
+                    shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
+                    max_date = shop_df['対象日付'].max()
+                    cutoff_date = max_date - pd.Timedelta(days=30)
+                    
+                    train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
+                    test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+                    
+                    if len(train_data) < 30 or len(test_data) < 10:
+                        st.error("直近1ヶ月またはそれ以前のデータが不足しているため、テストを実行できません。")
+                    else:
+                        X_train, y_train = train_data[actual_features], train_data['target']
+                        X_test, y_test = test_data[actual_features], test_data['target']
+                        
+                        days_diff = (train_data['対象日付'].max() - train_data['対象日付']).dt.days
+                        sample_weights = 0.995 ** days_diff
+                        
+                        params = {
+                            'n_estimators': hp_n_estimators,
+                            'learning_rate': hp_learning_rate,
+                            'num_leaves': hp_num_leaves,
+                            'max_depth': hp_max_depth,
+                            'min_child_samples': hp_min_child_samples,
+                            'reg_alpha': hp_reg_alpha,
+                            'reg_lambda': hp_reg_lambda
+                        }
+                        
+                        try:
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                            model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                            
+                            preds = model.predict_proba(X_test)[:, 1]
+                            test_data['pred_score'] = preds
+                            
+                            test_data['valid_play'] = (pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                                                   ((pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                                                    (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0).abs() >= 1000))
+                            test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
+                            test_data['valid_high'] = test_data['valid_play'] & (test_data['target'] == 1)
+                            
+                            def get_prob_band(score):
+                                if score >= 0.85: return '85%以上'
+                                elif score >= 0.70: return '70%〜84%'
+                                elif score >= 0.50: return '50%〜69%'
+                                elif score >= 0.30: return '30%〜49%'
+                                else: return '30%未満'
+                            
+                            test_data['確率帯'] = test_data['pred_score'].apply(get_prob_band)
+                            test_stats = test_data.groupby('確率帯').agg(
+                                台数=('台番号', 'count'),
+                                高設定数=('valid_high', 'sum'),
+                                有効稼働数=('valid_play', 'sum'),
+                                勝数=('valid_win', 'sum'),
+                                平均差枚=('next_diff', 'mean')
+                            ).reset_index()
+                            test_stats['高設定率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['高設定数'] / test_stats['有効稼働数'] * 100, 0.0)
+                            test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
+                            
+                            rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                            test_stats['sort'] = test_stats['確率帯'].map(rank_order).fillna(99)
+                            test_stats = test_stats.sort_values('sort').drop('sort', axis=1)
+                            
+                            st.session_state['backtest_result'] = test_stats
+                        except Exception as e:
+                            st.error(f"テスト実行中にエラーが発生しました: {e}")
+                            
+        if 'backtest_result' in st.session_state:
+            st.success("✅ 直近1ヶ月のカンニングなしテスト結果")
+            st.caption("現在設定されているパラメータで過去データのみを学習し、直近1ヶ月の結果を予測した「本物の実力」です。この表の70%以上の勝率が高くなる設定を探してください。")
+            st.dataframe(
+                st.session_state['backtest_result'][['確率帯', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚']],
+                column_config={
+                    "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                    "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                    "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                },
+                hide_index=True,
+                use_container_width=True
+            )
                 
         if auto_tune_btn:
             with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
