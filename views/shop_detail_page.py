@@ -363,6 +363,24 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     if "big_win_reaction" in worst_ids and row.get('差枚', 0) >= 2000 and row.get('REG確率', 1) < (1/350): matched_cold.append("大勝反動")
     if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動")
 
+    mac_name = row.get('機種名', '')
+    matched_key = backend.get_matched_spec_key(mac_name, specs)
+    if matched_key and matched_key in specs:
+        spec_b1 = specs[matched_key].get('設定1', {}).get('BIG', 280.0)
+        spec_b6 = specs[matched_key].get('設定6', {}).get('BIG', 260.0)
+        spec_r6 = specs[matched_key].get('設定6', {}).get('REG', 260.0)
+        b_prob = row.get('BIG確率', 0)
+        r_prob = row.get('REG確率', 0)
+        games = row.get('累計ゲーム', 0)
+        if games >= 5000 and b_prob > 0 and r_prob > 0:
+            if (1.0 / b_prob) > spec_b1 and (1.0 / r_prob) > spec_r6:
+                matched_cold.append("中間設定濃厚")
+            if (1.0 / b_prob) <= spec_b6:
+                matched_hot.append("BB突出")
+        if games >= 5000 and r_prob > 0:
+            if (1.0 / r_prob) <= 200.0:
+                matched_hot.append("超REG突出")
+
     hot_str = "🔥" + " ".join(matched_hot) if matched_hot else ""
     cold_str = "⚠️" + " ".join(matched_cold) if matched_cold else ""
     
@@ -374,12 +392,18 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     if '🔥' in match_str:
         hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
         bonus = 0.02 * len(hot_part.split())
-        bonus = min(0.10, bonus)
+        if "BB突出" in hot_part.split():
+            bonus += 0.15
+        if "超REG突出" in hot_part.split():
+            bonus += 0.20
+        bonus = min(0.40, bonus)
         score = min(1.0, score + bonus)
     if '⚠️' in match_str:
         cold_part = match_str.split('⚠️')[1].strip()
         penalty = 0.05 * len(cold_part.split())
-        penalty = min(0.15, penalty)
+        if "中間設定濃厚" in cold_part.split():
+            penalty += 0.20
+        penalty = min(0.35, penalty)
         score = max(0.0, score - penalty)
     row['prediction_score'] = score
     
@@ -401,11 +425,14 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
             elif h == "V字反発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています。")
             elif h == "連大凹み": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています。")
             elif h == "高設定据え": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています。")
+            elif h == "BB突出": add_reasons.append("【🎯期待】3000G以上回ってBIG確率が設定6を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
+            elif h == "超REG突出": add_reasons.append("【🎯激熱】5000G以上回ってREG確率が1/200より良い極端な優秀台です。設定6（またはそれ以上）の期待が非常に高いお宝台です。")
     if '⚠️' in match_str:
         cold_part = match_str.split('⚠️')[1].strip()
         for c in cold_part.split():
             if c == "大勝反動": add_reasons.append("【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください。")
             elif c == "一撃反動": add_reasons.append("【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください。")
+            elif c == "中間設定濃厚": add_reasons.append("【⚠️警戒】BB確率が設定1より悪く、かつREG確率が設定6に届いていません。中間設定の誤爆やフェイクの可能性が高いため、高設定狙いとしては危険です。")
     
     if add_reasons:
         row['根拠'] = (reason + " " + " ".join(add_reasons)).strip()
