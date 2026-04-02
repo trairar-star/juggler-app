@@ -939,13 +939,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             if df_display.empty:
                 st.info("推奨台がありません。")
         
-            # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
-            base_cols = ['AI順位', '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
+            # 常に「店名」を表示するようにカラムを厳選
+            base_cols = ['AI順位', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
             display_cols = [c for c in base_cols if c in df_display.columns]
-            
-            # 「全て」選択時、表示カラムの先頭に店名を追加する
-            if selected_shop == '全て' and shop_col in df_display.columns and shop_col not in display_cols:
-                display_cols.insert(0, shop_col)
 
             # データフレームの表示設定 (Pandas Stylerを使って赤いバーを描画)
             styled_display = df_display[display_cols]
