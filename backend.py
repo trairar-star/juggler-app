@@ -1150,6 +1150,10 @@ def _generate_features(df, df_events, df_island, target_date):
         df = df.drop(columns=['店名_y', 'イベント日付_y', 'イベント日付'], errors='ignore')
         if '店名_x' in df.columns: df = df.rename(columns={'店名_x': '店名'})
         
+        # shop_colが'店名'以外だった場合、右から結合されてNaNだらけになった'店名'列を消去し、UI側の判定誤動作を防ぐ
+        if shop_col != '店名' and '店名' in df.columns:
+            df = df.drop(columns=['店名'], errors='ignore')
+        
         df['イベント名'] = df['イベント名'].fillna('通常')
         df['event_code'] = df['イベント名'].astype('category').cat.codes
         if 'イベントランク' in df.columns:
