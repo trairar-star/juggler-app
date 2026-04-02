@@ -941,7 +941,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
         
             # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
             base_cols = ['AI順位', '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
-            if selected_shop == '全て' and shop_col in df.columns:
+            if shop_col in df.columns:
                 base_cols.insert(0, shop_col)
                 
             display_cols = [c for c in base_cols if c in df_display.columns]
