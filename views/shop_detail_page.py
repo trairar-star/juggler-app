@@ -921,11 +921,15 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             # 表示件数の絞り込み
             if display_mode == "厳選推奨台 (店舗別 上位10%)":
                 if shop_col in df_sorted.columns:
-                    df_display = df_sorted.groupby(shop_col, group_keys=False).apply(
-                        lambda x: x.head(max(3, int(len(x) * 0.10)))
-                    )
-                    if sort_cols:
-                        df_display = df_display.sort_values(by=sort_cols, ascending=ascending_list).reset_index(drop=True)
+                    df_list = []
+                    for shop_name, group in df_sorted.groupby(shop_col):
+                        df_list.append(group.head(max(3, int(len(group) * 0.10))))
+                    if df_list:
+                        df_display = pd.concat(df_list, ignore_index=True)
+                        if sort_cols:
+                            df_display = df_display.sort_values(by=sort_cols, ascending=ascending_list).reset_index(drop=True)
+                    else:
+                        df_display = pd.DataFrame(columns=df_sorted.columns)
                 else:
                     limit = max(3, int(len(df_sorted) * 0.10))
                     df_display = df_sorted.head(limit)

@@ -432,9 +432,13 @@ def save_prediction_log(df):
     if 'prediction_score' in save_df_initial.columns:
         shop_col = '店名' if '店名' in save_df_initial.columns else ('店舗名' if '店舗名' in save_df_initial.columns else None)
         if shop_col:
-            save_df_initial = save_df_initial.groupby(shop_col, group_keys=False).apply(
-                lambda x: x.sort_values('prediction_score', ascending=False).head(max(3, int(len(x) * 0.10)))
-            )
+            df_list = []
+            for shop_name, group in save_df_initial.groupby(shop_col):
+                df_list.append(group.sort_values('prediction_score', ascending=False).head(max(3, int(len(group) * 0.10))))
+            if df_list:
+                save_df_initial = pd.concat(df_list, ignore_index=True)
+            else:
+                save_df_initial = pd.DataFrame(columns=save_df_initial.columns)
         else:
             save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
             
@@ -925,6 +929,10 @@ def _generate_features(df, df_events, df_island, target_date):
 
     if df.empty: return df, []
 
+    # 店舗名のカラムを「店名」に統一し、以降の処理をシンプルにする
+    if '店舗名' in df.columns and '店名' not in df.columns:
+        df = df.rename(columns={'店舗名': '店名'})
+
     shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
     
     if '機種名' in df.columns: df['machine_code'] = df['機種名'].astype('category').cat.codes
@@ -1148,14 +1156,11 @@ def _generate_features(df, df_events, df_island, target_date):
         merge_cols = ['店名', 'イベント日付', 'イベント名']
         if 'イベントランク' in events_unique.columns: merge_cols.append('イベントランク')
 
-        # 対象日付ではなく、予測対象日（next_date）のイベントを結合する
-        df = pd.merge(df, events_unique[merge_cols], left_on=[shop_col, 'next_date'], right_on=['店名', 'イベント日付'], how='left')
-        df = df.drop(columns=['店名_y', 'イベント日付_y', 'イベント日付'], errors='ignore')
-        if '店名_x' in df.columns: df = df.rename(columns={'店名_x': '店名'})
-        
-        # shop_colが'店名'以外だった場合、右から結合されてNaNだらけになった'店名'列を消去し、UI側の判定誤動作を防ぐ
-        if shop_col != '店名' and '店名' in df.columns:
-            df = df.drop(columns=['店名'], errors='ignore')
+        # 予測対象日（next_date）のイベントを結合する。shop_colは'店名'に統一済みのため、'店名_x', '店名_y'が生成される
+        df = pd.merge(df, events_unique[merge_cols], on=None, left_on=['店名', 'next_date'], right_on=['店名', 'イベント日付'], how='left')
+        # 不要な列を削除し、元の'店名'列を復元する
+        df = df.drop(columns=['店名_y', 'イベント日付'], errors='ignore')
+        df = df.rename(columns={'店名_x': '店名'}, errors='ignore')
         
         df['イベント名'] = df['イベント名'].fillna('通常')
         df['event_code'] = df['イベント名'].astype('category').cat.codes
