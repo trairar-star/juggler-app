@@ -941,11 +941,12 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
         
             # スマホで見やすいようにカラムを厳選（「全て」の店が選ばれている時だけ「店名」を表示）
             base_cols = ['AI順位', '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
-            if shop_col in df.columns:
-                base_cols.insert(0, shop_col)
-                
             display_cols = [c for c in base_cols if c in df_display.columns]
-        
+            
+            # 「全て」選択時、表示カラムの先頭に店名を追加する
+            if selected_shop == '全て' and shop_col in df_display.columns and shop_col not in display_cols:
+                display_cols.insert(0, shop_col)
+
             # データフレームの表示設定 (Pandas Stylerを使って赤いバーを描画)
             styled_display = df_display[display_cols]
             if '予想設定5以上確率' in display_cols:
