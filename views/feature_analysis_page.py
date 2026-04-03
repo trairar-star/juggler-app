@@ -4,7 +4,6 @@ import streamlit as st # type: ignore
 import altair as alt # type: ignore
 from utils import get_confidence_indicator
 import backend
-from views.shop_detail_page import _calculate_shop_trends
 
 def _render_monthly_trend_analysis(viz_df):
     with st.expander("🗓️ 月間トレンド (月初・月末の傾向)", expanded=False):
@@ -175,7 +174,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     if df_raw is not None and not df_raw.empty and shop_col in df_raw.columns:
         df_raw_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
         specs = backend.get_machine_specs()
-        all_trends_dict = _calculate_shop_trends(base_analysis_df, shop_col, specs)
+        all_trends_dict = backend._calculate_shop_trends(base_analysis_df, shop_col, specs)
         base_win_rate = 0
         top_trends_df = None
         worst_trends_df = None
