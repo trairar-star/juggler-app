@@ -1330,7 +1330,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         objective='binary', random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
         reg_alpha=r_alpha, reg_lambda=r_lambda,
-        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+        class_weight='balanced'
     )
     model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
     reg_model = lgb.LGBMRegressor(
@@ -1392,7 +1393,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                    class_weight='balanced'
                 )
                 shop_reg = lgb.LGBMRegressor(
                     random_state=42, verbose=-1, 
@@ -1441,7 +1443,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                    class_weight='balanced'
                 )
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
@@ -1470,7 +1473,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                    class_weight='balanced'
                 )
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
