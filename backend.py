@@ -922,7 +922,7 @@ def save_shop_ai_settings(shop_hyperparams):
         return False
 
 # --- 内部関数: 特徴量作成 ---
-def _generate_features(df, df_events, df_island, target_date):
+def _generate_features(df, df_events, df_island, target_date, df_pred_log=None):
     if target_date is not None:
         target_ts = pd.to_datetime(target_date)
         df = df[df['対象日付'] < target_ts].copy()
@@ -935,6 +935,32 @@ def _generate_features(df, df_events, df_island, target_date):
 
     shop_col = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
     
+    # ---------------------------------------------------------
+    # 過去の予測スコア（前日の予想）を特徴量としてマージ
+    # ---------------------------------------------------------
+    if df_pred_log is not None and not df_pred_log.empty and shop_col:
+        pred_log = df_pred_log.copy()
+        pred_shop_col = '店名' if '店名' in pred_log.columns else ('店舗名' if '店舗名' in pred_log.columns else None)
+        
+        if pred_shop_col and '予測対象日' in pred_log.columns and '台番号' in pred_log.columns:
+            pred_log['予測対象日'] = pd.to_datetime(pred_log['予測対象日'], errors='coerce')
+            pred_log = pred_log.dropna(subset=['予測対象日'])
+            pred_log['台番号'] = pd.to_numeric(pred_log['台番号'], errors='coerce')
+            
+            if pred_shop_col != shop_col:
+                pred_log = pred_log.rename(columns={pred_shop_col: shop_col})
+                
+            pred_log = pred_log.drop_duplicates(subset=[shop_col, '台番号', '予測対象日'], keep='last')
+            
+            # 対象日付（実績の日）に対する事前の予測スコアを結合
+            df = pd.merge(df, pred_log[[shop_col, '台番号', '予測対象日', 'prediction_score']], 
+                          left_on=[shop_col, '台番号', '対象日付'], 
+                          right_on=[shop_col, '台番号', '予測対象日'], 
+                          how='left')
+            df = df.rename(columns={'prediction_score': 'past_prediction_score'})
+            df = df.drop(columns=['予測対象日'], errors='ignore')
+            df['past_prediction_score'] = df['past_prediction_score'].fillna(0.0)
+
     if '機種名' in df.columns: df['machine_code'] = df['機種名'].astype('category').cat.codes
     if shop_col: df['shop_code'] = df[shop_col].astype('category').cat.codes
 
@@ -1296,6 +1322,7 @@ def _generate_features(df, df_events, df_island, target_date):
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
+    if 'past_prediction_score' in df.columns: features.append('past_prediction_score')
 
     # 確実に存在する特徴量のみに絞り込み、学習時の KeyError を防止
     features = [f for f in features if f in df.columns]
@@ -1544,9 +1571,17 @@ def _postprocess_predictions(predict_df, train_df):
         score = row.get('prediction_score', 0)
         if score > 0.8: comments.append("【激アツ】AIの自信度が非常に高いです。")
         
+        past_score = row.get('past_prediction_score', 0)
+        diff = row.get('差枚', 0)
+        
+        if past_score >= 0.70:
+            if diff <= -500:
+                reasons.append(f"【AIリベンジ狙い】前日もAIが強く推奨(期待度{past_score*100:.0f}%)していましたが不発でした。高設定据え置きのリベンジが期待できます。")
+            elif diff > 0:
+                reasons.append(f"【AI推奨継続】前日もAIが推奨(期待度{past_score*100:.0f}%)しており、好調のまま今日も強い根拠を維持しています。")
+        
         mean_7d = row.get('mean_7days_diff', 0)
         win_rate_7d = row.get('win_rate_7days', 0)
-        diff = row.get('差枚', 0)
         reg_prob = row.get('REG確率', 0)
         is_win_flag = row.get('is_win', 0)
         games = row.get('累計ゲーム', 0)
@@ -1709,14 +1744,17 @@ def _postprocess_predictions(predict_df, train_df):
 # 分析・予測ロジック (メイン関数)
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
-def run_analysis(df, df_events=None, df_island=None, shop_hyperparams=None, target_date=None):
+def run_analysis(df, df_events=None, df_island=None, shop_hyperparams=None, target_date=None, df_pred_log=None):
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     if shop_hyperparams is None:
         shop_hyperparams = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
 
+    if df_pred_log is None:
+        df_pred_log = load_prediction_log()
+
     # 1. 特徴量エンジニアリング
-    df, features = _generate_features(df, df_events, df_island, target_date)
+    df, features = _generate_features(df, df_events, df_island, target_date, df_pred_log)
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     train_df = df.dropna(subset=['next_diff']).copy()
