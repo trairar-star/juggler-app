@@ -1582,7 +1582,9 @@ def _calculate_shop_trends(df_train, shop_col, specs):
             'top_ids': s_top_trends_df['id'].tolist() if s_top_trends_df is not None else [],
             'worst_ids': s_worst_trends_df['id'].tolist() if s_worst_trends_df is not None else [],
             'trend_diffs': dict(zip(all_trends_df['id'], all_trends_df['通常時との差'])) if trends else {},
-            'trend_win_rates': dict(zip(all_trends_df['id'], all_trends_df['高設定率'])) if trends else {}
+            'trend_win_rates': dict(zip(all_trends_df['id'], all_trends_df['高設定率'])) if trends else {},
+            'top_df': s_top_trends_df,
+            'worst_df': s_worst_trends_df
         }
     return all_trends_dict
 
