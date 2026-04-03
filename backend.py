@@ -1452,7 +1452,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             if len(wd_train) >= 150:
                 X_wd = wd_train[features]
                 y_wd = wd_train['target']
-                sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index) else None
+                sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index).all() else None
                 
                 wd_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
@@ -1482,7 +1482,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             if len(ev_train) >= 150:
                 X_ev = ev_train[features]
                 y_ev = ev_train['target']
-                sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index) else None
+                sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index).all() else None
                 
                 ev_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
