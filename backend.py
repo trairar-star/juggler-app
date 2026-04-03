@@ -479,6 +479,9 @@ def save_prediction_log(df):
                 if c not in df_existing.columns:
                     df_existing[c] = ''
             df_existing = df_existing[STANDARD_HEADER]
+            
+            if 'prediction_score' in df_existing.columns:
+                df_existing['prediction_score'] = pd.to_numeric(df_existing['prediction_score'], errors='coerce')
         else:
             df_existing = pd.DataFrame(columns=STANDARD_HEADER)
             
@@ -1080,17 +1083,6 @@ def _generate_features(df, df_events, df_island, target_date):
     if '推定ぶどう確率' in df.columns:
         df['prev_推定ぶどう確率_raw'] = df.groupby(group_keys)['推定ぶどう確率'].shift(1)
         
-        # --- ④ 店単位で補正かける ---
-        # 店舗ごとの推定ぶどう確率の平均値を算出（客層による小役取得率や、差枚計算のズレを吸収）
-        if shop_col:
-            shop_grape_avg = df.groupby(shop_col)['prev_推定ぶどう確率_raw'].transform('mean')
-            global_grape_avg = df['prev_推定ぶどう確率_raw'].mean()
-            # 店舗のクセを補正（例: 平均が6.2の店は、全体平均6.0に合わせるため -0.2 の補正をかける）
-            shop_correction = global_grape_avg - shop_grape_avg
-            df['prev_推定ぶどう確率_adj'] = df['prev_推定ぶどう確率_raw'] + shop_correction
-        else:
-            df['prev_推定ぶどう確率_adj'] = df['prev_推定ぶどう確率_raw']
-
         # --- ①〜③ ぶどうを「良台の裏取り(補助指標)」に限定するフィルター ---
         cond_reg = df['prev_REG確率'] >= (1/280.0)
         cond_diff = df['prev_差枚'] > 0
@@ -1099,9 +1091,9 @@ def _generate_features(df, df_events, df_island, target_date):
         
         is_good_base = cond_reg & cond_diff
         
-        val_high = df['prev_推定ぶどう確率_adj']
+        val_high = df['prev_推定ぶどう確率_raw']
         # 3000〜4000Gの場合はブレが大きいため、平均値(6.0)側に引っ張って「弱く反映」させる
-        val_mid = df['prev_推定ぶどう確率_adj'] * 0.5 + 6.0 * 0.5
+        val_mid = df['prev_推定ぶどう確率_raw'] * 0.5 + 6.0 * 0.5
         
         # 条件を満たす「裏取り」の状況のみAIに数値を渡し、それ以外はNaN(無効化)してノイズを防ぐ
         df['prev_推定ぶどう確率'] = np.where(
@@ -1307,13 +1299,24 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     default_hp = shop_hyperparams.get("デフォルト", {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0})
     
-    X, y = train_df[features], train_df['target']
-    sample_weights = None
-    if '対象日付' in train_df.columns:
-        max_date = train_df['対象日付'].max()
-        days_diff = (max_date - train_df['対象日付']).dt.days
-        sample_weights = 0.995 ** days_diff
+    # 共通モデル用にデフォルトの学習期間で絞り込んだデータを作成
+    default_t_m = default_hp.get('train_months', 3)
+    if '対象日付' in train_df.columns and not train_df.empty:
+        max_d = train_df['対象日付'].max()
+        cutoff = max_d - pd.DateOffset(months=default_t_m)
+        train_df_common = train_df[train_df['対象日付'] >= cutoff].copy()
+    else:
+        train_df_common = train_df.copy()
+
+    X = train_df_common[features]
+    y = train_df_common['target']
     
+    sample_weights = None
+    if '対象日付' in train_df_common.columns:
+        max_date = train_df_common['対象日付'].max()
+        days_diff = (max_date - train_df_common['対象日付']).dt.days
+        sample_weights = 0.995 ** days_diff
+
     n_est = default_hp.get('n_estimators', 300)
     lr = default_hp.get('learning_rate', 0.03)
     nl = default_hp.get('num_leaves', 15)
@@ -1340,7 +1343,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         reg_alpha=r_alpha, reg_lambda=r_lambda,
         subsample=0.8, subsample_freq=1, colsample_bytree=0.8
     )
-    reg_model.fit(X, train_df['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
+    reg_model.fit(X, train_df_common['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
     
     if not predict_df.empty:
         predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
@@ -1361,7 +1364,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 corrs.append(0.0)
         return corrs
 
-    corrs_all = get_correlations(train_df, features)
+    corrs_all = get_correlations(train_df_common, features)
     feature_importances_list = []
     feature_importances_list.append(pd.DataFrame({
         'shop_name': '全店舗',
@@ -1375,6 +1378,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     if shop_col:
         for shop in train_df[shop_col].unique():
             shop_hp = shop_hyperparams.get(shop, default_hp)
+            t_m = shop_hp.get('train_months', default_t_m)
             s_n_est = shop_hp.get('n_estimators', 300)
             s_lr = shop_hp.get('learning_rate', 0.03)
             s_nl = shop_hp.get('num_leaves', 15)
@@ -1383,11 +1387,22 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             s_ra = shop_hp.get('reg_alpha', 0.0)
             s_rl = shop_hp.get('reg_lambda', 0.0)
             
-            shop_train = train_df[train_df[shop_col] == shop]
+            shop_df_full = train_df[train_df[shop_col] == shop]
+            if not shop_df_full.empty and '対象日付' in shop_df_full.columns:
+                s_max_d = shop_df_full['対象日付'].max()
+                s_cutoff = s_max_d - pd.DateOffset(months=t_m)
+                shop_train = shop_df_full[shop_df_full['対象日付'] >= s_cutoff].copy()
+            else:
+                shop_train = shop_df_full.copy()
+                
             if len(shop_train) >= 150: # ノイズ過学習防止のため、最低サンプル数を引き上げ
                 X_shop = shop_train[features]
                 y_shop = shop_train['target']
-                sw_shop = sample_weights.loc[shop_train.index] if sample_weights is not None else None
+                sw_shop = None
+                if '対象日付' in shop_train.columns:
+                    s_max_date = shop_train['対象日付'].max()
+                    s_days_diff = (s_max_date - shop_train['対象日付']).dt.days
+                    sw_shop = 0.995 ** s_days_diff
                 
                 shop_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
@@ -1421,23 +1436,23 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                         if len(shop_pred_idx) > 0:
                             predict_df.loc[shop_pred_idx, 'prediction_score'] = shop_model.predict_proba(predict_df.loc[shop_pred_idx, features])[:, 1]
                             predict_df.loc[shop_pred_idx, '予測差枚数'] = shop_reg.predict(predict_df.loc[shop_pred_idx, features]).astype(int)
-                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.3(m{shop_hp.get('train_months',3)}_n{s_n_est}_d{s_md}_ra{s_ra})"
+                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.3(m{t_m}_n{s_n_est}_d{s_md}_ra{s_ra})"
                     if not train_df.empty:
                         shop_train_idx = train_df[train_df[shop_col] == shop].index
                         if len(shop_train_idx) > 0:
-                            train_df.loc[shop_train_idx, 'prediction_score'] = shop_model.predict_proba(X_shop)[:, 1]
-                            train_df.loc[shop_train_idx, '予測差枚数'] = shop_reg.predict(X_shop).astype(int)
+                            train_df.loc[shop_train_idx, 'prediction_score'] = shop_model.predict_proba(train_df.loc[shop_train_idx, features])[:, 1]
+                            train_df.loc[shop_train_idx, '予測差枚数'] = shop_reg.predict(train_df.loc[shop_train_idx, features]).astype(int)
                 except: pass
                     
     # --- 曜日別モデルの学習 ---
     weekdays_map = {0: '月曜', 1: '火曜', 2: '水曜', 3: '木曜', 4: '金曜', 5: '土曜', 6: '日曜'}
-    if 'target_weekday' in train_df.columns:
-        for wd in sorted(train_df['target_weekday'].unique()):
-            wd_train = train_df[train_df['target_weekday'] == wd]
+    if 'target_weekday' in train_df_common.columns:
+        for wd in sorted(train_df_common['target_weekday'].unique()):
+            wd_train = train_df_common[train_df_common['target_weekday'] == wd]
             if len(wd_train) >= 150:
                 X_wd = wd_train[features]
                 y_wd = wd_train['target']
-                sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None else None
+                sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index) else None
                 
                 wd_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
@@ -1459,15 +1474,15 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 except: pass
                 
     # --- イベント有無別モデルの学習 ---
-    if 'イベント名' in train_df.columns:
-        train_df_ev = train_df.copy()
+    if 'イベント名' in train_df_common.columns:
+        train_df_ev = train_df_common.copy()
         train_df_ev['is_event'] = train_df_ev['イベント名'].apply(lambda x: '通常日' if x == '通常' else 'イベント日')
         for ev_type in ['通常日', 'イベント日']:
             ev_train = train_df_ev[train_df_ev['is_event'] == ev_type]
             if len(ev_train) >= 150:
                 X_ev = ev_train[features]
                 y_ev = ev_train['target']
-                sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None else None
+                sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index) else None
                 
                 ev_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
@@ -1487,19 +1502,6 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                         'correlation': corrs_ev
                     }))
                 except: pass
-
-    # --- 予測スコアから「前日の自己評価スコア(past_prediction_score)」を作成 ---
-    # ログに依存せず、現在のモデル自身の推論結果を使って「前日も推奨していたか」を判定する
-    all_df = pd.concat([train_df, predict_df], ignore_index=True)
-    if shop_col:
-        all_df = all_df.sort_values([shop_col, '台番号', '対象日付']).reset_index(drop=True)
-        all_df['past_prediction_score'] = all_df.groupby([shop_col, '台番号'])['prediction_score'].shift(1).fillna(0.0)
-    else:
-        all_df = all_df.sort_values(['台番号', '対象日付']).reset_index(drop=True)
-        all_df['past_prediction_score'] = all_df.groupby('台番号')['prediction_score'].shift(1).fillna(0.0)
-        
-    train_df = all_df[all_df['next_diff'].notna()].copy()
-    predict_df = all_df[all_df['next_diff'].isna()].copy()
 
     feature_importances = pd.concat(feature_importances_list, ignore_index=True) if feature_importances_list else pd.DataFrame()
     
@@ -1579,8 +1581,8 @@ def _calculate_shop_trends(df_train, shop_col, specs):
             'base_win_rate': s_base_win_rate,
             'top_ids': s_top_trends_df['id'].tolist() if s_top_trends_df is not None else [],
             'worst_ids': s_worst_trends_df['id'].tolist() if s_worst_trends_df is not None else [],
-            'top_df': s_top_trends_df,
-            'worst_df': s_worst_trends_df
+            'trend_diffs': dict(zip(all_trends_df['id'], all_trends_df['通常時との差'])) if trends else {},
+            'trend_win_rates': dict(zip(all_trends_df['id'], all_trends_df['高設定率'])) if trends else {}
         }
     return all_trends_dict
 
@@ -1596,29 +1598,33 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     worst_ids = t_info['worst_ids']
     
     matched_hot = []
-    if "corner" in top_ids and row.get('is_corner') == 1: matched_hot.append("角")
-    if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0): matched_hot.append("BB欠損・不発")
+    matched_hot_ids = []
+    if "corner" in top_ids and row.get('is_corner') == 1: matched_hot.append("角"); matched_hot_ids.append("corner")
+    if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0): matched_hot.append("BB欠損・不発"); matched_hot_ids.append("reg_lead")
     if "bb_deficit" in top_ids:
         b_p = row.get('BIG確率', 0)
         b_d = 1 / b_p if b_p > 0 else 9999
         sp_r5 = 1.0 / specs[get_matched_spec_key(row.get('機種名', ''), specs)].get('設定5', {"REG": 260.0})["REG"]
-        if b_d >= 400 and row.get('REG確率', 0) >= sp_r5: matched_hot.append("超不発")
-    if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹")
-    if "taco_lose" in top_ids and row.get('差枚', 0) <= -1000 and row.get('累計ゲーム', 0) >= 7000: matched_hot.append("タコ粘りお詫び")
-    if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発")
-    if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え")
-    if "v_recovery" in top_ids and row.get('prev_差枚', 0) < 0 and row.get('差枚', -1) >= 0: matched_hot.append("V字反発")
-    if "cont_big_lose" in top_ids and row.get('prev_差枚', 0) <= -1000 and row.get('差枚', 0) <= -1000: matched_hot.append("連大凹み")
-    if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え")
+        if b_d >= 400 and row.get('REG確率', 0) >= sp_r5: matched_hot.append("超不発"); matched_hot_ids.append("bb_deficit")
+    if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹"); matched_hot_ids.append("cons_minus")
+    if "taco_lose" in top_ids and row.get('差枚', 0) <= -1000 and row.get('累計ゲーム', 0) >= 7000: matched_hot.append("タコ粘りお詫び"); matched_hot_ids.append("taco_lose")
+    if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発"); matched_hot_ids.append("prev_lose")
+    if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え"); matched_hot_ids.append("prev_win")
+    if "v_recovery" in top_ids and row.get('prev_差枚', 0) < 0 and row.get('差枚', -1) >= 0: matched_hot.append("V字反発"); matched_hot_ids.append("v_recovery")
+    if "cont_big_lose" in top_ids and row.get('prev_差枚', 0) <= -1000 and row.get('差枚', 0) <= -1000: matched_hot.append("連大凹み"); matched_hot_ids.append("cont_big_lose")
+    if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え"); matched_hot_ids.append("prev_win_reg")
     for tid in top_ids:
         if tid.startswith("day_") and 'target_date_end_digit' in row:
-            if row['target_date_end_digit'] == int(tid.split("_")[1]): matched_hot.append(f"{int(tid.split('_')[1])}のつく日")
-        elif tid.startswith("end_") and row.get('末尾番号') == int(tid.split("_")[1]): matched_hot.append(f"末尾{int(tid.split('_')[1])}")
+            if row['target_date_end_digit'] == int(tid.split("_")[1]): matched_hot.append(f"{int(tid.split('_')[1])}のつく日"); matched_hot_ids.append(tid)
+        elif tid.startswith("end_") and row.get('末尾番号') == int(tid.split("_")[1]): matched_hot.append(f"末尾{int(tid.split('_')[1])}"); matched_hot_ids.append(tid)
     
     matched_cold = []
-    if "big_win_reaction" in worst_ids and row.get('差枚', 0) >= 2000 and row.get('REG確率', 1) < (1/350): matched_cold.append("大勝反動")
-    if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動")
+    matched_cold_ids = []
+    if "big_win_reaction" in worst_ids and row.get('差枚', 0) >= 2000 and row.get('REG確率', 1) < (1/350): matched_cold.append("大勝反動"); matched_cold_ids.append("big_win_reaction")
+    if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動"); matched_cold_ids.append("one_hit_reaction")
 
+    fixed_hot = []
+    fixed_cold = []
     mac_name = row.get('機種名', '')
     matched_key = get_matched_spec_key(mac_name, specs)
     if matched_key and matched_key in specs:
@@ -1630,62 +1636,85 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         games = row.get('累計ゲーム', 0)
         if games >= 5000 and b_prob > 0 and r_prob > 0:
             if (1.0 / b_prob) > spec_b1 and (1.0 / r_prob) > spec_r6:
-                matched_cold.append("中間設定濃厚")
+                fixed_cold.append("中間設定濃厚")
             if (1.0 / b_prob) <= spec_b6:
-                matched_hot.append("BB突出")
+                fixed_hot.append("BB突出")
         if games >= 5000 and r_prob > 0:
             if (1.0 / r_prob) <= 200.0:
-                matched_hot.append("超REG突出")
+                fixed_hot.append("超REG突出")
 
-    hot_str = "🔥" + " ".join(matched_hot) if matched_hot else ""
-    cold_str = "⚠️" + " ".join(matched_cold) if matched_cold else ""
+    hot_str = "🔥" + " ".join(matched_hot + fixed_hot) if (matched_hot or fixed_hot) else ""
+    cold_str = "⚠️" + " ".join(matched_cold + fixed_cold) if (matched_cold or fixed_cold) else ""
     
     match_str = f"{hot_str} {cold_str}".strip()
     row['店癖マッチ'] = match_str
     
     # スコアの再計算
     score = row.get('prediction_score', 0)
-    if '🔥' in match_str:
-        hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
-        bonus = 0.02 * len(hot_part.split())
-        if "BB突出" in hot_part.split(): bonus += 0.15
-        if "超REG突出" in hot_part.split(): bonus += 0.20
-        bonus = min(0.40, bonus)
-        score = min(1.0, score + bonus)
-    if '⚠️' in match_str:
-        cold_part = match_str.split('⚠️')[1].strip()
-        penalty = 0.05 * len(cold_part.split())
-        if "中間設定濃厚" in cold_part.split(): penalty += 0.20
-        penalty = min(0.35, penalty)
-        score = max(0.0, score - penalty)
+
+    # 実績に基づく加点ボーナス（通常時との勝率の差分をそのままAIの期待度に上乗せ）
+    actual_bonus = 0.0
+    for tid in matched_hot_ids:
+        diff_pct = t_info['trend_diffs'].get(tid, 0)
+        if diff_pct > 0:
+            actual_bonus += (diff_pct / 100.0)
+            
+    fixed_bonus = 0.0
+    if "BB突出" in fixed_hot: fixed_bonus += 0.05
+    if "超REG突出" in fixed_hot: fixed_bonus += 0.15
+
+    total_bonus = min(0.60, actual_bonus + fixed_bonus)
+    if total_bonus > 0:
+        score = score + (1.0 - score) * total_bonus
+
+    # 実績に基づく減点ペナルティ
+    actual_penalty = 0.0
+    for tid in matched_cold_ids:
+        diff_pct = t_info['trend_diffs'].get(tid, 0)
+        if diff_pct < 0:
+            actual_penalty += abs(diff_pct / 100.0)
+            
+    fixed_penalty_val = 0.0
+    if "中間設定濃厚" in fixed_cold: fixed_penalty_val += 0.15
+
+    total_penalty = min(0.60, actual_penalty + fixed_penalty_val)
+    if total_penalty > 0:
+        score = score * (1.0 - total_penalty)
+
     row['prediction_score'] = score
     
     # 根拠の追記
     reason = str(row.get('根拠', ''))
     add_reasons = []
-    if '🔥' in match_str:
-        hot_part = match_str.split('🔥')[1].split('⚠️')[0].strip()
-        for h in hot_part.split():
-            if h.startswith("末尾"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で特に勝率が高い『{h}』に合致しています。")
-            elif h.endswith("のつく日"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗が還元している『{h}』に合致しています。")
-            elif h == "角": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で設定が入りやすい『角台』に合致しています。")
-            elif h == "BB欠損・不発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています。")
-            elif h == "超不発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています。")
-            elif h == "連凹": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています。")
-            elif h == "タコ粘りお詫び": add_reasons.append("【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています。")
-            elif h == "負反発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています。")
-            elif h == "勝据え": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています。")
-            elif h == "V字反発": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています。")
-            elif h == "連大凹み": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています。")
-            elif h == "高設定据え": add_reasons.append("【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています。")
-            elif h == "BB突出": add_reasons.append("【🎯期待】3000G以上回ってBIG確率が設定6を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
-            elif h == "超REG突出": add_reasons.append("【🎯激熱】5000G以上回ってREG確率が1/200より良い極端な優秀台です。設定6（またはそれ以上）の期待が非常に高いお宝台です。")
-    if '⚠️' in match_str:
-        cold_part = match_str.split('⚠️')[1].strip()
-        for c in cold_part.split():
-            if c == "大勝反動": add_reasons.append("【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください。")
-            elif c == "一撃反動": add_reasons.append("【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください。")
-            elif c == "中間設定濃厚": add_reasons.append("【⚠️警戒】BB確率が設定1より悪く、かつREG確率が設定6に届いていません。中間設定の誤爆やフェイクの可能性が高いため、高設定狙いとしては危険です。")
+    for tid, h in zip(matched_hot_ids, matched_hot):
+        w_rate = t_info['trend_win_rates'].get(tid, 0)
+        diff_rate = t_info['trend_diffs'].get(tid, 0)
+        rate_str = f"(実績:高設定率{w_rate:.1f}% / 通常より+{diff_rate:.1f}%)"
+        
+        if tid.startswith("end_") or tid.startswith("day_"): 
+            add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で『{h}』は高設定の期待度が大幅に上がります {rate_str}。")
+        elif h == "角": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で設定が入りやすい『角台』に合致しています {rate_str}。")
+        elif h == "BB欠損・不発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています {rate_str}。")
+        elif h == "超不発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています {rate_str}。")
+        elif h == "連凹": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています {rate_str}。")
+        elif h == "タコ粘りお詫び": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています {rate_str}。")
+        elif h == "負反発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています {rate_str}。")
+        elif h == "勝据え": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています {rate_str}。")
+        elif h == "V字反発": add_reasons.append(f"【🎯店癖】過去の傾向から、好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています {rate_str}。")
+        elif h == "連大凹み": add_reasons.append(f"【🎯店癖】過去の傾向から、強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています {rate_str}。")
+        elif h == "高設定据え": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています {rate_str}。")
+
+    if "BB突出" in fixed_hot: add_reasons.append("【🎯期待】3000G以上回ってBIG確率が設定6を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
+    if "超REG突出" in fixed_hot: add_reasons.append("【🎯激熱】5000G以上回ってREG確率が1/200より良い極端な優秀台です。設定6（またはそれ以上）の期待が非常に高いお宝台です。")
+
+    for tid, c in zip(matched_cold_ids, matched_cold):
+        w_rate = t_info['trend_win_rates'].get(tid, 0)
+        diff_rate = t_info['trend_diffs'].get(tid, 0)
+        rate_str = f"(実績:高設定率{w_rate:.1f}% / 通常より{diff_rate:.1f}%)"
+        if c == "大勝反動": add_reasons.append(f"【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください {rate_str}。")
+        elif c == "一撃反動": add_reasons.append(f"【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください {rate_str}。")
+
+    if "中間設定濃厚" in fixed_cold: add_reasons.append("【⚠️警戒】BB確率が設定1より悪く、かつREG確率が設定6に届いていません。中間設定の誤爆やフェイクの可能性が高いため、高設定狙いとしては危険です。")
     
     if add_reasons:
         row['根拠'] = (reason + " " + " ".join(add_reasons)).strip()
@@ -1710,7 +1739,7 @@ def _postprocess_predictions(predict_df, train_df):
         if matched_spec_key and "設定5" in specs[matched_spec_key]:
             set5_reg_prob = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
             if reg_prob >= set5_reg_prob:
-                score = min(1.0, score + 0.3) # 設定5以上なら大幅にスコアを加算
+                score = score + (1.0 - score) * 0.15 # 設定5以上なら残りの伸びしろの15%を加算
         return score
 
     if not predict_df.empty: predict_df['prediction_score'] = predict_df.apply(apply_setting5_boost, axis=1)
@@ -1735,6 +1764,28 @@ def _postprocess_predictions(predict_df, train_df):
         predict_df['予測信頼度'] = predict_df.apply(get_reliability_mark, axis=1)
     if not train_df.empty: 
         train_df['予測信頼度'] = train_df.apply(get_reliability_mark, axis=1)
+        
+    # --- 店癖の適用 ---
+    shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
+    if shop_col and not train_df.empty:
+        all_trends_dict = _calculate_shop_trends(train_df, shop_col, specs)
+        if not predict_df.empty:
+            predict_df = predict_df.apply(lambda row: _apply_trends_to_row(row, all_trends_dict, shop_col, specs), axis=1)
+        if not train_df.empty:
+            train_df = train_df.apply(lambda row: _apply_trends_to_row(row, all_trends_dict, shop_col, specs), axis=1)
+
+    # --- 予測スコアから「前日の自己評価スコア(past_prediction_score)」を作成 ---
+    # 最終的な予測スコアを使って「前日も推奨していたか」を判定する
+    all_df = pd.concat([train_df, predict_df], ignore_index=True)
+    if shop_col:
+        all_df = all_df.sort_values([shop_col, '台番号', '対象日付']).reset_index(drop=True)
+        all_df['past_prediction_score'] = all_df.groupby([shop_col, '台番号'])['prediction_score'].shift(1).fillna(0.0)
+    else:
+        all_df = all_df.sort_values(['台番号', '対象日付']).reset_index(drop=True)
+        all_df['past_prediction_score'] = all_df.groupby('台番号')['prediction_score'].shift(1).fillna(0.0)
+        
+    train_df = all_df[all_df['next_diff'].notna()].copy()
+    predict_df = all_df[all_df['next_diff'].isna()].copy()
 
     def get_rating(score):
         if score >= 0.85: return 'A'
@@ -1903,35 +1954,22 @@ def _postprocess_predictions(predict_df, train_df):
         else:
             if score > 0.6: comments.append("目立った特徴はありませんが、全体バランスからAIが高く評価しました。")
             else: comments.append("特筆すべき強い根拠はありません。")
-        return " ".join(comments)
+            
+        base_reason = " ".join(comments)
+        shop_reason = str(row.get('根拠', '')).strip()
+        if shop_reason and shop_reason != '-':
+            return f"{base_reason} {shop_reason}".strip()
+        return base_reason
 
     if not predict_df.empty:
+        predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
         predict_df['おすすめ度'] = predict_df['prediction_score'].apply(get_rating)
         if '店名' in predict_df.columns:
             shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
             predict_df['店舗期待度'] = shop_mean.apply(get_rating)
-        predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
         
     if not train_df.empty:
         train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
-    
-    # --- ここから店癖の適用 ---
-    shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
-    if shop_col and not train_df.empty:
-        all_trends_dict = _calculate_shop_trends(train_df, shop_col, specs)
-        if not predict_df.empty:
-            predict_df = predict_df.apply(lambda row: _apply_trends_to_row(row, all_trends_dict, shop_col, specs), axis=1)
-        if not train_df.empty:
-            train_df = train_df.apply(lambda row: _apply_trends_to_row(row, all_trends_dict, shop_col, specs), axis=1)
-
-        # 店癖適用により prediction_score が変動するため、おすすめ度等を再計算
-        if not predict_df.empty:
-            predict_df['おすすめ度'] = predict_df['prediction_score'].apply(get_rating)
-            if '店名' in predict_df.columns:
-                shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
-                predict_df['店舗期待度'] = shop_mean.apply(get_rating)
-        if not train_df.empty:
-            train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
 
     return predict_df, train_df
 
@@ -1952,20 +1990,7 @@ def run_analysis(df, df_events=None, df_island=None, shop_hyperparams=None, targ
     train_df = df.dropna(subset=['next_diff']).copy()
     predict_df = df[df['next_diff'].isna()].copy()
     
-    # 2. 学習データの期間絞り込み (店舗ごとに適用)
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
-    if shop_col and not train_df.empty:
-        filtered_train_dfs = []
-        for shop in train_df[shop_col].unique():
-            shop_hp = shop_hyperparams.get(shop, shop_hyperparams.get("デフォルト", {}))
-            t_m = shop_hp.get('train_months', 3)
-            shop_df = train_df[train_df[shop_col] == shop]
-            if not shop_df.empty and '対象日付' in shop_df.columns:
-                max_d = shop_df['対象日付'].max()
-                cutoff = max_d - pd.DateOffset(months=t_m)
-                filtered_train_dfs.append(shop_df[shop_df['対象日付'] >= cutoff])
-        if filtered_train_dfs:
-            train_df = pd.concat(filtered_train_dfs, ignore_index=True)
 
     # 3. 予測データを最新日に絞り込み
     if '対象日付' in predict_df.columns and not predict_df.empty:

@@ -304,9 +304,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             top_trends_df = all_trends_dict[selected_shop]['top_df']
             worst_trends_df = all_trends_dict[selected_shop]['worst_df']
 
-        # 2. 対象データ (df) に対して店癖マッチとスコア補正を全店舗適用する
-        df = df.apply(lambda row: backend._apply_trends_to_row(row, all_trends_dict, shop_col, specs), axis=1)
-
     tab_pred, tab_trend = st.tabs(["🔮 明日の予測ランキング", "🔬 過去の傾向分析 (勝利の法則)"])
 
     with tab_pred:
