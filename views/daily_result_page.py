@@ -126,7 +126,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     # --- 期待外れ台のフラグ計算 (ハイライト用) ---
     def check_bad_pred(row):
         score = row.get('prediction_score', 0)
-        if pd.isna(score) or score < 0.70: return False
+        if pd.isna(score) or score < 0.65: return False
         
         g = row.get('総回転', 0)
         b = row.get('BIG', 0)
@@ -214,8 +214,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # --- 本日のAI精度パーセントの計算と表示 ---
     if 'prediction_score' in display_df.columns:
-        ai_target_df = display_df[display_df['prediction_score'] >= 0.70]
-        target_label = "AI推奨台(期待度70%以上)"
+        ai_target_df = display_df[display_df['prediction_score'] >= 0.65]
+        target_label = "AI推奨台(期待度65%以上)"
         if ai_target_df.empty and 'AI順位_num' in display_df.columns:
             ai_target_df = display_df[display_df['AI順位_num'] <= 10]
             target_label = "AI予測上位10台"

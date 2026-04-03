@@ -726,7 +726,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
             total_eval_count = len(prob_analysis_df)
             period_high_setting_rate = prob_analysis_df['valid_high'].sum() / prob_analysis_df['valid_play'].sum() if prob_analysis_df['valid_play'].sum() > 0 else 0
-            high_score_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.70]
+            high_score_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.65]
             high_score_accuracy = high_score_df['valid_high'].sum() / high_score_df['valid_play'].sum() if high_score_df['valid_play'].sum() > 0 else 0
             score_mean = prob_analysis_df['prediction_score'].mean()
             
@@ -762,7 +762,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # 要因4: 特徴量の多さ (次元の呪い)
             diag_feat = {"status": "🟢", "title": "特徴量の多さ", "msg": "学習データに対して適切な条件分岐が行われています。"}
             if total_eval_count >= 50 and len(high_score_df) == 0:
-                 diag_feat = {"status": "🟡", "title": "特徴量の多さ(条件厳格化)", "msg": "期待度70%を超える台が1台もありません。AIが多くの特徴量（条件）を同時に満たす完璧な台を探しすぎて、身動きが取れなくなっています。"}
+                 diag_feat = {"status": "🟡", "title": "特徴量の多さ(条件厳格化)", "msg": "期待度65%を超える台が1台もありません。AIが多くの特徴量（条件）を同時に満たす完璧な台を探しすぎて、身動きが取れなくなっています。"}
 
             # 要因5: 店舗の読みにくさ (ランダム・フェイク)
             diag_shop = {"status": "🟢", "title": "店舗の素直さ", "msg": "店舗のクセをある程度捉えられています。"}
@@ -879,7 +879,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     st.caption(f"【{selected_shop}】において、AIが予測を大きく外した台の特徴を店舗平均と比較して分析します。店舗ごとのAIのクセや弱点を把握するのに役立ちます。")
 
     display_df = merged_df.copy() # このセクションで使うDF
-    bad_pred_df = display_df[(display_df['prediction_score'] >= 0.70) & (display_df['差枚_actual'] <= -1000)].copy()
+    bad_pred_df = display_df[(display_df['prediction_score'] >= 0.65) & (display_df['差枚_actual'] <= -1000)].copy()
     missed_df = display_df[(display_df['prediction_score'] <= 0.40) & (display_df['差枚_actual'] >= 2000)].copy()
 
     if bad_pred_df.empty or missed_df.empty:
@@ -999,7 +999,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     }
 
     if 'prediction_score' in merged_df.columns:
-        bad_pred_df = display_df[(display_df['prediction_score'] >= 0.70) & (display_df['差枚_actual'] <= -1000)].copy()
+        bad_pred_df = display_df[(display_df['prediction_score'] >= 0.65) & (display_df['差枚_actual'] <= -1000)].copy()
         missed_df = display_df[(display_df['prediction_score'] <= 0.40) & (display_df['差枚_actual'] >= 2000)].copy()
         
         tab_b1, tab_b2 = st.tabs(["📉 期待はずれ (高評価で大負け)", "📈 逃したお宝台 (低評価で大勝ち)"])
