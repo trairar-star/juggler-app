@@ -1167,9 +1167,10 @@ def _generate_features(df, df_events, df_island, target_date):
     spec_tot = df['機種名'].map(tot_map)
     spec_reg3 = df['機種名'].map(reg3_map)
     
-    # ターゲット判定時も「翌日3000G以上回ったか」を条件に入れ、上振れノイズを学習しないようにする
+    # 🎯【精度向上】ターゲットを厳格化: 4000G以上 + 差枚プラス条件を追加し、低設定の誤爆(ノイズ)をAIに学習させない
     df['target'] = (
-        (df['next_累計ゲーム'] >= 3000) & 
+        (df['next_累計ゲーム'] >= 4000) & 
+        (df['next_diff'] > 0) & 
         (
             (df['next_reg_prob'] >= spec_reg) | 
             ((df['next_total_prob'] >= spec_tot) & (df['next_reg_prob'] >= spec_reg3))
@@ -1252,6 +1253,7 @@ def _generate_features(df, df_events, df_island, target_date):
 
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
+        df['shop_high_rate'] = df.groupby([shop_col, '対象日付'])['is_win'].transform('mean').fillna(0)
         # 店舗の平均稼働に対する自台の稼働割合（相対的な粘られ度）
         df['shop_avg_games'] = df.groupby([shop_col, '対象日付'])['累計ゲーム'].transform('mean').fillna(0)
         df['relative_games_ratio'] = (df['累計ゲーム'] / df['shop_avg_games'].replace(0, np.nan)).fillna(1.0)
@@ -1273,6 +1275,9 @@ def _generate_features(df, df_events, df_island, target_date):
         machine_daily_avg = machine_daily_avg.sort_values([shop_col, '機種名', '対象日付'])
         machine_daily_avg['machine_30days_avg_diff'] = machine_daily_avg.groupby([shop_col, '機種名'])['machine_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
         df = pd.merge(df, machine_daily_avg[[shop_col, '機種名', '対象日付', 'machine_30days_avg_diff']], on=[shop_col, '機種名', '対象日付'], how='left')
+        
+        df['machine_avg_diff'] = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].transform('mean').fillna(0)
+        df['machine_high_rate'] = df.groupby([shop_col, '機種名', '対象日付'])['is_win'].transform('mean').fillna(0)
 
     if shop_col:
         # --- ③台番号（場所）ごとの扱い指標 (過去30日間のその台番号の平均差枚) ---
@@ -1289,6 +1294,7 @@ def _generate_features(df, df_events, df_island, target_date):
 
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
+        df['island_high_rate'] = df.groupby(['island_id', '対象日付'])['is_win'].transform('mean').fillna(0)
         df['island_total_g'] = df.groupby(['island_id', '対象日付'])['累計ゲーム'].transform('sum')
         df['island_total_reg'] = df.groupby(['island_id', '対象日付'])['REG'].transform('sum')
         df['island_reg_prob'] = np.where(df['island_total_g'] > 0, df['island_total_reg'] / df['island_total_g'], 0)
@@ -1328,7 +1334,7 @@ def _generate_features(df, df_events, df_island, target_date):
         df['is_new_machine'] = 0
 
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
