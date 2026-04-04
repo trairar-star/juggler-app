@@ -91,7 +91,14 @@ def render_realtime_judgement_page(df_pred_log):
                 g_count = int(total_prob_den * (b_count + r_count))
                 st.info(f"💡 逆算された総回転数: **{g_count}G**")
 
-            diff_coins = st.number_input("現在の差枚数 (枚) ※任意", value=0, step=100, help="ぶどう確率の逆算に使用します。不明な場合は0のままでOKです。")
+            grape_input_mode = st.radio("ぶどうデータの入力方法", ["差枚から逆算", "直接入力 (カウント)"], horizontal=True)
+            if grape_input_mode == "差枚から逆算":
+                diff_coins = st.number_input("現在の差枚数 (枚) ※任意", value=0, step=100, help="ぶどう確率の逆算に使用します。不明な場合は0のままでOKです。")
+                manual_grape_count = 0
+            else:
+                diff_coins = 0
+                manual_grape_count = st.number_input("カウントしたぶどう回数", min_value=0, value=0, step=10, help="カチカチくん等でカウントした実際のぶどう回数を入力してください。")
+
             peak_drop = st.number_input("ピークからの差枚落ち (枚) ※任意", min_value=0, value=0, step=100, help="最高出玉から何枚減っているか。ヤメ時判定に使用します。")
             
         use_gassan = False
@@ -276,7 +283,10 @@ def render_realtime_judgement_page(df_pred_log):
             
     use_grape = False
     grape_count = 0
-    if diff_coins != 0 and g_count >= 1000:
+    if manual_grape_count > 0:
+        use_grape = True
+        grape_count = manual_grape_count
+    elif diff_coins != 0 and g_count >= 1000:
         use_grape = True
         in_tokens = g_count * 3
         out_tokens = in_tokens + diff_coins
@@ -354,7 +364,8 @@ def render_realtime_judgement_page(df_pred_log):
         st.metric("💸 閉店までの期待収支", f"{int(total_expected_diff):+d} 枚", help=f"残り {int(remain_minutes)} 分 ({remain_games} G) として、各設定の確率と事後確率を加味して算出した理論上の期待差枚数です。")
         
         if use_grape:
-            st.metric("🍇 推定ぶどう確率", f"1/{(g_count / grape_count if grape_count > 0 else 0):.2f}")
+            grape_label = "🍇 実測ぶどう確率" if manual_grape_count > 0 else "🍇 推定ぶどう確率"
+            st.metric(grape_label, f"1/{(g_count / grape_count if grape_count > 0 else 0):.2f}")
             
         # --- ヤメ時ロジック（アラート） ---
         alerts = []

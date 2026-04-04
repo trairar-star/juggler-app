@@ -122,12 +122,27 @@ def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000,
     specs = get_machine_specs()
     matched_spec = get_matched_spec_key(machine_name, specs)
     p_b, p_r = 1/259.0, 1/255.0 # デフォルト
-    if matched_spec and "設定5" in specs[matched_spec]:
-        s5 = specs[matched_spec]["設定5"]
-        if "BIG" in s5: p_b = 1.0 / s5["BIG"]
-        if "REG" in s5: p_r = 1.0 / s5["REG"]
+    p_b_6 = 1/255.0 # 設定6デフォルト
+    if matched_spec:
+        if "設定5" in specs[matched_spec]:
+            s5 = specs[matched_spec]["設定5"]
+            if "BIG" in s5: p_b = 1.0 / s5["BIG"]
+            if "REG" in s5: p_r = 1.0 / s5["REG"]
+        if "設定6" in specs[matched_spec]:
+            s6 = specs[matched_spec]["設定6"]
+            if "BIG" in s6: p_b_6 = 1.0 / s6["BIG"]
         
-    exp_b, exp_r = g * p_b, g * p_r
+    exp_r = g * p_r
+    
+    # BIGの評価基準確率をG数で決定
+    if g >= 7000:
+        target_p_b = p_b
+    elif g >= 5000:
+        target_p_b = p_b_6
+    else:
+        target_p_b = None
+        
+    exp_b = g * p_b # 詳細返却用の設定5基準の期待値
     diff_b, diff_r = act_b - exp_b, act_r - exp_r
     
     base_g = max(2500, min(5000, shop_avg_g))
@@ -137,7 +152,6 @@ def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000,
     penalty_g = base_g * 0.75
 
     sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
-    sigma_b = math.sqrt(g * p_b * (1.0 - p_b)) if g > 0 else 0
     
     if use_strict_scoring:
         sigma_multiplier = 0.5
@@ -151,8 +165,13 @@ def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000,
     deficit_r = max(0, exp_r - act_r)
     adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
     
-    deficit_b = max(0, exp_b - act_b)
-    adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
+    if target_p_b is not None:
+        sigma_b = math.sqrt(g * target_p_b * (1.0 - target_p_b)) if g > 0 else 0
+        eval_exp_b = g * target_p_b
+        deficit_b = max(0, eval_exp_b - act_b)
+        adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
+    else:
+        adjusted_deficit_b = 0
     
     adj_penalty_reg = penalty_reg
     adj_penalty_big = penalty_big
@@ -173,7 +192,10 @@ def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000,
                 adj_penalty_reg = total_penalty * (adj_r / total_adj)
     
     score_r = max(0, 80 - (adjusted_deficit_r * adj_penalty_reg))
-    score_b = max(0, 20 - (adjusted_deficit_b * adj_penalty_big))
+    if target_p_b is not None:
+        score_b = max(0, 20 - (adjusted_deficit_b * adj_penalty_big))
+    else:
+        score_b = 0 # 5000G未満はBIGでの加点なし
     
     total_score = score_r + score_b
     
