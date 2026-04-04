@@ -375,9 +375,11 @@ def render_realtime_judgement_page(df_pred_log):
             alerts.append(f"⚠️ **REG間 {reg_hamari}G ハマり**: 雲行きが怪しくなってきました。")
             
         if peak_drop >= 1500:
-            alerts.append(f"⚠️ **ピークから {peak_drop}枚 減少**: 出玉推移として危険水域です。高設定でも起こり得ますが、設定変更（下げ）のリスクが高いです。")
+            alerts.append(f"🔴 **ピークから {peak_drop}枚 減少**: 危険水域（全飲まれレベル）です。高設定の可能性はかなり低くなっています。")
         elif peak_drop >= 1000:
-            alerts.append(f"⚠️ **ピークから {peak_drop}枚 減少**: 大きな波の下降トレンドにいます。反発がなければ撤退も視野に。")
+            alerts.append(f"🟠 **ピークから {peak_drop}枚 減少**: 大きな下降トレンドです。強い根拠（事前期待度が高い、ぶどうが極端に良い等）がなければ撤退を強く推奨します。")
+        elif peak_drop >= 500:
+            alerts.append(f"🟡 **ピークから {peak_drop}枚 減少**: 波が下がり始めました。合算確率が落ちてきているなら、メダルがあるうちの『勝ち逃げ（利確）』も有効なヤメ時です。")
             
         st.markdown("### 💡 AIジャッジ")
         
