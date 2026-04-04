@@ -10,15 +10,59 @@ def render_realtime_judgement_page(df_pred_log):
     st.header("⏱️ リアルタイム設定判別")
     st.caption("ホールでの実践中、目の前の台の現在のデータから設定を推測します。事前のAI期待度と組み合わせることで、精度の高い「押し引き」のジャッジが可能です。")
 
+    def big_counter(label, key, step=1, min_val=0, help_text=None):
+        if key not in st.session_state:
+            st.session_state[key] = min_val if min_val is not None else 0
+
+        help_icon = f" <span title='{help_text}'>ℹ️</span>" if help_text else ""
+        st.markdown(f"<div style='font-size: 0.9em; font-weight: bold; margin-bottom: 5px;'>{label}{help_icon}</div>", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([1, 2, 1])
+        
+        def dec():
+            st.session_state[key] = max(min_val, st.session_state[key] - step) if min_val is not None else st.session_state[key] - step
+        def inc():
+            st.session_state[key] += step
+
+        c1.button("➖", key=f"dec_{key}", on_click=dec, use_container_width=True)
+        c2.number_input(label, min_value=min_val, step=step, key=key, label_visibility="collapsed")
+        c3.button("➕", key=f"inc_{key}", on_click=inc, use_container_width=True)
+        
+        return st.session_state[key]
+
+    def clear_inputs():
+        keys_to_clear = [
+            "rt_use_ai", "rt_sel_shop", "rt_sel_mac", "rt_prior_high_prob", "rt_selected_machine",
+            "rt_b_count", "rt_r_count", "rt_reg_hamari", "rt_g_input_mode", "rt_g_count",
+            "rt_total_prob_den", "rt_start_g", "rt_grape_input_mode", "rt_diff_coins",
+            "rt_manual_grape_count", "rt_peak_drop", "rt_use_gassan", "rt_gassan_type",
+            "rt_gassan_count", "rt_input_mode", "rt_gassan_g_input_mode", "rt_gassan_b",
+            "rt_gassan_r", "rt_gassan_g", "rt_gassan_total_prob_den",
+            "rt_gassan_g_calc_mode_individual", "rt_gassan_total_prob_den_for_individual",
+            "rt_close_time", "rt_speed"
+        ]
+        for k in list(st.session_state.keys()):
+            if k.startswith("g_g_") or k.startswith("g_b_") or k.startswith("g_r_") or k in keys_to_clear:
+                del st.session_state[k]
+
     specs = backend.get_machine_specs()
     machine_list = [k for k in specs.keys() if k != "ジャグラー（デフォルト）"] + ["ジャグラー（デフォルト）"]
     
+    default_machine_idx = 0
+    if "マイジャグラーV" in machine_list:
+        default_machine_idx = machine_list.index("マイジャグラーV")
+    
     # --- 入力セクション ---
     with st.container():
-        st.subheader("📝 データ入力")
+        col_h1, col_h2 = st.columns([3, 1])
+        with col_h1:
+            st.subheader("📝 データ入力")
+        with col_h2:
+            if st.button("🗑️ 入力をクリア"):
+                clear_inputs()
+                st.rerun()
         
         # AI連携オプション
-        use_ai = st.checkbox("🤖 AIの事前予測（期待度）と連携する", value=True)
+        use_ai = st.checkbox("🤖 AIの事前予測（期待度）と連携する", value=True, key="rt_use_ai")
         
         prior_high_prob = 0.5 
         selected_machine = machine_list[0]
@@ -43,14 +87,14 @@ def render_realtime_judgement_page(df_pred_log):
                 shops = sorted(df_today[shop_col].dropna().unique())
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
-                    sel_shop = st.selectbox("店舗を選択", [""] + shops)
+                    sel_shop = st.selectbox("店舗を選択", [""] + shops, key="rt_sel_shop")
                 with col_s2:
                     if sel_shop:
                         df_shop = df_today[df_today[shop_col] == sel_shop]
                         mac_list = sorted(df_shop['台番号'].astype(str).unique())
-                        sel_mac = st.selectbox("AI推奨台の台番号を選択", [""] + mac_list)
+                        sel_mac = st.selectbox("AI推奨台の台番号を選択", [""] + mac_list, key="rt_sel_mac")
                     else:
-                        sel_mac = st.selectbox("AI推奨台の台番号を選択", [""])
+                        sel_mac = st.selectbox("AI推奨台の台番号を選択", [""], key="rt_sel_mac")
                 
                 if sel_shop and sel_mac:
                     target_row = df_today[(df_today[shop_col] == sel_shop) & (df_today['台番号'].astype(str) == str(sel_mac))].iloc[0]
@@ -65,41 +109,46 @@ def render_realtime_judgement_page(df_pred_log):
                         st.info(f"💡 **AI推奨根拠 (店癖など)**: {reason}")
                 else:
                     st.warning("店舗と台番号を選択してください。リストにない場合はAI推奨台外（または手入力）になります。")
-                    prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f")
-                    selected_machine = st.selectbox("機種を選択", machine_list)
+                    prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f", key="rt_prior_high_prob")
+                    selected_machine = st.selectbox("機種を選択", machine_list, index=default_machine_idx, key="rt_selected_machine")
             else:
                 st.warning("本日のAI予測ログが見つかりません。手動で設定してください。")
-                prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f")
-                selected_machine = st.selectbox("機種を選択", machine_list)
+                prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f", key="rt_prior_high_prob")
+                selected_machine = st.selectbox("機種を選択", machine_list, index=default_machine_idx, key="rt_selected_machine")
         else:
-            selected_machine = st.selectbox("機種を選択", machine_list)
-            prior_high_prob = st.slider("事前期待度（高設定が入っているベースの確率）", 0.0, 1.0, 0.15, 0.01, format="%.2f", help="イベントの強さや店長のクセを加味した、打ち始める前の期待度です。通常営業なら10%〜15%程度がリアルです。")
+            selected_machine = st.selectbox("機種を選択", machine_list, index=default_machine_idx, key="rt_selected_machine")
+            prior_high_prob = st.slider("事前期待度（高設定が入っているベースの確率）", 0.0, 1.0, 0.15, 0.01, format="%.2f", help="イベントの強さや店長のクセを加味した、打ち始める前の期待度です。通常営業なら10%〜15%程度がリアルです。", key="rt_prior_high_prob")
 
         col1, col2 = st.columns(2)
         # ボーナス回数を利用して総回転数を逆算するため、先に右カラム(col2)のボーナス入力を受け取ります
         with col2:
-            b_count = st.number_input("BIG回数", min_value=0, value=10, step=1)
-            r_count = st.number_input("REG回数", min_value=0, value=10, step=1)
-            reg_hamari = st.number_input("現在のREG間ハマり (G) ※任意", min_value=0, value=0, step=50, help="ヤメ時判定に使用します。")
+            b_count = big_counter("BIG回数", "rt_b_count", step=1)
+            r_count = big_counter("REG回数", "rt_r_count", step=1)
+            reg_hamari = big_counter("現在のREG間ハマり (G) ※任意", "rt_reg_hamari", step=50, help_text="ヤメ時判定に使用します。")
 
         with col1:
-            g_input_mode = st.radio("総回転数の入力方法", ["直接入力", "合算確率から逆算"], horizontal=True)
+            g_input_mode = st.radio("総回転数の入力方法", ["直接入力", "合算確率から逆算"], horizontal=True, key="rt_g_input_mode")
             if g_input_mode == "直接入力":
-                g_count = st.number_input("現在の総回転数 (G)", min_value=0, value=3000, step=100)
+                g_count = big_counter("現在の総回転数 (G)", "rt_g_count", step=50)
             else:
-                total_prob_den = st.number_input("現在の合算確率 (1/◯)", min_value=1.0, value=150.0, step=0.1, help="データサイトの合算確率分母（例: 150.5）を入力してください。")
+                total_prob_den = st.number_input("現在の合算確率 (1/◯)", min_value=1.0, value=150.0, step=0.1, help="データサイトの合算確率分母（例: 150.5）を入力してください。", key="rt_total_prob_den")
                 g_count = int(total_prob_den * (b_count + r_count))
                 st.info(f"💡 逆算された総回転数: **{g_count}G**")
+                
+            start_g = big_counter("打ち始めの総回転数 (G) ※任意", "rt_start_g", step=50, help_text="途中から座ってぶどうをカウントした場合は入力してください。カウントしたぶどうは「現在の総回転数 - 打ち始めの総回転数」で計算されます。")
+            if start_g > g_count:
+                st.warning("打ち始めの回転数が現在の総回転数を上回っています。0として計算します。")
+                start_g = 0
 
-            grape_input_mode = st.radio("ぶどうデータの入力方法", ["差枚から逆算", "直接入力 (カウント)"], horizontal=True)
+            grape_input_mode = st.radio("ぶどうデータの入力方法", ["差枚から逆算", "直接入力 (カウント)"], horizontal=True, key="rt_grape_input_mode")
             if grape_input_mode == "差枚から逆算":
-                diff_coins = st.number_input("現在の差枚数 (枚) ※任意", value=0, step=100, help="ぶどう確率の逆算に使用します。不明な場合は0のままでOKです。")
+                diff_coins = big_counter("現在の差枚数 (枚) ※任意", "rt_diff_coins", step=100, min_val=None, help_text="ぶどう確率の逆算に使用します。不明な場合は0のままでOKです。")
                 manual_grape_count = 0
             else:
                 diff_coins = 0
-                manual_grape_count = st.number_input("カウントしたぶどう回数", min_value=0, value=0, step=10, help="カチカチくん等でカウントした実際のぶどう回数を入力してください。")
+                manual_grape_count = big_counter("カウントしたぶどう回数", "rt_manual_grape_count", step=1, help_text="カチカチくん等でカウントした実際のぶどう回数を入力してください。")
 
-            peak_drop = st.number_input("ピークからの差枚落ち (枚) ※任意", min_value=0, value=0, step=100, help="最高出玉から何枚減っているか。ヤメ時判定に使用します。")
+            peak_drop = big_counter("ピークからの差枚落ち (枚) ※任意", "rt_peak_drop", step=100, help_text="最高出玉から何枚減っているか。ヤメ時判定に使用します。")
             
         use_gassan = False
         gassan_g, gassan_b, gassan_r = 0, 0, 0
@@ -133,7 +182,7 @@ def render_realtime_judgement_page(df_pred_log):
         if shop_trend_text:
             st.info(f"💡 **AIによる店舗傾向の分析**: {shop_trend_text}\n\n店舗のクセに合わせて、合算する対象を選択するとより正確な判別が可能です。")
             
-        use_gassan = st.checkbox("複数台合算モードを使用する", value=False)
+        use_gassan = st.checkbox("複数台合算モードを使用する", value=False, key="rt_use_gassan")
         
         if use_gassan:
             mode_options = ["並び (両隣など)", "同じ末尾", "同じ島 (列・塊)", "その他 (手動)"]
@@ -141,29 +190,29 @@ def render_realtime_judgement_page(df_pred_log):
             if suggested_mode == "末尾": default_index = 1
             elif suggested_mode == "島": default_index = 2
             
-            gassan_type = st.radio("合算の対象", mode_options, index=default_index, horizontal=True)
+            gassan_type = st.radio("合算の対象", mode_options, index=default_index, horizontal=True, key="rt_gassan_type")
             
-            gassan_count = st.number_input("合算する【他台】の台数", min_value=1, max_value=20, value=2, step=1, help="両隣なら「2」、左右2台ずつなら「4」を指定してください。")
+            gassan_count = st.number_input("合算する【他台】の台数", min_value=1, max_value=20, value=2, step=1, help="両隣なら「2」、左右2台ずつなら「4」を指定してください。", key="rt_gassan_count")
             
-            input_mode = st.radio("入力方法", ["合計値を一括入力", "1台ずつ個別に入力"], horizontal=True)
+            input_mode = st.radio("入力方法", ["合計値を一括入力", "1台ずつ個別に入力"], horizontal=True, key="rt_input_mode")
             
             gassan_g, gassan_b, gassan_r = 0, 0, 0
             
             if input_mode == "合計値を一括入力":
                 st.caption(f"合算対象とする他台({gassan_count}台分)の「合計データ」を入力してください。")
                 
-                gassan_g_input_mode = st.radio("他台の合計回転数の入力方法", ["直接入力", "合算確率から逆算"], horizontal=True, key="gassan_g_input_mode")
+                gassan_g_input_mode = st.radio("他台の合計回転数の入力方法", ["直接入力", "合算確率から逆算"], horizontal=True, key="rt_gassan_g_input_mode")
                 
                 gc1, gc2, gc3 = st.columns(3)
                 with gc2:
-                    gassan_b = st.number_input("他台の 合計BIG回数", min_value=0, value=10, step=1)
+                    gassan_b = st.number_input("他台の 合計BIG回数", min_value=0, value=0, step=1, key="rt_gassan_b")
                 with gc3:
-                    gassan_r = st.number_input("他台の 合計REG回数", min_value=0, value=10, step=1)
+                    gassan_r = st.number_input("他台の 合計REG回数", min_value=0, value=0, step=1, key="rt_gassan_r")
                 with gc1:
                     if gassan_g_input_mode == "直接入力":
-                        gassan_g = st.number_input("他台の 合計回転数 (G)", min_value=0, value=3000, step=100)
+                        gassan_g = st.number_input("他台の 合計回転数 (G)", min_value=0, value=0, step=100, key="rt_gassan_g")
                     else:
-                        gassan_total_prob_den = st.number_input("他台の 合算確率 (1/◯)", min_value=1.0, value=150.0, step=0.1, help="データサイトの合算確率分母（例: 150.5）を入力してください。")
+                        gassan_total_prob_den = st.number_input("他台の 合算確率 (1/◯)", min_value=1.0, value=150.0, step=0.1, help="データサイトの合算確率分母（例: 150.5）を入力してください。", key="rt_gassan_total_prob_den")
                         gassan_g = int(gassan_total_prob_den * (gassan_b + gassan_r))
                         st.info(f"💡 逆算総回転数: **{gassan_g}G**")
             else:
@@ -199,7 +248,7 @@ def render_realtime_judgement_page(df_pred_log):
                     "他台の合計ゲーム数",
                     ["個別のG数入力の合計を使用", "合計BIG/REG回数と合算確率から逆算"],
                     horizontal=True,
-                    key="gassan_g_calc_mode_individual"
+                    key="rt_gassan_g_calc_mode_individual"
                 )
 
                 if gassan_g_calc_mode == "個別のG数入力の合計を使用":
@@ -214,7 +263,7 @@ def render_realtime_judgement_page(df_pred_log):
                             min_value=1.0,
                             value=150.0,
                             step=0.1,
-                            key="gassan_total_prob_den_for_individual",
+                            key="rt_gassan_total_prob_den_for_individual",
                             help="入力された合計BIG/REG回数とこの合算確率から、他台の合計ゲーム数を逆算します。"
                         )
                         gassan_g = int(gassan_total_prob_den_for_individual * (gassan_b + gassan_r))
@@ -238,9 +287,9 @@ def render_realtime_judgement_page(df_pred_log):
         with col_t1:
             current_time = st.time_input("現在時刻", pd.Timestamp.now(tz='Asia/Tokyo').time())
         with col_t2:
-            close_time = st.time_input("閉店時刻", pd.to_datetime("22:45").time())
+            close_time = st.time_input("閉店時刻", pd.to_datetime("22:45").time(), key="rt_close_time")
         with col_t3:
-            speed = st.number_input("1時間の回転数 (G/h)", min_value=100, max_value=1000, value=750, step=50, help="一般的な速度は700〜800G/hです。")
+            speed = st.number_input("1時間の回転数 (G/h)", min_value=100, max_value=1000, value=750, step=50, help="一般的な速度は700〜800G/hです。", key="rt_speed")
             
     if g_count == 0:
         st.info("総回転数を入力してください。")
@@ -281,13 +330,18 @@ def render_realtime_judgement_page(df_pred_log):
             p_s = p1 + (p4 - p1) * (s - 1) / 3.0
             full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
             
+    my_g = max(0, g_count - start_g)
+            
     use_grape = False
     grape_count = 0
+    grape_target_g = g_count
     if manual_grape_count > 0:
         use_grape = True
         grape_count = manual_grape_count
+        grape_target_g = my_g
     elif diff_coins != 0 and g_count >= 1000:
         use_grape = True
+        grape_target_g = g_count
         in_tokens = g_count * 3
         out_tokens = in_tokens + diff_coins
         bonus_out = b_count * ms.get('BIG獲得', 252) + r_count * ms.get('REG獲得', 96)
@@ -311,7 +365,7 @@ def render_realtime_judgement_page(df_pred_log):
         ll_g = 0
         if use_grape:
             p_g = 1.0 / full_specs[i]["ぶどう"]
-            exp_g = g_count * p_g # ぶどう確率は自台の回転数のみをベースに計算
+            exp_g = grape_target_g * p_g # ぶどう確率は自台の回転数のみをベースに計算
             ll_g = grape_count * math.log(exp_g) - exp_g if exp_g > 0 else 0
         log_likelihoods.append(ll_b + ll_r + ll_g)
         
@@ -365,7 +419,7 @@ def render_realtime_judgement_page(df_pred_log):
         
         if use_grape:
             grape_label = "🍇 実測ぶどう確率" if manual_grape_count > 0 else "🍇 推定ぶどう確率"
-            st.metric(grape_label, f"1/{(g_count / grape_count if grape_count > 0 else 0):.2f}")
+            st.metric(grape_label, f"1/{(grape_target_g / grape_count if grape_count > 0 else 0):.2f}")
             
         # --- ヤメ時ロジック（アラート） ---
         alerts = []
