@@ -1277,6 +1277,23 @@ def _generate_features(df, df_events, df_island, target_date):
     if df_events is not None and not df_events.empty and shop_col:
         valid_events = df_events.copy()
         
+        # --- 周年イベントを毎年の同じ月日に自動展開 ---
+        anniversary_events = valid_events[valid_events['イベント名'].astype(str).str.contains('周年')].copy()
+        if not anniversary_events.empty:
+            target_years = df['next_date'].dt.year.dropna().unique() if 'next_date' in df.columns else [pd.Timestamp.now(tz='Asia/Tokyo').year]
+            expanded_events = []
+            for y in target_years:
+                temp_ev = anniversary_events.copy()
+                def replace_year(d, tgt_y):
+                    if pd.isna(d): return d
+                    try: return d.replace(year=int(tgt_y))
+                    except ValueError: return d + pd.offsets.DateOffset(years=(int(tgt_y) - d.year))
+                temp_ev['イベント日付'] = temp_ev['イベント日付'].apply(lambda d: replace_year(d, y))
+                expanded_events.append(temp_ev)
+            if expanded_events:
+                valid_events = pd.concat([valid_events] + expanded_events, ignore_index=True)
+                valid_events = valid_events.drop_duplicates(subset=['店名', 'イベント日付', 'イベント名'])
+
         # 「対象外(無効)」イベントのみAIの学習から除外
         if 'イベント種別' in valid_events.columns:
             cond_exclude = valid_events['イベント種別'] == '対象外(無効)'

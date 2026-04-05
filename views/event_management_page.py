@@ -15,7 +15,7 @@ def render_event_management_page(df_raw):
             with st.form("event_reg_form", clear_on_submit=True):
                 reg_shop = st.selectbox("店舗", unique_shops)
                 reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
-                reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
+                reg_name = st.text_input("イベント名 (例: ○○取材, 周年, リニューアル)", help="※イベント名に『周年』が含まれる場合、登録時の「年」は無視され、毎年自動的にループ適用されます。")
                 reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い(新台6台〜など), B:普通(新台3〜5台), C:弱め(新台1〜2台)")
                 
                 st.markdown("**対象の絞り込み**")
@@ -85,7 +85,7 @@ def render_event_management_page(df_raw):
                     default_date = pd.Timestamp.now(tz='Asia/Tokyo').date()
                 edit_date = st.date_input("イベント日付", value=default_date, key="edit_date")
             with e_col2:
-                edit_name = st.text_input("イベント名", value=target_row['イベント名'])
+                edit_name = st.text_input("イベント名", value=target_row['イベント名'], help="※イベント名に『周年』が含まれる場合、登録時の「年」は無視され、毎年自動的にループ適用されます。")
                 rank_options = ["SS (周年)", "S", "A", "B", "C"]
                 current_rank = target_row.get('イベントランク', 'A')
                 idx = rank_options.index(current_rank) if current_rank in rank_options else 1

@@ -318,11 +318,30 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             if pd.notna(pred_date):
                 current_date = pred_date.date()
                 
+                # --- 周年イベントの毎年のループ処理 ---
+                valid_events = df_events.copy()
+                anniversary_events = valid_events[valid_events['イベント名'].astype(str).str.contains('周年')].copy()
+                
+                if not anniversary_events.empty:
+                    expanded_list = []
+                    for _, ev in anniversary_events.iterrows():
+                        ev_date = ev['イベント日付'].date()
+                        try: d_this = ev_date.replace(year=current_date.year)
+                        except ValueError: d_this = (ev['イベント日付'] + pd.offsets.DateOffset(years=(current_date.year - ev['イベント日付'].year))).date()
+                        ev_this = ev.copy(); ev_this['イベント日付'] = pd.Timestamp(d_this); expanded_list.append(ev_this)
+                        
+                        try: d_next = ev_date.replace(year=current_date.year + 1)
+                        except ValueError: d_next = (ev['イベント日付'] + pd.offsets.DateOffset(years=(current_date.year + 1 - ev['イベント日付'].year))).date()
+                        ev_next = ev.copy(); ev_next['イベント日付'] = pd.Timestamp(d_next); expanded_list.append(ev_next)
+                        
+                    valid_events = pd.concat([valid_events, pd.DataFrame(expanded_list)], ignore_index=True)
+                    valid_events = valid_events.drop_duplicates(subset=['店名', 'イベント日付', 'イベント名'])
+
                 # 今日〜30日後までの周年イベントを取得
-                future_events = df_events[
-                    (df_events['イベント日付'].dt.date >= current_date) & 
-                    (df_events['イベント日付'].dt.date <= current_date + pd.Timedelta(days=30)) &
-                    ((df_events['イベントランク'].astype(str) == 'SS (周年)') | (df_events['イベント名'].astype(str).str.contains('周年')))
+                future_events = valid_events[
+                    (valid_events['イベント日付'].dt.date >= current_date) & 
+                    (valid_events['イベント日付'].dt.date <= current_date + pd.Timedelta(days=30)) &
+                    ((valid_events['イベントランク'].astype(str) == 'SS (周年)') | (valid_events['イベント名'].astype(str).str.contains('周年|リニューアル|グランド')))
                 ].copy()
                 
                 if not future_events.empty:
