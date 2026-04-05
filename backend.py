@@ -111,7 +111,7 @@ def get_matched_spec_key(machine_name, specs):
             return spec_key
     return "ジャグラー（デフォルト）"
 
-def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000, 
+def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g=4000, 
                             penalty_reg=15, penalty_big=5, low_g_penalty=30, 
                             use_strict_scoring=True, return_details=False):
     """
@@ -217,11 +217,23 @@ def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000,
         if g < 1000:
             g_factor *= (g / 1000.0)
             
+        # 3000G未満で大勝ち（+1500枚以上）している台への救済（スコア底上げ）
+        if g < 3000 and diff is not None and diff >= 1500:
+            # +1500枚なら約+0.2、最大+0.4まで底上げ
+            win_bonus = min(0.4, (diff - 1000) / 2500.0)
+            g_factor = min(1.0, g_factor + win_bonus)
+            
         total_score *= g_factor
         
-        # タコ粘りの優良台にはボーナス加点
+        # タコ粘り台にはボーナス加点
         if g >= 7000 and adjusted_deficit_r <= 0:
             bonus = min(10.0, (g - 7000) / 300.0)
+            total_score = min(100.0, total_score + bonus)
+        elif g >= 8000:
+            # 8000G以上回されている場合、確率が多少悪くても何らかの根拠があったと推測して救済加点
+            bonus = min(15.0, (g - 8000) / 200.0)
+            if diff is not None and diff > 0:
+                bonus += 10.0 # 差枚がプラスならさらに加点
             total_score = min(100.0, total_score + bonus)
     else:
         # 従来のロジック
@@ -250,11 +262,18 @@ def calculate_setting_score(g, act_b, act_r, machine_name, shop_avg_g=4000,
             reg_prob_den = g / act_r if act_r > 0 else 9999
             tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
             
-            if reg_prob_den > 400: total_score -= 30
-            elif reg_prob_den > 300: total_score -= 15
+            penalty_val = 0
+            if reg_prob_den > 400: penalty_val += 30
+            elif reg_prob_den > 300: penalty_val += 15
                 
-            if tot_prob_den > 180: total_score -= 30
-            elif tot_prob_den > 150: total_score -= 15
+            if tot_prob_den > 180: penalty_val += 30
+            elif tot_prob_den > 150: penalty_val += 15
+            
+            # 超高稼働(8000G以上)の場合は、打つべき根拠があった可能性が高いため悪確率ペナルティを半減
+            if g >= 8000:
+                penalty_val *= 0.5
+                
+            total_score -= penalty_val
             
     final_score = max(0.0, total_score)
     

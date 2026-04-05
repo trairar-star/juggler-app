@@ -614,7 +614,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                             ).astype(int)
                             
                             act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
-                            high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))
+                            high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
                             high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
                             high_expect_df['valid_high'] = high_expect_df['valid_play'] & (high_expect_df['is_high_setting'] == 1)
         

@@ -72,7 +72,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         r = pd.to_numeric(row.get('REG', 0), errors='coerce')
         diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
         
-        valid_play = (g >= 3000) or (g < 3000 and abs(diff) >= 1000)
+        valid_play = (g >= 3000) or (g < 3000 and (diff <= -750 or diff >= 750))
         if not valid_play:
             return np.nan
         

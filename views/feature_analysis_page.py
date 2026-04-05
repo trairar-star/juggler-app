@@ -100,7 +100,7 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
             spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
             spec_reg3 = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
             
-            viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & (viz_df['差枚'].abs() >= 1000))
+            viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & ((viz_df['差枚'] <= -750) | (viz_df['差枚'] >= 750)))
             viz_df['高設定'] = (
                 (viz_df['累計ゲーム'] >= 3000) & 
                 ((viz_df['REG確率'] >= spec_reg) | ((viz_df['合算確率'] >= spec_tot) & (viz_df['REG確率'] >= spec_reg3)))
@@ -191,13 +191,13 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             if not df_raw_shop.empty:
                 mac_df = df_raw_shop.copy()
-                mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & (mac_df['差枚'].abs() >= 1000))
+                mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & ((mac_df['差枚'] <= -750) | (mac_df['差枚'] >= 750)))
                 
                 shop_avg_g = mac_df['累計ゲーム'].mean() if not mac_df.empty else 4000
                 
                 def calc_score_for_mac(row):
                     return backend.calculate_setting_score(
-                        g=row.get('累計ゲーム', 0), act_b=row.get('BIG', 0), act_r=row.get('REG', 0), machine_name=row.get('機種名', ''),
+                        g=row.get('累計ゲーム', 0), act_b=row.get('BIG', 0), act_r=row.get('REG', 0), machine_name=row.get('機種名', ''), diff=row.get('差枚', 0),
                         shop_avg_g=shop_avg_g, penalty_reg=15, penalty_big=5, low_g_penalty=30, use_strict_scoring=True, return_details=False
                     )
                 
@@ -277,7 +277,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     # REG確率分母を計算 (0除算回避)
     analysis_df['REG分母'] = analysis_df['REG確率'].apply(lambda x: int(1/x) if x > 0 else 9999)
     
-    analysis_df['valid_play'] = (analysis_df['next_累計ゲーム'] >= 3000) | ((analysis_df['next_累計ゲーム'] < 3000) & (analysis_df['next_diff'].abs() >= 1000))
+    analysis_df['valid_play'] = (analysis_df['next_累計ゲーム'] >= 3000) | ((analysis_df['next_累計ゲーム'] < 3000) & ((analysis_df['next_diff'] <= -750) | (analysis_df['next_diff'] >= 750)))
     analysis_df['target_rate'] = np.where(analysis_df['valid_play'], analysis_df['target'], np.nan) * 100
     
     # ノイズ除去用のゲーム数フィルター
@@ -386,7 +386,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             event_df['イベントランク'] = event_df['イベントランク'].fillna('通常日').replace('', '通常日')
             
             # 機種別基準を適用した 'is_win' を高設定フラグとして利用
-            event_df['valid_play'] = (event_df['next_累計ゲーム'] >= 3000) | ((event_df['next_累計ゲーム'] < 3000) & (event_df['next_diff'].abs() >= 1000))
+            event_df['valid_play'] = (event_df['next_累計ゲーム'] >= 3000) | ((event_df['next_累計ゲーム'] < 3000) & ((event_df['next_diff'] <= -750) | (event_df['next_diff'] >= 750)))
             event_df['高設定挙動'] = np.where(event_df['valid_play'], event_df.get('is_win', (event_df['REG分母'] <= 260).astype(int)), np.nan) * 100
             
             event_stats = event_df.groupby('イベントランク').agg(

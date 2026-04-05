@@ -109,6 +109,39 @@ def render_event_management_page():
 # メイン処理
 # ---------------------------------------------------------
 def main():
+    # --- スマホ向け アプリ全体のUI調整 (CSS) ---
+    st.markdown("""
+        <style>
+            /* 全体的なテキスト(段落・箇条書き)サイズを縮小 */
+            .stMarkdown p, .stMarkdown li {
+                font-size: 0.9rem !important;
+            }
+            .stButton button {
+                font-size: 0.9rem !important;
+            }
+            label p {
+                font-size: 0.85rem !important;
+            }
+            /* 見出しのサイズと余白の調整 */
+            h1 { font-size: 1.25rem !important; padding: 0.2rem 0 !important; margin-bottom: 0.2rem !important; line-height: 1.3 !important;}
+            h2 { font-size: 1.1rem !important; padding: 0.2rem 0 !important; margin-bottom: 0.2rem !important; line-height: 1.3 !important;}
+            h3 { font-size: 1.0rem !important; padding: 0.2rem 0 !important; margin-bottom: 0.2rem !important; line-height: 1.3 !important;}
+            /* タイトル下のキャプション(説明文)の余白調整 */
+            [data-testid="stCaptionContainer"] { margin-bottom: 0.5rem !important; }
+            /* データフレーム(表)の文字サイズをさらに小さく */
+            [data-testid="stDataFrame"] {
+                font-size: 0.8rem !important;
+            }
+            /* Metric（大きな数値表示）のサイズ調整 */
+            [data-testid="stMetricLabel"] p {
+                font-size: 0.8rem !important;
+            }
+            [data-testid="stMetricValue"] div {
+                font-size: 1.4rem !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
     # --- パスワード認証（ログイン機能） ---
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False

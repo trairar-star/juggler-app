@@ -230,7 +230,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     pred_g = pd.to_numeric(valid_pred_df['結果_累計ゲーム'], errors='coerce').fillna(0)
                     pred_diff = pd.to_numeric(valid_pred_df['差枚_actual'], errors='coerce').fillna(0)
                     valid_for_win = valid_pred_df[
-                        (pred_g >= 3000) | ((pred_g < 3000) & (pred_diff.abs() >= 1000))
+                        (pred_g >= 3000) | ((pred_g < 3000) & ((pred_diff <= -750) | (pred_diff >= 750)))
                     ]
                     win_rate_str = "- (0/0台)"
                     if not valid_for_win.empty:
@@ -246,14 +246,14 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             f"🏆 **トップ3獲得**: **{top3_count} 日** ランクイン (獲得率: {top3_count/total_eval_days:.1%})\n"
                             f"📈 **推奨台の勝率**: **{win_rate_str}**\n\n"
                             f"💰 **推奨台の合計差枚**: **{int(total_diff_sum):+d} 枚**\n\n"
-                            f"※トップ3は実際のランキング({rank_metric}順)に基づく。勝率は有効稼働(3000G以上 or 差枚±1000枚以上)の台のみを対象に集計しています。")
+                            f"※トップ3は実際のランキング({rank_metric}順)に基づく。勝率は有効稼働(3000G以上 or 差枚が+750枚以上・-750枚以下)の台のみを対象に集計しています。")
                     
                     # 各AI順位ごとの通算実績
                     with st.expander("📊 AI順位ごとの通算成績", expanded=False):
                         # 勝率計算用のフラグを追加
                         act_g = pd.to_numeric(match_df['結果_累計ゲーム'], errors='coerce').fillna(0)
                         act_diff = pd.to_numeric(match_df['差枚_actual'], errors='coerce').fillna(0)
-                        match_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))
+                        match_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
                         match_df['is_win'] = match_df['valid_play'] & (act_diff > 0)
                         
                         rank_stats = match_df.groupby('ai_daily_rank').agg(
@@ -334,10 +334,11 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                 shop_avg_g_actual = actual_df_day['累計ゲーム'].mean() if not actual_df_day.empty else 4000
 
                 # 設定5近似度の算出ロジックを定義
-                def calculate_score(row, g_col='累計ゲーム', b_col='BIG', r_col='REG', m_col='機種名'):
+                def calculate_score(row, g_col='累計ゲーム', b_col='BIG', r_col='REG', m_col='機種名', d_col='差枚'):
                     g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
                     act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
                     act_r = pd.to_numeric(row.get(r_col, 0), errors='coerce')
+                    diff = pd.to_numeric(row.get(d_col, 0), errors='coerce')
                     machine = row.get(m_col, '')
                     
                     penalty_reg = st.session_state.get('penalty_reg', 15)
@@ -345,7 +346,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     low_g_penalty = st.session_state.get('low_g_penalty', 30)
                     
                     return backend.calculate_setting_score(
-                        g=g, act_b=act_b, act_r=act_r, machine_name=machine,
+                        g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
                         shop_avg_g=shop_avg_g_actual, penalty_reg=penalty_reg, penalty_big=penalty_big,
                         low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
                     )
@@ -385,7 +386,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     if not pred_df_day.empty:
                         pred_g = pd.to_numeric(pred_df_day['結果_累計ゲーム'], errors='coerce').fillna(0)
                         pred_diff = pd.to_numeric(pred_df_day['差枚_actual'], errors='coerce').fillna(0)
-                        valid_pred = pred_df_day[(pred_g >= 3000) | ((pred_g < 3000) & (pred_diff.abs() >= 1000))]
+                        valid_pred = pred_df_day[(pred_g >= 3000) | ((pred_g < 3000) & ((pred_diff <= -750) | (pred_diff >= 750)))]
                         if not valid_pred.empty:
                             win_c = (valid_pred['差枚_actual'] > 0).sum()
                             daily_win_rate = f"{win_c / len(valid_pred):.1%} ({win_c}/{len(valid_pred)}台)"
@@ -403,7 +404,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         else:
                             pred_df_day['予想設定5以上確率'] = 0
 
-                        pred_df_day['結果点数'] = pred_df_day.apply(lambda row: calculate_score(row, '結果_累計ゲーム', '結果_BIG', '結果_REG', '機種名'), axis=1)
+                        pred_df_day['結果点数'] = pred_df_day.apply(lambda row: calculate_score(row, '結果_累計ゲーム', '結果_BIG', '結果_REG', '機種名', '差枚_actual'), axis=1)
 
                         # 上位10%ランクインのマーク
                         pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in actual_top_machines else '')
@@ -467,7 +468,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             
                         actual_df_day['順位'] = actual_df_day.index.map(get_rank_medal)
                         
-                        actual_df_day['結果点数'] = actual_df_day.apply(lambda row: calculate_score(row, '累計ゲーム', 'BIG', 'REG', '機種名'), axis=1)
+                        actual_df_day['結果点数'] = actual_df_day.apply(lambda row: calculate_score(row, '累計ゲーム', 'BIG', 'REG', '機種名', '差枚'), axis=1)
 
                         # AIが推奨していた台にはマークをつける
                         pred_machines = pred_df_day['台番号'].tolist()

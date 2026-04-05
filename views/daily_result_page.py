@@ -100,10 +100,11 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     # --- 結果点数（設定5近似度）の計算 ---
     shop_avg_g = display_df['総回転'].mean() if not display_df.empty else 4000
 
-    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名'):
+    def calculate_score(row, g_col='総回転', b_col='BIG', r_col='REG', m_col='機種名', d_col='差枚'):
         g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
         act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
         act_r = pd.to_numeric(row.get(r_col, 0), errors='coerce')
+        diff = pd.to_numeric(row.get(d_col, 0), errors='coerce')
         machine = row.get(m_col, '')
         
         penalty_reg = st.session_state.get('penalty_reg', 15)
@@ -111,7 +112,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         low_g_penalty = st.session_state.get('low_g_penalty', 30)
         
         return backend.calculate_setting_score(
-            g=g, act_b=act_b, act_r=act_r, machine_name=machine,
+            g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
             shop_avg_g=shop_avg_g, penalty_reg=penalty_reg, penalty_big=penalty_big,
             low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
         )
@@ -204,7 +205,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     # --- 店舗全体の有効稼働勝率 ---
     all_g = pd.to_numeric(display_df['総回転'], errors='coerce').fillna(0)
     all_diff = pd.to_numeric(display_df['差枚'], errors='coerce').fillna(0)
-    valid_all = display_df[(all_g >= 3000) | ((all_g < 3000) & (all_diff.abs() >= 1000))]
+    valid_all = display_df[(all_g >= 3000) | ((all_g < 3000) & ((all_diff <= -750) | (all_diff >= 750)))]
     if not valid_all.empty:
         all_win_c = (valid_all['差枚'] > 0).sum()
         all_win_rate_str = f"{all_win_c / len(valid_all):.1%} ({all_win_c}/{len(valid_all)}台)"
@@ -230,7 +231,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             # --- AI推奨台の有効稼働勝率 ---
             act_g = pd.to_numeric(ai_target_df['総回転'], errors='coerce').fillna(0)
             act_diff = pd.to_numeric(ai_target_df['差枚'], errors='coerce').fillna(0)
-            valid_df = ai_target_df[(act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))]
+            valid_df = ai_target_df[(act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))]
             if not valid_df.empty:
                 win_c = (valid_df['差枚'] > 0).sum()
                 win_rate_str = f"{win_c / len(valid_df):.1%} ({win_c}/{len(valid_df)}台)"

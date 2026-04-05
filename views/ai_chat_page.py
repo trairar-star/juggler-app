@@ -12,6 +12,32 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
     st.header("👩‍💼 ホール案内スタッフ（AI）")
     st.caption("受付スタッフ風のAIに、アプリの最新データをもとにした立ち回りの相談や店舗の傾向についてチャットで質問できます。")
 
+    # --- スマホ向けUI調整 (CSS) ---
+    st.markdown("""
+        <style>
+            /* チャットメッセージのフォントサイズと行間をスマホ向けに調整 */
+            [data-testid="stChatMessage"] {
+                font-size: 0.85rem;
+            }
+            [data-testid="stChatMessage"] p {
+                margin-bottom: 0.4rem;
+                line-height: 1.5;
+            }
+            /* チャット入力欄のフォントサイズ調整 */
+            [data-testid="stChatInput"] textarea {
+                font-size: 0.9rem;
+            }
+            /* AIの回答がリスト(箇条書き)の場合の余白調整 */
+            [data-testid="stChatMessage"] ul, [data-testid="stChatMessage"] ol {
+                padding-left: 1.2rem;
+                margin-bottom: 0.4rem;
+            }
+            [data-testid="stChatMessage"] li {
+                margin-bottom: 0.2rem;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
     # ライブラリのインストール確認
     if not GENAI_AVAILABLE:
         import sys
@@ -182,20 +208,46 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         for _, row in target_h.iterrows():
                             context_data += f"・台番号 {row['台番号']} ({row['機種名']}) - {int(row['連続マイナス日数'])}日連続マイナス / 合計 {int(row['cons_minus_total_diff'])}枚 吸い込み\n"
 
-            # --- 4. 明日の予測データ (上位10台) ---
+            # --- 4. 明日の予測データ (全台) ---
             if not df_predict.empty:
                 shop_pred = df_predict[df_predict[shop_col] == selected_shop].sort_values('prediction_score', ascending=False)
-                top_10 = shop_pred.head(10)
-                if not top_10.empty:
-                    context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (期待度上位10台)】\n"
+                if not shop_pred.empty:
+                    context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (全台の期待度ランキング)】\n"
                     cols = ['台番号', '機種名', 'prediction_score', '根拠']
-                    available_cols = [c for c in cols if c in top_10.columns]
+                    available_cols = [c for c in cols if c in shop_pred.columns]
                     
                     display_df = top_10[available_cols].copy()
+                    display_df = shop_pred[available_cols].copy()
                     if 'prediction_score' in display_df.columns:
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")
                     
                     context_data += display_df.to_markdown(index=False) + "\n"
+
+                    # --- 4.5. 上位推奨台の直近3日間の個別履歴データ ---
+                    if not df_raw.empty:
+                        context_data += f"\n【上記推奨台のうち、上位10台の直近3日間の個別データ】\n"
+                        top_macs = shop_pred.head(10)['台番号'].tolist()
+                        shop_raw_hist = df_raw[df_raw[shop_col] == selected_shop].copy()
+                        
+                        if '対象日付' in shop_raw_hist.columns:
+                            shop_raw_hist['対象日付'] = pd.to_datetime(shop_raw_hist['対象日付'])
+                            # 予測日の前日を基準にする
+                            base_date = pd.to_datetime(target_date_val) - pd.Timedelta(days=1)
+                            cutoff_date = base_date - pd.Timedelta(days=3)
+                            
+                            hist_df = shop_raw_hist[(shop_raw_hist['対象日付'] > cutoff_date) & (shop_raw_hist['対象日付'] <= base_date)]
+                            
+                            for mac_num in top_macs:
+                                mac_hist = hist_df[hist_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True) == str(mac_num).replace('.0', '')].sort_values('対象日付', ascending=False)
+                                if not mac_hist.empty:
+                                    context_data += f"・台番号 {mac_num} の履歴:\n"
+                                    for _, row in mac_hist.iterrows():
+                                        d_str = row['対象日付'].strftime('%m/%d')
+                                        diff = row.get('差枚', 0)
+                                        b = row.get('BIG', 0)
+                                        r = row.get('REG', 0)
+                                        g = row.get('累計ゲーム', 0)
+                                        context_data += f"  [{d_str}] 差枚: {int(diff):+d}枚 / 総回転: {int(g)}G / BIG: {int(b)} / REG: {int(r)}\n"
 
             # --- 5. AIの過去予測の実績検証（直近1ヶ月の推奨台勝率） ---
             df_pred_log = backend.load_prediction_log()
@@ -239,7 +291,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                                 act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)
                                 act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
                                 
-                                high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))
+                                high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
                                 high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
                                 
                                 valid_count = high_expect_df['valid_play'].sum()
@@ -256,6 +308,15 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                                     context_data += "AI自己評価: 予測がフェイク設定等に騙されやすく、精度が低迷しています。稼働を控えるか、強イベント時のみに絞るなどの警戒が必要です。\n"
                 except Exception:
                     pass
+
+            # --- 6. 機種スペック情報 (リアルタイム判別相談用) ---
+            specs = backend.get_machine_specs()
+            context_data += "\n【主要機種の設定5目安 (リアルタイム判別相談用)】\n"
+            for m_name in ['アイムジャグラーEX', 'マイジャグラーV', 'ゴーゴージャグラー3', 'ファンキージャグラー2KT', 'ハッピージャグラーVIII', 'ジャグラーガールズSS']:
+                if m_name in specs and '設定5' in specs[m_name]:
+                    s5_reg = specs[m_name]['設定5'].get('REG', 0)
+                    s5_tot = specs[m_name]['設定5'].get('合算', 0)
+                    context_data += f"・{m_name}: REG 1/{s5_reg:.1f}, 合算 1/{s5_tot:.1f}\n"
 
         # --- マイ収支データをAIに読み込ませる ---
         df_balance = backend.load_my_balance()
@@ -299,6 +360,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 ・お客様が「パチンコや他機種のイベントの日の状況はどう？」と質問された場合、他機種自体の出玉状況ではなく「そのイベントのシワ寄せでジャグラー（スロット）が回収されているか、あるいは還元されているか」という情報を求めています。提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 ・「AI予測実績（勝率や自己評価）」のデータが提供されている場合は、AI自身の実力が現在その店舗でどれくらい通用しているかを客観的に捉え、勝率が低ければ無理に推奨台を薦めず「今は予測が当たりにくい危険な状態なので様子見が無難」といった警告も行ってください。
 ・店舗の「強い末尾番号」や「強い曜日」のデータが提供されている場合は、それらも具体的な狙い目の根拠としてアドバイスに積極的に盛り込んでください。
+・お客様が稼働中の台のデータ（機種名、現在の総回転数、BIG回数、REG回数など）を提示して相談された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を自ら計算し、高設定の期待度や押し引き（ヤメ時）の的確なアドバイスを行ってください。
+・お客様から特定の「台番号」について相談された場合、提供されている「予測データ (全台の期待度ランキング)」からその台の事前期待度と根拠を確認して回答してください。もし上位10台に含まれていれば「個別データ(直近3日間の履歴)」も交えて具体的にアドバイスし、逆に期待度が低い台（期待外れ・危険台）の場合はその旨と低評価の根拠を正直に伝えて撤退などの注意を促してください。
 
 以下は現在のアプリ内のデータです。最新の店舗状況として参考にしてください。
 {context_data if context_data else "現在選択されている店舗データはありません。"}

@@ -301,12 +301,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         g = row.get('結果_累計ゲーム', 0)
         act_b = row.get('結果_BIG', 0)
         act_r = row.get('結果_REG', 0)
+        diff = row.get('差枚_actual', 0)
         machine = row.get('機種名', '')
         
         s_name = row.get(shop_col, '')
         shop_avg_g = shop_avg_g_dict.get(s_name, 4000)
         score, exp_b, exp_r, diff_b, diff_r = backend.calculate_setting_score(
-            g=g, act_b=act_b, act_r=act_r, machine_name=machine, shop_avg_g=shop_avg_g,
+            g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff, shop_avg_g=shop_avg_g,
             penalty_reg=penalty_reg, penalty_big=penalty_big, low_g_penalty=low_g_penalty,
             use_strict_scoring=use_strict_scoring, return_details=True
         )
@@ -345,7 +346,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     # --- 有効稼働フラグの追加 ---
     merged_df['valid_play'] = (pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
                               ((pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
-                               (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0).abs() >= 1000))
+                               ((pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) >= 750)))
     merged_df['valid_win'] = merged_df['valid_play'] & (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) > 0)
     
     specs = backend.get_machine_specs()
@@ -1137,7 +1138,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             
                             test_data['valid_play'] = (pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
                                                    ((pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
-                                                    (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0).abs() >= 1000))
+                                                    ((pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) >= 750)))
                             test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
                             test_data['valid_high'] = test_data['valid_play'] & (test_data['target'] == 1)
                             
@@ -1266,7 +1267,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 sim_df['確率帯'] = sim_df['prediction_score'].apply(get_prob_band)
                 sim_df['valid_play'] = (pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
                                        ((pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
-                                        (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0).abs() >= 1000))
+                                        ((pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) >= 750)))
                 sim_df['valid_win'] = sim_df['valid_play'] & (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) > 0)
                 sim_df['valid_high'] = sim_df['valid_play'] & (sim_df['target'] == 1)
                 sim_stats = sim_df.groupby('確率帯').agg(
