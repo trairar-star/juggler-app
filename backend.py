@@ -501,7 +501,7 @@ def save_prediction_log(df):
         try: 
             worksheet = sh.worksheet(log_sheet_name)
             existing_data = worksheet.get_all_values()
-        except: 
+        except gspread.exceptions.WorksheetNotFound: 
             worksheet = sh.add_worksheet(title=log_sheet_name, rows="1000", cols="15")
             existing_data = []
 
@@ -618,7 +618,7 @@ def save_shop_event(shop_name, event_date, event_name, event_rank):
             worksheet = sh.worksheet('shop_events')
             if 'イベントランク' not in worksheet.row_values(1):
                 worksheet.update_cell(1, len(worksheet.row_values(1)) + 1, 'イベントランク')
-        except: 
+        except gspread.exceptions.WorksheetNotFound: 
             worksheet = sh.add_worksheet(title='shop_events', rows="1000", cols="6")
             worksheet.append_row(['登録日時', '店名', 'イベント日付', 'イベント名', '備考', 'イベントランク'])
         
@@ -723,7 +723,7 @@ def save_island_master(shop, island_name, rule_str):
             if '台番号ルール' not in header:
                 worksheet.update_cell(1, len(header) + 1, '台番号ルール')
                 header.append('台番号ルール')
-        except: 
+        except gspread.exceptions.WorksheetNotFound: 
             worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="6")
             worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール'])
             header = ['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール']
@@ -790,7 +790,7 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, hours, me
             else:
                 header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', 'メモ']
                 existing_data = []
-        except: 
+        except gspread.exceptions.WorksheetNotFound: 
             worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="11")
             header = ['登録日時', '日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', 'メモ']
             existing_data = []
