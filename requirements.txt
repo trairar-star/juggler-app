@@ -8,3 +8,4 @@ altair
 gspread
 google-auth
 pyarrow
+google-generativeai
