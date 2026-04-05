@@ -125,8 +125,20 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
                 try:
-                    # 世界中で最も安定して利用できる標準モデル（gemini-1.0-pro）を指定
-                    model = genai.GenerativeModel('gemini-1.0-pro')
+                    # --- 利用可能なモデルをAPIから自動取得して最適なものを選択 ---
+                    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                    
+                    # 優先順位（エラーになった2.0系を避け、安定の1.5系や無印proを選ぶ）
+                    preferred_models = ["models/gemini-1.5-flash", "models/gemini-pro", "models/gemini-1.5-pro"]
+                    target_model = "gemini-pro" # フォールバック
+                    
+                    for pref in preferred_models:
+                        if pref in available_models:
+                            target_model = pref.replace("models/", "")
+                            break
+                    
+                    # 自動選択されたモデルで呼び出し
+                    model = genai.GenerativeModel(target_model)
                     response = model.generate_content(full_prompt)
                     
                     # 回答の表示と履歴への追加
