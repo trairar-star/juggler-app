@@ -67,7 +67,16 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 
         # --- アプリ内のデータをGemini用に文字列化して準備 ---
         context_data = ""
+        target_date_str = "不明"
+        
         if selected_shop != "店舗を選択してください":
+            
+            # --- 予測対象日の取得 (サイドバーで選んだ日付と一致させる) ---
+            if not df_predict.empty and 'next_date' in df_predict.columns:
+                target_date_val = df_predict['next_date'].max()
+            else:
+                target_date_val = pd.Timestamp.now(tz='Asia/Tokyo').date()
+            target_date_str = pd.to_datetime(target_date_val).strftime('%Y-%m-%d')
             
             # --- 1. 店舗の直近状況とイベント情報 ---
             if not df_raw.empty:
@@ -81,12 +90,15 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         context_data += f"\n【{selected_shop} の直近1週間の店舗状況】\n店舗平均差枚: 約 {int(avg_diff):+d} 枚\n平均回転数: 約 {int(avg_games)} G (※稼働が高いほど客層レベルが高く後ヅモが困難)\n"
             
             if df_events is not None and not df_events.empty:
-                next_date = df_predict['next_date'].max() if (not df_predict.empty and 'next_date' in df_predict.columns) else (pd.Timestamp.now(tz='Asia/Tokyo') + pd.Timedelta(days=1)).date()
-                next_date_str = pd.to_datetime(next_date).strftime('%Y-%m-%d')
-                shop_events = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント日付'].dt.strftime('%Y-%m-%d') == next_date_str)]
+                shop_events = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント日付'].dt.strftime('%Y-%m-%d') == target_date_str)]
                 if not shop_events.empty:
-                    events_str = " / ".join(shop_events['イベント名'].tolist())
-                    context_data += f"\n【{selected_shop} の明日 ({next_date_str}) のイベント情報】\n{events_str}\n"
+                    context_data += f"\n【{selected_shop} の {target_date_str} のイベント情報】\n"
+                    for _, ev in shop_events.iterrows():
+                        ev_name = ev.get('イベント名', '')
+                        ev_rank = ev.get('イベントランク', '不明')
+                        ev_type = ev.get('イベント種別', '全体')
+                        ev_target = ev.get('対象機種', '指定なし')
+                        context_data += f"・{ev_name} (ランク: {ev_rank}, 種別: {ev_type}, 対象: {ev_target})\n"
 
             # --- 1.5. 過去のイベント種別ごとのジャグラー実績 (シワ寄せ確認用) ---
             if df_events is not None and not df_events.empty and not df_raw.empty:
@@ -159,12 +171,23 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         for _, row in mac_stats.iterrows():
                             context_data += f"・{row['機種名']} (平均 +{int(row['machine_30days_avg_diff'])}枚)\n"
 
+            # --- 3.5. 最近大きく凹んでいる台（上げリセット候補） ---
+            if not df_predict.empty and '連続マイナス日数' in df_predict.columns and 'cons_minus_total_diff' in df_predict.columns:
+                shop_pred = df_predict[df_predict[shop_col] == selected_shop]
+                if not shop_pred.empty:
+                    # 連続マイナス日数が3日以上で、合計吸い込みが多い台を抽出
+                    target_h = shop_pred[shop_pred['連続マイナス日数'] >= 3].sort_values('cons_minus_total_diff', ascending=True).head(3)
+                    if not target_h.empty:
+                        context_data += f"\n【{selected_shop} の最近大きく凹んでいる台 (上げリセット候補)】\n"
+                        for _, row in target_h.iterrows():
+                            context_data += f"・台番号 {row['台番号']} ({row['機種名']}) - {int(row['連続マイナス日数'])}日連続マイナス / 合計 {int(row['cons_minus_total_diff'])}枚 吸い込み\n"
+
             # --- 4. 明日の予測データ (上位10台) ---
             if not df_predict.empty:
                 shop_pred = df_predict[df_predict[shop_col] == selected_shop].sort_values('prediction_score', ascending=False)
                 top_10 = shop_pred.head(10)
                 if not top_10.empty:
-                    context_data += f"\n【{selected_shop} の明日の予測データ (期待度上位10台)】\n"
+                    context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (期待度上位10台)】\n"
                     cols = ['台番号', '機種名', 'prediction_score', '根拠']
                     available_cols = [c for c in cols if c in top_10.columns]
                     
@@ -265,7 +288,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 回答は長くなりすぎないよう、箇条書きなどを活用して「要点だけを簡潔に」まとめてください。
 
 現在日時: {now_str}
-※「今日」「明日」という言葉はこの日時を基準にしてください。
+※提供されているデータは【{target_date_str}】の予測・イベント情報です。
+お客様の質問が「今日」や「明日」といった曖昧な日付表現であっても、基本的には提供されている【{target_date_str}】のデータに関する相談と解釈して、その日付を基準に回答してください。
 
 【このアプリの予測AIの評価ルール】
 ・「パチンコ専用」や「他機種」イベント時、システムは一旦「シワ寄せ回収リスク」としてマイナスのイベントスコアを与えます。
