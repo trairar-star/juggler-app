@@ -376,7 +376,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         html_str += "</ul></div>"
                         st.markdown(html_str, unsafe_allow_html=True)
 
-        # --- 💬 AI本日の立ち回りアドバイス (店舗個別) ---
+        # --- 👑 本日のおすすめ店舗 ピックアップ ---
+        if selected_shop == '全て' and shop_col in df.columns and '予測差枚数' in df.columns:
+            shop_mean_diff = df.groupby(shop_col)['予測差枚数'].mean()
+            if not shop_mean_diff.empty:
+                best_shop = shop_mean_diff.idxmax()
+                best_diff = shop_mean_diff.max()
+                
+                if best_diff >= 100:
+                    st.success(f"👑 **本日のおすすめ店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / 🔥還元予測)\n\n系列・登録店舗の中で最も出玉（差枚）が甘く、全体的に還元される可能性が高いとAIが推奨しています！")
+                elif best_diff >= 0:
+                    st.info(f"👍 **本日の注目店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / ⚖️通常営業)\n\n突出した還元予測の店舗はありませんが、登録店舗の中では一番差枚が甘いと予測されています。")
+                else:
+                    st.warning(f"🥶 **全店舗 回収警戒**: 本日は全店舗の予測平均差枚がマイナスで (一番マシな **{best_shop}** でも {int(best_diff)}枚)、厳しい戦いが予想されます。無理な勝負は避けるのが無難です。")
+
+        # --- � AI本日の立ち回りアドバイス (店舗個別) ---
         if selected_shop != '全て' and not df.empty:
             st.markdown("### 💬 AI本日の立ち回りアドバイス")
             advice_list = []

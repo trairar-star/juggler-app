@@ -75,7 +75,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         st.session_state["global_selected_shop"] = selected_shop
         st.success(f"【{selected_shop}】のデータをGeminiに連携する準備ができました！")
     else:
-        st.info("店舗を選択すると、その店舗のデータをもとに具体的なアドバイスが可能になります。")
+        st.info("店舗を選択せずに質問すると、一般的な立ち回りの相談や「今日はどの店舗に行くべき？」といった店舗選びの相談ができます。")
 
     st.divider()
 
@@ -409,6 +409,66 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     s5_reg = specs[m_name]['設定5'].get('REG', 0)
                     s5_tot = specs[m_name]['設定5'].get('合算', 0)
                     context_data += f"・{m_name}: REG 1/{s5_reg:.1f}, 合算 1/{s5_tot:.1f}\n"
+                    
+        else:
+            # 店舗未選択時（全体的な相談・店舗選び）
+            context_data += "\n【本日の各店舗の予測サマリー (店舗選びの参考にしてください)】\n"
+            if not df_predict.empty and shop_col in df_predict.columns and '予測差枚数' in df_predict.columns and 'prediction_score' in df_predict.columns:
+                shop_summary = df_predict.groupby(shop_col).agg(
+                    平均期待度=('prediction_score', 'mean'),
+                    予測差枚数=('予測差枚数', 'mean')
+                ).reset_index()
+                
+                # 過去の実績から「店舗の差枚がプラスだった日（還元日）」の平均稼働を計算して信頼度の担保にする
+                if not df_raw.empty and shop_col in df_raw.columns:
+                    shop_daily = df_raw.groupby([shop_col, '対象日付']).agg(
+                        daily_diff=('差枚', 'mean'),
+                        daily_games=('累計ゲーム', 'mean')
+                    ).reset_index()
+                    hot_days = shop_daily[shop_daily['daily_diff'] > 0]
+                    if not hot_days.empty:
+                        shop_hot_g = hot_days.groupby(shop_col)['daily_games'].mean().reset_index().rename(columns={'daily_games': '還元日平均稼働'})
+                        shop_summary = pd.merge(shop_summary, shop_hot_g, on=shop_col, how='left')
+                
+                for _, r in shop_summary.iterrows():
+                    eval_str = "🔥還元予測" if r['平均期待度'] >= 0.20 else ("🥶回収警戒" if r['平均期待度'] < 0.10 else "⚖️通常営業")
+                    avg_g_str = f" / 過去還元日の平均稼働: {int(r['還元日平均稼働'])}G" if '還元日平均稼働' in shop_summary.columns and pd.notna(r['還元日平均稼働']) else ""
+                    context_data += f"・{r[shop_col]}: 予測店舗平均 {int(r['予測差枚数']):+d}枚 / AI全体期待度 {r['平均期待度']*100:.1f}% ({eval_str}){avg_g_str}\n"
+                    
+                best_shop = shop_summary.loc[shop_summary['予測差枚数'].idxmax()]
+                if best_shop['予測差枚数'] >= 0:
+                    context_data += f"\n👉 AIのシステム上の本日のおすすめ店舗は、最も予測差枚が甘い「{best_shop[shop_col]}」です。\n"
+                    
+                # 本日の属性（曜日、末尾）に関する各店舗の過去実績を追加
+                if not df_raw.empty and shop_col in df_raw.columns:
+                    target_dt = pd.to_datetime(target_date_str)
+                    target_wd = target_dt.dayofweek
+                    target_digit = target_dt.day % 10
+                    wd_str = ['月', '火', '水', '木', '金', '土', '日'][target_wd]
+                    
+                    df_raw_temp = df_raw.copy()
+                    df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'])
+                    df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
+                    df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+                    
+                    shop_daily = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾']).agg(
+                        店舗平均差枚=('差枚', 'mean'),
+                        店舗平均稼働=('累計ゲーム', 'mean')
+                    ).reset_index()
+                    
+                    wd_stats = shop_daily[shop_daily['曜日'] == target_wd].groupby(shop_col).agg(平均差枚=('店舗平均差枚', 'mean'), 平均稼働=('店舗平均稼働', 'mean')).reset_index()
+                    digit_stats = shop_daily[shop_daily['末尾'] == target_digit].groupby(shop_col).agg(平均差枚=('店舗平均差枚', 'mean'), 平均稼働=('店舗平均稼働', 'mean')).reset_index()
+                    
+                    context_data += f"\n【本日の属性 ({target_dt.strftime('%m/%d')} {wd_str}曜 / {target_digit}のつく日) に対する各店舗の過去実績】\n"
+                    for shop in shops:
+                        if shop == "店舗を選択してください": continue
+                        wd_row = wd_stats[wd_stats[shop_col] == shop]
+                        digit_row = digit_stats[digit_stats[shop_col] == shop]
+                        wd_text = f"{wd_str}曜の過去平均: {int(wd_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(wd_row['平均稼働'].iloc[0])}G)" if not wd_row.empty else f"{wd_str}曜の過去実績なし"
+                        digit_text = f"{target_digit}のつく日の過去平均: {int(digit_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(digit_row['平均稼働'].iloc[0])}G)" if not digit_row.empty else f"{target_digit}のつく日の過去実績なし"
+                        context_data += f"・{shop}: {wd_text} / {digit_text}\n"
+            else:
+                context_data += "本日の予測データがありません。\n"
 
         # --- マイ収支データをAIに読み込ませる ---
         df_balance = backend.load_my_balance()
@@ -453,6 +513,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 ・「AI予測実績（勝率や自己評価）」のデータが提供されている場合は、AI自身の実力が現在その店舗でどれくらい通用しているかを客観的に捉え、勝率が低ければ無理に推奨台を薦めず「今は予測が当たりにくい危険な状態なので様子見が無難」といった警告も行ってください。
 ・対象日のイベント情報に「過去実績: 店舗平均 +〇〇枚」とある場合、そのイベントは過去に還元している実績がある強いイベントであることをお客様にお伝えし、おすすめしてください。逆に過去実績がマイナスの場合は「過去の傾向では回収されているイベント」として注意喚起してください。
 ・お客様が「今日はどう？」と全体的な状況を聞いてきた場合、提供されている「店舗全体AI期待度 (還元日/回収日の目安)」を元に、その日が「還元日」か「回収日」かを判断し、全体的な立ち回りの方針（攻めるべきか、撤退すべきか）を必ずアドバイスに含めてください。
+・お客様が店舗を指定せずに「今日はどこに行くべき？」「おすすめの店は？」と相談してきた場合、提供されている「本日の各店舗の予測サマリー」および「本日の属性（曜日・特定日）に対する過去実績」のデータを比較して、総合的に一番期待値の高い店舗をおすすめとして提案し、その理由を伝えてください。たとえば「A店は全体の予測差枚が甘く、かつ過去の〇のつく日も平均稼働が高くてしっかり還元されている（プラス差枚）ので本命です」といったように、今日の予測と過去の傾向を組み合わせて説得力のあるアドバイスをしてください。全店舗がマイナスの場合は「今日はどの店舗も回収警戒のため休むのが無難」とアドバイスしてください。
 ・お客様から「どんな日が還元日？回収日？」と傾向を聞かれた場合、提供されている「全体的な還元/回収の傾向 (過去実績)」のデータから、甘い曜日・特定日や辛い曜日・特定日を具体的に教えてください。また、その日が「辛い曜日・特定日」に該当する場合、または全体的な状況が「回収日」である場合、「基本的には勝負を避けるべき（行かないほうが無難）」と警告しつつも、「AIが特に高く評価している上位の期待台（激アツ台）であれば試してみる価値はある」とフォローしてください。ただし、その場合は「少しでも挙動が悪ければ即撤退する」など、撤退基準を非常に厳しく設定するよう強く念押ししてください。
 ・店舗の「強い末尾番号」や「強い曜日」のデータが提供されている場合は、それらも具体的な狙い目の根拠としてアドバイスに積極的に盛り込んでください。
 ・お客様が稼働中の台のデータ（機種名、現在の総回転数、BIG回数、REG回数など）を提示して相談された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を自ら計算し、高設定の期待度や押し引き（ヤメ時）の的確なアドバイスを行ってください。
