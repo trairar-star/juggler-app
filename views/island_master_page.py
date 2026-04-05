@@ -22,21 +22,68 @@ def render_island_master_page(df_raw):
         input_shop = st.selectbox("店舗名", shops, key="island_reg_shop")
         
         machine_list = []
+        registered_machines = set()
+        
+        if input_shop and input_shop != "店舗を選択してください":
+            if not df_island.empty:
+                shop_islands = df_island[df_island['店名'] == input_shop]
+                for _, i_row in shop_islands.iterrows():
+                    rule = str(i_row.get('台番号ルール', ''))
+                    if rule and rule.strip() != '' and rule != 'nan':
+                        for part in rule.split(','):
+                            part = part.strip()
+                            if not part: continue
+                            if '-' in part:
+                                try:
+                                    s_str, e_str = part.split('-', 1)
+                                    registered_machines.update([str(m) for m in range(int(s_str), int(e_str) + 1)])
+                                except: pass
+                            else:
+                                registered_machines.add(str(part))
+                    else:
+                        try:
+                            s = int(i_row.get('開始台番号', 0))
+                            e = int(i_row.get('終了台番号', 0))
+                            if s > 0 and e >= s:
+                                registered_machines.update([str(m) for m in range(s, e + 1)])
+                        except: pass
+
         if input_shop and input_shop != "店舗を選択してください" and not df_raw.empty:
             raw_machines = df_raw[df_raw[shop_col] == input_shop]['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).unique()
+            available_machines = [m for m in raw_machines if m not in registered_machines]
             try:
-                machine_list = sorted(raw_machines, key=lambda x: int(x))
+                machine_list = sorted(available_machines, key=lambda x: int(x))
             except:
-                machine_list = sorted(raw_machines)
+                machine_list = sorted(available_machines)
 
         input_island = st.text_input("島名 (例: マイジャグA列)", placeholder="マイジャグA列", key="island_reg_name")
         
         st.markdown("**対象台番号の指定** (両方組み合わせての指定も可能です)")
-        selected_machines = st.multiselect("① リストから選択 (複数選択可)", machine_list, help="クリックしてポチポチ選べます。BackSpaceキーで消せます。", key="island_reg_machines")
+        selected_machines = st.multiselect("① リストから選択 (未登録の台から複数選択可)", machine_list, help="クリックしてポチポチ選べます。すでに別の島に登録されている台番号は表示されません。", key="island_reg_machines")
         input_rule_text = st.text_input("② 手入力・範囲指定 (例: 501-510 または 786, 880-885)", placeholder="501-510", key="island_reg_rule")
         
+        candidate_machines = set(selected_machines)
+        if input_rule_text:
+            for part in input_rule_text.split(','):
+                part = part.strip()
+                if not part: continue
+                if '-' in part:
+                    try:
+                        s_str, e_str = part.split('-', 1)
+                        candidate_machines.update([str(m) for m in range(int(s_str), int(e_str) + 1)])
+                    except: pass
+                else:
+                    candidate_machines.add(str(part))
+                    
+        try:
+            candidate_list = sorted(list(candidate_machines), key=lambda x: int(x))
+        except:
+            candidate_list = sorted(list(candidate_machines))
+            
+        corner_options = ["指定なし"] + candidate_list if candidate_list else ["対象台番号を指定してください"]
+        
         st.markdown("**アピール情報 (任意)**")
-        input_main_corner = st.selectbox("目立つ方の角番 (メイン通路側など)", ["指定なし"] + machine_list, help="店長が一番出玉をアピールしたい場所（メイン通路側の角など）があれば指定してください。", key="island_reg_main_corner")
+        input_main_corner = st.selectbox("目立つ方の角番 (メイン通路側など)", corner_options, help="店長が一番出玉をアピールしたい場所（メイン通路側の角など）があれば指定してください。上の『対象台番号』に入力した台番号から選べます。", key="island_reg_main_corner")
         input_island_type = st.radio("島の目立ち度", ["普通", "メイン通路沿い (目立つ)", "壁側・奥 (目立たない)"], horizontal=True, key="island_reg_island_type")
 
         if st.button("島を登録", type="primary"):
@@ -56,7 +103,8 @@ def render_island_master_page(df_raw):
                 if not final_rule:
                     st.error("対象台番号を指定してください。")
                 else:
-                    if backend.save_island_master(input_shop, input_island, final_rule, input_main_corner, input_island_type):
+                    main_corner_val = "指定なし" if input_main_corner == "対象台番号を指定してください" else input_main_corner
+                    if backend.save_island_master(input_shop, input_island, final_rule, main_corner_val, input_island_type):
                         st.success(f"{input_shop}の島マスターを登録しました！")
                         for k in ["island_reg_name", "island_reg_machines", "island_reg_rule", "island_reg_main_corner", "island_reg_island_type"]:
                             if k in st.session_state: del st.session_state[k]

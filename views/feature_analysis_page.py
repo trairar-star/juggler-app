@@ -185,6 +185,70 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
         _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs)
 
+        # --- 機種別 成績 (設定5近似度など) ---
+        with st.expander(f"🎰 {selected_shop} の機種別 基本成績 (設定投入傾向)", expanded=False):
+            st.caption("この店舗における各機種の平均的な扱い（設定5近似度、高設定率、平均差枚など）です。店舗の「推し機種」や「冷遇機種」を見抜くのに役立ちます。")
+            
+            if not df_raw_shop.empty:
+                mac_df = df_raw_shop.copy()
+                mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & (mac_df['差枚'].abs() >= 1000))
+                
+                shop_avg_g = mac_df['累計ゲーム'].mean() if not mac_df.empty else 4000
+                
+                def calc_score_for_mac(row):
+                    return backend.calculate_setting_score(
+                        g=row.get('累計ゲーム', 0), act_b=row.get('BIG', 0), act_r=row.get('REG', 0), machine_name=row.get('機種名', ''),
+                        shop_avg_g=shop_avg_g, penalty_reg=15, penalty_big=5, low_g_penalty=30, use_strict_scoring=True, return_details=False
+                    )
+                
+                mac_df['設定5近似度'] = mac_df.apply(calc_score_for_mac, axis=1)
+                
+                mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
+                spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                spec_tot = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                spec_reg3 = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+                
+                mac_df['高設定挙動'] = (
+                    (mac_df['累計ゲーム'] >= 3000) & 
+                    ((mac_df['REG確率'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率'] >= spec_reg3)))
+                ).astype(int)
+                mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
+                
+                mac_stats = mac_df.groupby('機種名').agg(
+                    平均差枚=('差枚', 'mean'),
+                    設定5近似度=('設定5近似度', 'mean'),
+                    高設定率=('高設定率', 'mean'),
+                    平均回転数=('累計ゲーム', 'mean'),
+                    サンプル数=('台番号', 'count')
+                ).reset_index().sort_values('設定5近似度', ascending=False)
+                
+                mac_stats['信頼度'] = mac_stats['サンプル数'].apply(get_confidence_indicator)
+                
+                col_m1, col_m2 = st.columns([1, 1.2])
+                with col_m1:
+                    chart_mac = alt.Chart(mac_stats).mark_bar().encode(
+                        x=alt.X('設定5近似度', title='設定5近似度 (平均点)'),
+                        y=alt.Y('機種名', sort='-x', title='機種'),
+                        color=alt.condition(alt.datum.設定5近似度 >= 40, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        tooltip=['機種名', alt.Tooltip('設定5近似度', format='.1f'), alt.Tooltip('高設定率', format='.1f', title='高設定率 (%)'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_mac, width="stretch")
+                with col_m2:
+                    st.dataframe(
+                        mac_stats,
+                        column_config={
+                            "機種名": st.column_config.TextColumn("機種"),
+                            "設定5近似度": st.column_config.NumberColumn("設定5近似度", format="%.1f点", help="100点満点での平均的な設定5近似度"),
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                            "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
+                            "平均回転数": st.column_config.NumberColumn("平均回転", format="%d G"),
+                            "サンプル数": st.column_config.NumberColumn("サンプル", format="%d 件"),
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度"),
+                        },
+                        hide_index=True,
+                        width="stretch"
+                    )
+
     st.divider()
     st.markdown("### 🔍 詳細条件別の傾向分析")
     st.caption("ここから下の各分析項目（基本指標・イベント・曜日・特殊パターン）に共通して適用される絞り込み条件です。")
