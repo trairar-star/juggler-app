@@ -13,8 +13,10 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
 
     # ライブラリのインストール確認
     if not GENAI_AVAILABLE:
+        import sys
         st.error("`google-generativeai` ライブラリがインストールされていません。")
-        st.code("pip install google-generativeai", language="bash")
+        st.info("💡 仮想環境のズレが原因の可能性があります。以下のコマンドをコピーしてターミナルで実行し、現在の環境に直接インストールしてください。")
+        st.code(f"{sys.executable} -m pip install google-generativeai", language="bash")
         return
 
     # APIキーの設定確認
