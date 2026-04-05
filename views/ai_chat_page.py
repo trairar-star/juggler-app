@@ -499,6 +499,19 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         wd_text = f"{wd_str}曜の過去平均: {int(wd_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(wd_row['平均稼働'].iloc[0])}G)" if not wd_row.empty else f"{wd_str}曜の過去実績なし"
                         digit_text = f"{target_digit}のつく日の過去平均: {int(digit_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(digit_row['平均稼働'].iloc[0])}G)" if not digit_row.empty else f"{target_digit}のつく日の過去実績なし"
                         context_data += f"・{shop}: {wd_text} / {digit_text}\n"
+                
+                # --- 全店舗の中から期待度上位の台（おすすめ台）を追加 ---
+                top_all = df_predict.sort_values('prediction_score', ascending=False).head(10)
+                if not top_all.empty:
+                    context_data += f"\n【全店舗の激アツ・おすすめ台 (期待度上位10台)】\n"
+                    cols = [shop_col, '台番号', '機種名', 'prediction_score', '根拠']
+                    available_cols = [c for c in cols if c in top_all.columns]
+                    
+                    display_df_all = top_all[available_cols].copy()
+                    if 'prediction_score' in display_df_all.columns:
+                        display_df_all['prediction_score'] = display_df_all['prediction_score'].apply(lambda x: f"{int(x*100)}%")
+                    
+                    context_data += display_df_all.to_markdown(index=False) + "\n"
             else:
                 context_data += "本日の予測データがありません。\n"
 
