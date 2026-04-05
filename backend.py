@@ -658,8 +658,8 @@ def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_na
             idx_target = header.index('対象機種') if '対象機種' in header else -1
         except: return False
         
-        target_date_str = old_event_date.strftime('%Y-%m-%d')
-        new_date_str = new_event_date.strftime('%Y-%m-%d')
+        target_date_str = pd.to_datetime(old_event_date).strftime('%Y-%m-%d')
+        new_date_str = pd.to_datetime(new_event_date).strftime('%Y-%m-%d')
         timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         
         for i, row in enumerate(all_values[1:], start=2):
@@ -701,7 +701,7 @@ def delete_shop_event(shop_name, event_date, event_name):
             idx_name = header.index('イベント名')
         except: return False
         
-        target_date_str = event_date.strftime('%Y-%m-%d')
+        target_date_str = pd.to_datetime(event_date).strftime('%Y-%m-%d')
         for i, row in enumerate(all_values[1:], start=2):
             if len(row) <= max(idx_shop, idx_date, idx_name): continue
             r_date = row[idx_date]
@@ -711,7 +711,7 @@ def delete_shop_event(shop_name, event_date, event_name):
                     if pd.to_datetime(r_date).strftime('%Y-%m-%d') == target_date_str: is_date_match = True
                 except: pass
             if row[idx_shop] == shop_name and row[idx_name] == event_name and is_date_match:
-                worksheet.delete_rows(i)
+                worksheet.delete_row(i)
                 return True
         return False
     except Exception as e:
@@ -816,7 +816,7 @@ def delete_island_master(target_timestamp):
         worksheet = sh.worksheet('island_master')
         cell = worksheet.find(str(target_timestamp), in_column=1)
         if cell:
-            worksheet.delete_rows(cell.row)
+            worksheet.delete_row(cell.row)
             return True
         return False
     except Exception:
@@ -966,7 +966,7 @@ def delete_my_balance(target_timestamp):
         
         cell = worksheet.find(str(target_timestamp), in_column=1)
         if cell:
-            worksheet.delete_rows(cell.row)
+            worksheet.delete_row(cell.row)
             return True
         return False
     except Exception as e:
