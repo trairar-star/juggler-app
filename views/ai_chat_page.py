@@ -128,15 +128,25 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
                     # --- 利用可能なモデルをAPIから自動取得して最適なものを選択 ---
                     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                     
-                    # 優先順位（エラーになった2.0系を避け、安定の1.5系や無印proを選ぶ）
-                    preferred_models = ["models/gemini-1.5-flash", "models/gemini-pro", "models/gemini-1.5-pro"]
-                    target_model = "gemini-pro" # フォールバック
-                    
-                    for pref in preferred_models:
-                        if pref in available_models:
-                            target_model = pref.replace("models/", "")
+                    target_model = None
+                    # 優先順位1: 1.5 flash 系を名前の一部から探す
+                    for m in available_models:
+                        if '1.5-flash' in m:
+                            target_model = m.replace('models/', '')
                             break
+                    # 優先順位2: なければ 1.5 pro 系を探す
+                    if not target_model:
+                        for m in available_models:
+                            if '1.5-pro' in m:
+                                target_model = m.replace('models/', '')
+                                break
+                    # フォールバック: とにかく一番最初に見つかったモデルを強制的に使う
+                    if not target_model and len(available_models) > 0:
+                        target_model = available_models[0].replace('models/', '')
                     
+                    if not target_model:
+                        raise Exception(f"利用可能なGeminiモデルが見つかりませんでした。利用可能リスト: {available_models}")
+                        
                     # 自動選択されたモデルで呼び出し
                     model = genai.GenerativeModel(target_model)
                     response = model.generate_content(full_prompt)
