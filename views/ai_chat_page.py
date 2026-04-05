@@ -100,6 +100,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
         full_prompt = f"""
 あなたはプロのスロット立ち回りコンサルタントです。
 論理的かつ実践的に、友人のように親身になってアドバイスしてください。
+回答は長くなりすぎないよう、箇条書きなどを活用して「要点だけを短く簡潔に」まとめてください。
 
 以下は現在のアプリ内のデータです。最新の店舗状況として参考にしてください。
 {context_data if context_data else "現在選択されている店舗データはありません。"}
@@ -115,8 +116,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
                 try:
-                    # 賢いモデル（gemini-1.5-pro系）を指定して呼び出し
-                    model = genai.GenerativeModel('gemini-1.5-pro-latest')
+                    # 賢い安定版モデル（gemini-1.5-pro）を指定して呼び出し
+                    model = genai.GenerativeModel('gemini-1.5-pro')
                     response = model.generate_content(full_prompt)
                     
                     # 回答の表示と履歴への追加
