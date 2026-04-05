@@ -1317,7 +1317,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             column_config={
                                 "予測対象日": st.column_config.DateColumn("予測日", format="MM/DD"),
                                 "対象日付": st.column_config.DateColumn("稼働日(前日)", format="MM/DD", help="予測のベースとなった過去の稼働日"),
-                              "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
+                                "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
                                 "高設定挙動": st.column_config.TextColumn("挙動", help="設定5以上基準を満たしたか"),
                                 "next_diff": st.column_config.NumberColumn("結果差枚", format="%+d"),
                                 "next_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
