@@ -1308,16 +1308,22 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         sim_display_df['高設定挙動'] = sim_display_df['target'].apply(lambda x: '🌟' if x == 1 else '')
                         sim_display_df = sim_display_df.sort_values('予測対象日', ascending=False)
                         
+                        display_cols_sim = ['予測対象日', '対象日付', '台番号', '機種名', '予想設定5以上確率', '高設定挙動', 'next_diff', 'next_累計ゲーム', 'next_BIG', 'next_REG']
+                        if '根拠' in sim_display_df.columns:
+                            display_cols_sim.append('根拠')
+                        
                         st.dataframe(
-                            sim_display_df[['予測対象日', '台番号', '機種名', '予想設定5以上確率', '高設定挙動', 'next_diff', 'next_累計ゲーム', 'next_BIG', 'next_REG']],
+                            sim_display_df[display_cols_sim],
                             column_config={
                                 "予測対象日": st.column_config.DateColumn("予測日", format="MM/DD"),
-                                "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
+                                "対象日付": st.column_config.DateColumn("稼働日(前日)", format="MM/DD", help="予測のベースとなった過去の稼働日"),
+                              "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
                                 "高設定挙動": st.column_config.TextColumn("挙動", help="設定5以上基準を満たしたか"),
                                 "next_diff": st.column_config.NumberColumn("結果差枚", format="%+d"),
                                 "next_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
                                 "next_BIG": st.column_config.NumberColumn("BIG", format="%d"),
                                 "next_REG": st.column_config.NumberColumn("REG", format="%d"),
+                                "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
                             },
                             hide_index=True,
                             width="stretch"
