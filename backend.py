@@ -607,7 +607,7 @@ def load_shop_events():
         return df
     except: return pd.DataFrame()
 
-def save_shop_event(shop_name, event_date, event_name, event_rank):
+def save_shop_event(shop_name, event_date, event_name, event_rank, event_type="スロット/全体", target_machine="指定なし"):
     if not shop_name or not event_name:
         st.warning("店舗名とイベント名を入力してください。")
         return False
@@ -617,23 +617,30 @@ def save_shop_event(shop_name, event_date, event_name, event_rank):
         try: 
             worksheet = sh.worksheet('shop_events')
             header = worksheet.row_values(1)
-            if 'イベントランク' not in header:
-                if worksheet.col_count < len(header) + 1:
-                    worksheet.add_cols((len(header) + 1) - worksheet.col_count)
-                worksheet.update_cell(1, len(header) + 1, 'イベントランク')
+            for col_name in ['イベントランク', 'イベント種別', '対象機種']:
+                if col_name not in header:
+                    if worksheet.col_count < len(header) + 1:
+                        worksheet.add_cols((len(header) + 1) - worksheet.col_count)
+                    worksheet.update_cell(1, len(header) + 1, col_name)
+                    header.append(col_name)
         except gspread.exceptions.WorksheetNotFound: 
-            worksheet = sh.add_worksheet(title='shop_events', rows="1000", cols="6")
-            worksheet.append_row(['登録日時', '店名', 'イベント日付', 'イベント名', '備考', 'イベントランク'])
+            worksheet = sh.add_worksheet(title='shop_events', rows="1000", cols="8")
+            worksheet.append_row(['登録日時', '店名', 'イベント日付', 'イベント名', '備考', 'イベントランク', 'イベント種別', '対象機種'])
+            header = ['登録日時', '店名', 'イベント日付', 'イベント名', '備考', 'イベントランク', 'イベント種別', '対象機種']
         
         timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         date_str = event_date.strftime('%Y-%m-%d')
-        worksheet.append_row([timestamp, shop_name, date_str, event_name, '', event_rank])
+        row_data = [timestamp, shop_name, date_str, event_name, '', event_rank]
+        while len(row_data) < len(header): row_data.append("")
+        if 'イベント種別' in header: row_data[header.index('イベント種別')] = event_type
+        if '対象機種' in header: row_data[header.index('対象機種')] = target_machine
+        worksheet.append_row(row_data, value_input_option='RAW')
         return True
     except Exception as e:
         st.error(f"イベント保存エラー: {e}")
         return False
 
-def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_name, new_event_date, new_event_name, new_event_rank):
+def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_name, new_event_date, new_event_name, new_event_rank, new_event_type="スロット/全体", new_target_machine="指定なし"):
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -647,6 +654,8 @@ def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_na
             idx_date = header.index('イベント日付')
             idx_name = header.index('イベント名')
             idx_rank = header.index('イベントランク') if 'イベントランク' in header else -1
+            idx_type = header.index('イベント種別') if 'イベント種別' in header else -1
+            idx_target = header.index('対象機種') if '対象機種' in header else -1
         except: return False
         
         target_date_str = old_event_date.strftime('%Y-%m-%d')
@@ -668,6 +677,10 @@ def update_shop_event(old_shop_name, old_event_date, old_event_name, new_shop_na
                 worksheet.update_cell(i, idx_name + 1, new_event_name)
                 if idx_rank != -1:
                     worksheet.update_cell(i, idx_rank + 1, new_event_rank)
+                if idx_type != -1:
+                    worksheet.update_cell(i, idx_type + 1, new_event_type)
+                if idx_target != -1:
+                    worksheet.update_cell(i, idx_target + 1, new_target_machine)
                 return True
         return False
     except Exception as e:
@@ -715,7 +728,7 @@ def load_island_master():
         return pd.DataFrame(worksheet.get_all_records())
     except: return pd.DataFrame()
 
-def save_island_master(shop, island_name, rule_str):
+def save_island_master(shop, island_name, rule_str, main_corner="指定なし", island_type="普通"):
     try:
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
@@ -728,10 +741,20 @@ def save_island_master(shop, island_name, rule_str):
                     worksheet.add_cols((len(header) + 1) - worksheet.col_count)
                 worksheet.update_cell(1, len(header) + 1, '台番号ルール')
                 header.append('台番号ルール')
+            if 'メイン角番' not in header:
+                if worksheet.col_count < len(header) + 1:
+                    worksheet.add_cols((len(header) + 1) - worksheet.col_count)
+                worksheet.update_cell(1, len(header) + 1, 'メイン角番')
+                header.append('メイン角番')
+            if '島属性' not in header:
+                if worksheet.col_count < len(header) + 1:
+                    worksheet.add_cols((len(header) + 1) - worksheet.col_count)
+                worksheet.update_cell(1, len(header) + 1, '島属性')
+                header.append('島属性')
         except gspread.exceptions.WorksheetNotFound: 
-            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="6")
-            worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール'])
-            header = ['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール']
+            worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols="8")
+            worksheet.append_row(['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール', 'メイン角番', '島属性'])
+            header = ['登録日時', '店名', '島名', '開始台番号', '終了台番号', '台番号ルール', 'メイン角番', '島属性']
         
         timestamp = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         row_data = [timestamp, shop, island_name, "", "", rule_str]
@@ -740,13 +763,50 @@ def save_island_master(shop, island_name, rule_str):
             row_data.append("")
             
         if '台番号ルール' in header:
-            idx = header.index('台番号ルール')
-            row_data[idx] = rule_str
+            row_data[header.index('台番号ルール')] = rule_str
+        if 'メイン角番' in header:
+            row_data[header.index('メイン角番')] = "" if main_corner == "指定なし" else str(main_corner)
+        if '島属性' in header:
+            row_data[header.index('島属性')] = island_type
             
         worksheet.append_row(row_data, value_input_option='RAW')
         return True
     except Exception as e:
         st.error(f"島マスター保存エラー: {e}")
+        return False
+
+def update_island_master(target_timestamp, shop, island_name, rule_str, main_corner="指定なし", island_type="普通"):
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('island_master')
+        all_values = worksheet.get_all_values()
+        if not all_values: return False
+        
+        header = all_values[0]
+        try:
+            idx_reg = header.index('登録日時')
+            idx_shop = header.index('店名')
+            idx_name = header.index('島名')
+            idx_rule = header.index('台番号ルール')
+            idx_corner = header.index('メイン角番') if 'メイン角番' in header else -1
+            idx_type = header.index('島属性') if '島属性' in header else -1
+        except: return False
+        
+        for i, row in enumerate(all_values[1:], start=2):
+            if len(row) <= idx_reg: continue
+            if row[idx_reg] == str(target_timestamp):
+                worksheet.update_cell(i, idx_shop + 1, shop)
+                worksheet.update_cell(i, idx_name + 1, island_name)
+                worksheet.update_cell(i, idx_rule + 1, rule_str)
+                if idx_corner != -1:
+                    worksheet.update_cell(i, idx_corner + 1, "" if main_corner == "指定なし" else str(main_corner))
+                if idx_type != -1:
+                    worksheet.update_cell(i, idx_type + 1, island_type)
+                return True
+        return False
+    except Exception as e:
+        st.error(f"島マスター更新エラー: {e}")
         return False
 
 def delete_island_master(target_timestamp):
@@ -1033,11 +1093,15 @@ def _generate_features(df, df_events, df_island, target_date):
                             try: machines.append(int(part))
                             except: pass
                             
+                main_corner = str(i_row.get('メイン角番', '')).strip()
+                island_type = str(i_row.get('島属性', '普通'))
+                
                 machines = sorted(list(set(machines)))
                 if machines:
                     parsed_islands.append({
                         'shop': s_name, 'island_id': f"{s_name}_{i_name}",
-                        'machines': machines, 'corner_min': min(machines), 'corner_max': max(machines)
+                        'machines': machines, 'corner_min': min(machines), 'corner_max': max(machines),
+                        'main_corner': main_corner, 'island_type': island_type
                     })
                     
             for _, row in unique_machines.iterrows():
@@ -1045,16 +1109,31 @@ def _generate_features(df, df_events, df_island, target_date):
                 m_num = row['台番号']
                 i_id = "Unknown"
                 is_cor = 0
+                is_main_cor = 0
+                is_main_isl = 0
+                is_wall_isl = 0
                 for pi in parsed_islands:
                     if pi['shop'] == s_name and m_num in pi['machines']:
                         i_id = pi['island_id']
                         if m_num == pi['corner_min'] or m_num == pi['corner_max']: is_cor = 1
+                        if str(m_num) == pi['main_corner']: is_main_cor = 1
+                        if pi['island_type'] == 'メイン通路沿い (目立つ)': is_main_isl = 1
+                        elif pi['island_type'] == '壁側・奥 (目立たない)': is_wall_isl = 1
                         break
-                island_mapping.append({shop_col: s_name, '台番号': m_num, 'master_island_id': i_id, 'master_is_corner': is_cor})
+                island_mapping.append({
+                    shop_col: s_name, '台番号': m_num, 
+                    'master_island_id': i_id, 'master_is_corner': is_cor,
+                    'master_is_main_corner': is_main_cor,
+                    'master_is_main_island': is_main_isl,
+                    'master_is_wall_island': is_wall_isl
+                })
             mapping_df = pd.DataFrame(island_mapping)
             df = pd.merge(df, mapping_df, on=[shop_col, '台番号'], how='left')
             df.loc[df['master_island_id'] != "Unknown", 'island_id'] = df['master_island_id']
             df.loc[df['master_island_id'] != "Unknown", 'is_corner'] = df['master_is_corner']
+            df.loc[df['master_island_id'] != "Unknown", 'is_main_corner'] = df['master_is_main_corner']
+            df.loc[df['master_island_id'] != "Unknown", 'is_main_island'] = df['master_is_main_island']
+            df.loc[df['master_island_id'] != "Unknown", 'is_wall_island'] = df['master_is_wall_island']
 
     if shop_col and '台番号' in df.columns and '対象日付' in df.columns:
         if 'island_id' in df.columns:
@@ -1197,20 +1276,68 @@ def _generate_features(df, df_events, df_island, target_date):
 
     if df_events is not None and not df_events.empty and shop_col:
         events_unique = df_events.drop_duplicates(subset=['店名', 'イベント日付'], keep='last').copy()
+        
+        # 「対象外(無効)」イベントのみAIの学習から除外（完全に無視する）
+        # パチンコ専用イベントは「スロットの回収日」としてマイナス学習させるため残す
+        # ただし「SS (周年)」クラスの特大イベントは、店全体に影響が波及するため除外しない
+        if 'イベント種別' in events_unique.columns:
+            cond_exclude = events_unique['イベント種別'] == '対象外(無効)'
+            cond_ss = (events_unique['イベントランク'] == 'SS (周年)') | (events_unique['イベント名'].astype(str).str.contains('周年|リニューアル|グランド'))
+            events_unique = events_unique[~(cond_exclude & ~cond_ss)]
+
         merge_cols = ['店名', 'イベント日付', 'イベント名']
         if 'イベントランク' in events_unique.columns: merge_cols.append('イベントランク')
+        if '対象機種' in events_unique.columns: merge_cols.append('対象機種')
 
-        # 予測対象日（next_date）のイベントを結合する。shop_colは'店名'に統一済みのため、'店名_x', '店名_y'が生成される
         df = pd.merge(df, events_unique[merge_cols], on=None, left_on=['店名', 'next_date'], right_on=['店名', 'イベント日付'], how='left')
-        # 不要な列を削除し、元の'店名'列を復元する
         df = df.drop(columns=['店名_y', 'イベント日付'], errors='ignore')
         df = df.rename(columns={'店名_x': '店名'}, errors='ignore')
         
         df['イベント名'] = df['イベント名'].fillna('通常')
         df['event_code'] = df['イベント名'].astype('category').cat.codes
-        if 'イベントランク' in df.columns:
-            rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
-            df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
+        
+        if '対象機種' in df.columns:
+            def calc_rank_score(row):
+                rank = row.get('イベントランク', '')
+                t_mac = str(row.get('対象機種', '指定なし'))
+                my_mac = str(row.get('機種名', ''))
+                e_type = str(row.get('イベント種別', 'スロット/全体'))
+                
+                rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
+                score = rank_map.get(rank, 0)
+                
+                is_super_event = (rank == 'SS (周年)') or ('周年' in str(row.get('イベント名', ''))) or ('リニューアル' in str(row.get('イベント名', ''))) or ('グランド' in str(row.get('イベント名', '')))
+                if is_super_event and score < 6:
+                    score = max(score, 5) # 特大イベントは最低でもSランク相当のパワーを保証
+
+                # パチンコ専用イベントの処理（特大イベントでなければ回収警戒のマイナススコア）
+                if e_type == 'パチンコ専用':
+                    if is_super_event:
+                        return 3 # スロットへの波及効果として中間スコア(Bランク相当)を与える
+                    else:
+                        return -1 # スロットは回収に回されやすいためマイナススコア
+                        
+                # 対象外(無効)だが「周年」で例外的に残ったデータの処理
+                if e_type == '対象外(無効)':
+                    if is_super_event:
+                        return 3
+                    else:
+                        return 0
+
+                # 特定機種が指定されている場合、関係ない機種はイベントの恩恵（スコア）を無効化、またはマイナス化
+                if score > 0 and t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
+                    if my_mac not in t_mac and t_mac not in my_mac:
+                        if 'ジャグラー' not in t_mac: # ジャグラー系指定でなければ弾く
+                            if is_super_event:
+                                score = 3 # 特大イベントなら対象外機種でもおこぼれ(ベースアップ)としてスコアを残す
+                            else:
+                                score = -1 # 別機種の特日＝ジャグラーは回収に回されやすいためマイナススコア
+                return score
+            df['event_rank_score'] = df.apply(calc_rank_score, axis=1)
+        else:
+            if 'イベントランク' in df.columns:
+                rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
+                df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
 
     # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更
     df = df.sort_values('対象日付').reset_index(drop=True)
@@ -1341,7 +1468,7 @@ def _generate_features(df, df_events, df_island, target_date):
         df['is_new_machine'] = 0
 
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -1688,6 +1815,9 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     if "prev_win_reg" in top_ids and row.get('差枚', 0) >= 1000 and row.get('is_win', 0) == 1: matched_hot.append("高設定据え"); matched_hot_ids.append("prev_win_reg")
     if "high_kado_reaction" in top_ids and row.get('累計ゲーム', 0) >= 8000: matched_hot.append("高稼働据え置き"); matched_hot_ids.append("high_kado_reaction")
     if "cons_win_reaction" in top_ids and row.get('prev_差枚', 0) >= 500 and row.get('差枚', 0) >= 500: matched_hot.append("連勝据え置き"); matched_hot_ids.append("cons_win_reaction")
+    if "main_corner" in top_ids and row.get('is_main_corner') == 1: matched_hot.append("メイン角"); matched_hot_ids.append("main_corner")
+    if "main_island" in top_ids and row.get('is_main_island') == 1: matched_hot.append("目立つ島"); matched_hot_ids.append("main_island")
+    if "wall_island" in top_ids and row.get('is_wall_island') == 1: matched_hot.append("壁側・死に島"); matched_hot_ids.append("wall_island")
     for tid in top_ids:
         if tid.startswith("day_") and 'target_date_end_digit' in row:
             if row['target_date_end_digit'] == int(tid.split("_")[1]): matched_hot.append(f"{int(tid.split('_')[1])}のつく日"); matched_hot_ids.append(tid)
@@ -1704,6 +1834,9 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動"); matched_cold_ids.append("one_hit_reaction")
     if "high_kado_reaction" in worst_ids and row.get('累計ゲーム', 0) >= 8000: matched_cold.append("高稼働反動"); matched_cold_ids.append("high_kado_reaction")
     if "cons_win_reaction" in worst_ids and row.get('prev_差枚', 0) >= 500 and row.get('差枚', 0) >= 500: matched_cold.append("連勝ストップ"); matched_cold_ids.append("cons_win_reaction")
+    if "main_corner" in worst_ids and row.get('is_main_corner') == 1: matched_cold.append("メイン角(見せ台フェイク)"); matched_cold_ids.append("main_corner")
+    if "main_island" in worst_ids and row.get('is_main_island') == 1: matched_cold.append("目立つ島(回収用)"); matched_cold_ids.append("main_island")
+    if "wall_island" in worst_ids and row.get('is_wall_island') == 1: matched_cold.append("壁側(冷遇)"); matched_cold_ids.append("wall_island")
     
     for tid in worst_ids:
         if tid.startswith("day_") and 'target_date_end_digit' in row:
@@ -1808,6 +1941,9 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         elif h == "高稼働据え置き": add_reasons.append(f"【🎯店癖(安心)】過去の傾向から、この店舗は『タコ粘りされた翌日でも高設定を据え置く(または入れ直す)』太っ腹な傾向があります {rate_str}。")
         elif h == "高設定完全据え置き": add_reasons.append(f"【🎯店癖(安心)】過去の傾向から、この店舗は『前日高設定挙動の優秀台をそのまま据え置く』傾向が非常に強いです {rate_str}。")
         elif h == "連勝据え置き": add_reasons.append(f"【🎯店癖(波乗り)】過去の傾向から、この店舗は『連勝中の台を回収せず、さらに出玉を伸ばさせる(据え置く)』傾向があります {rate_str}。")
+        elif h == "メイン角": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『メイン通路側の角台』にしっかり設定を入れてアピールする傾向があります {rate_str}。")
+        elif h == "目立つ島": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『メイン通路沿いの目立つ島』をベース高めに扱う傾向があります {rate_str}。")
+        elif h == "壁側・死に島": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗はあえて『壁側の目立たない島』に当たりを隠すクセがあります {rate_str}。")
         elif h.endswith("曜日"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『{h}』に高設定を多く投入する還元傾向があります {rate_str}。")
         elif h == "看板機種": add_reasons.append(f"【🎯店癖】過去の傾向から、この機種はこの店舗の看板機種として非常に甘く扱われています {rate_str}。")
 
@@ -1823,6 +1959,9 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         elif c == "高稼働反動": add_reasons.append(f"【⚠️警戒】前日よく回された台ですが、過去の傾向からこの店舗ではタコ粘りされた翌日は設定が下げられる(回収される)危険性が高いため注意してください {rate_str}。")
         elif c == "高設定下げ": add_reasons.append(f"【⚠️警戒】前日は高設定挙動でしたが、過去の傾向からこの店舗では優秀台の据え置きが少なく、設定が下げられる危険性が高いため注意してください {rate_str}。")
         elif c == "連勝ストップ": add_reasons.append(f"【⚠️警戒】連勝中の好調台ですが、過去の傾向からこの店舗では連続プラスの翌日は回収される危険性が高いため注意してください {rate_str}。")
+        elif c.startswith("メイン角"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗は『メイン通路側の角台』をフェイク（低設定の誤爆待ち）として使う傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("目立つ島"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗は『メイン通路沿いの島』を回収用（黙っても客が座るため）に使う傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("壁側"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗は『壁側の目立たない島』には設定を入れない傾向が強いため注意してください {rate_str}。")
         elif c.endswith("のつく日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗で『{c.replace('(冷遇)', '')}』は回収日(高設定率が低い)の傾向が強いため注意してください {rate_str}。")
         elif c.endswith("(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗で『{c.replace('(冷遇)', '')}』は高設定が入りにくい傾向が強いため注意してください {rate_str}。")
         elif c.endswith("曜日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗で『{c.replace('(冷遇)', '')}』は回収傾向が強いため注意してください {rate_str}。")
@@ -2090,10 +2229,17 @@ def _postprocess_predictions(predict_df, train_df):
         if e_avg > 150: reasons.append(f"今日はイベント特定日(平均+{int(e_avg)}枚)のため期待値が高いです。")
 
         evt_name = row.get('イベント名', '通常')
+        evt_score = row.get('event_rank_score', 0)
         if evt_name != '通常' and pd.notna(evt_name):
             evt_rank = row.get('イベントランク', '')
             rank_str = f"(ランク{evt_rank})" if evt_rank else ""
-            reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です。")
+            if evt_score < 0:
+                if e_avg < -100:
+                    reasons.append(f"【⚠️回収警戒】別機種・パチンコイベント「{evt_name}」対象日ですが、過去の同イベントの傾向(平均{int(e_avg)}枚)からジャグラーは出玉の原資として回収(冷遇)される危険性が高いです。")
+                else:
+                    reasons.append(f"本日は別機種・パチンコイベント「{evt_name}」対象日です（スロットへの波及効果は店舗の過去の傾向に基づきAIが判断します）。")
+            elif evt_score > 0:
+                reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です。")
 
         w_avg = row.get('weekday_avg_diff', 0)
         if w_avg > 150:

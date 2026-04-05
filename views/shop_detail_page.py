@@ -335,8 +335,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if not today_events.empty:
                         html_str = f"""
                         <div style="background-color: #ffebee; border: 2px solid #f44336; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                            <h3 style="color: #c62828; margin-top: 0;">🎊 【特報】本日 周年記念イベント！ ({pred_date.strftime('%m/%d')})</h3>
-                            <p style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 10px;">本日は以下の店舗で「周年記念」クラスの超特大イベントが予定されています！</p>
+                            <h3 style="color: #c62828; margin-top: 0;">🎊 【特報】本日 特大イベント開催！ ({pred_date.strftime('%m/%d')})</h3>
+                            <p style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 10px;">本日は以下の店舗で「周年・リニューアル」クラスの超特大イベントが予定されています！お見逃しなく！</p>
                             <ul style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 0;">
                         """
                         for _, r in today_events.iterrows():
@@ -347,7 +347,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if not upcoming_events.empty:
                         html_str = f"""
                         <div style="background-color: #fff8e1; border: 2px solid #ffb300; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                            <h4 style="color: #f57f17; margin-top: 0; margin-bottom: 10px;">⏳ 開催間近！ 周年イベント カウントダウン</h4>
+                            <h4 style="color: #f57f17; margin-top: 0; margin-bottom: 10px;">⏳ 開催間近！ 特大イベント カウントダウン</h4>
                             <ul style="color: #e65100; font-size: 1.05em; font-weight: bold; margin-bottom: 0; padding-left: 20px;">
                         """
                         for _, r in upcoming_events.iterrows():

@@ -16,7 +16,7 @@ def render_event_management_page(df_raw):
                 reg_shop = st.selectbox("店舗", unique_shops)
                 reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
                 reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
-                reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・年イチ, S:激アツ, A:強い, B:普通, C:弱め")
+                reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い, B:普通, C:弱め")
                 submitted = st.form_submit_button("イベントを登録")
                 
                 if submitted:
@@ -41,13 +41,18 @@ def render_event_management_page(df_raw):
     # 表示用データ (日付降順)
     df_display = df_events.sort_values(['イベント日付', '店名'], ascending=[False, True])
     
+    if 'イベント種別' not in df_display.columns: df_display['イベント種別'] = 'スロット/全体'
+    if '対象機種' not in df_display.columns: df_display['対象機種'] = '指定なし'
+
     st.dataframe(
-        df_display[['イベント日付', '店名', 'イベント名', 'イベントランク']],
+        df_display[['イベント日付', '店名', 'イベント名', 'イベントランク', 'イベント種別', '対象機種']],
         column_config={
             "イベント日付": st.column_config.DateColumn("日付", format="YYYY-MM-DD"),
             "店名": st.column_config.TextColumn("店舗"),
             "イベント名": st.column_config.TextColumn("イベント"),
             "イベントランク": st.column_config.TextColumn("ランク"),
+            "イベント種別": st.column_config.TextColumn("種別"),
+            "対象機種": st.column_config.TextColumn("対象機種"),
         },
         width="stretch",
         hide_index=True
@@ -76,8 +81,20 @@ def render_event_management_page(df_raw):
                 idx = rank_options.index(current_rank) if current_rank in rank_options else 1
                 edit_rank = st.selectbox("イベントの強さ", rank_options, index=idx)
                 
+            st.markdown("**対象の絞り込み**")
+            t_col1, t_col2 = st.columns(2)
+            with t_col1:
+                type_options = ["スロット/全体", "パチンコ専用", "対象外(無効)"]
+                current_type = target_row.get('イベント種別', 'スロット/全体')
+                t_idx = type_options.index(current_type) if current_type in type_options else 0
+                edit_type = st.radio("イベント種別", type_options, index=t_idx, horizontal=True, help="「パチンコ専用」にすると『パチンコの特日』として学習し、過去の実績からスロットの期待度を判断します。")
+            with t_col2:
+                current_target = target_row.get('対象機種', '指定なし')
+                edit_target = st.text_input("対象機種", value=current_target, help="特定機種のイベントの場合、対象外の機種には『別機種の特日』という目印をつけて学習します。")
+                
             if st.form_submit_button("更新を保存", type="primary"):
-                if backend.update_shop_event(target_row['店名'], default_date, target_row['イベント名'], edit_shop, edit_date, edit_name, edit_rank):
+                e_t_mac = edit_target.strip() if edit_target.strip() else "指定なし"
+                if backend.update_shop_event(target_row['店名'], default_date, target_row['イベント名'], edit_shop, edit_date, edit_name, edit_rank, edit_type, e_t_mac):
                     st.success("イベントを更新しました！")
                     st.cache_data.clear()
                     st.rerun()
