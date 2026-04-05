@@ -19,7 +19,7 @@ def render_event_management_page(df_raw):
                 reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い, B:普通, C:弱め")
                 
                 st.markdown("**対象の絞り込み**")
-                reg_type = st.radio("イベント種別", ["スロット/全体", "パチンコ専用", "対象外(無効)"], horizontal=True, help="「パチンコ専用」にすると、AIは『パチンコの特日』という目印をつけて学習し、過去の傾向に基づいてスロットが回収されるか判断します。出玉に一切関係ない場合は「対象外(無効)」にしてください。")
+                reg_type = st.radio("イベント種別", ["全体", "スロット専用", "パチンコ専用", "対象外(無効)"], horizontal=True, help="「パチンコ専用」にすると、AIは『パチンコの特日』という目印をつけて学習し、過去の傾向に基づいてスロットが回収されるか判断します。出玉に一切関係ない場合は「対象外(無効)」にしてください。")
                 machine_list = ["指定なし", "ジャグラー全体", "ジャグラー以外 (パチスロ他機種)"]
                 if '機種名' in df_raw.columns:
                     machine_list.extend(sorted(list(df_raw['機種名'].dropna().unique())))
@@ -50,7 +50,8 @@ def render_event_management_page(df_raw):
     # 表示用データ (日付降順)
     df_display = df_events.sort_values(['イベント日付', '店名'], ascending=[False, True])
     
-    if 'イベント種別' not in df_display.columns: df_display['イベント種別'] = 'スロット/全体'
+    if 'イベント種別' not in df_display.columns: df_display['イベント種別'] = '全体'
+    df_display['イベント種別'] = df_display['イベント種別'].replace('スロット/全体', '全体')
     if '対象機種' not in df_display.columns: df_display['対象機種'] = '指定なし'
 
     st.dataframe(
@@ -93,8 +94,9 @@ def render_event_management_page(df_raw):
             st.markdown("**対象の絞り込み**")
             t_col1, t_col2 = st.columns(2)
             with t_col1:
-                type_options = ["スロット/全体", "パチンコ専用", "対象外(無効)"]
-                current_type = target_row.get('イベント種別', 'スロット/全体')
+                type_options = ["全体", "スロット専用", "パチンコ専用", "対象外(無効)"]
+                current_type = target_row.get('イベント種別', '全体')
+                if current_type == 'スロット/全体': current_type = '全体'
                 t_idx = type_options.index(current_type) if current_type in type_options else 0
                 edit_type = st.radio("イベント種別", type_options, index=t_idx, horizontal=True, help="「パチンコ専用」にすると『パチンコの特日』として学習し、過去の実績からスロットの期待度を判断します。")
             with t_col2:
