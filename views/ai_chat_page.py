@@ -578,7 +578,12 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     # 履歴への追加
                     st.session_state.gemini_messages.append({"role": "assistant", "content": full_response})
                 except Exception as e:
-                    st.error(f"APIリクエスト中にエラーが発生しました: {e}")
+                    error_msg = str(e)
+                    if "429" in error_msg or "Quota exceeded" in error_msg:
+                        st.error("⚠️ AIの利用制限（APIリクエスト上限）に達しました。")
+                        st.warning("無料枠の利用制限（1分あたりの回数、または1日あたりの上限）に引っかかっています。しばらく時間（約1分〜翌日）を置いてから再度お試しください。\n\n※継続して発生する場合は、Google AI StudioでAPIキーのプラン（課金設定）を確認してください。")
+                    else:
+                        st.error(f"APIリクエスト中にエラーが発生しました: {e}")
                     
         # 履歴が長くなりすぎてAPIコストや制限に引っかかるのを防ぐ
         if len(st.session_state.gemini_messages) > 20:
