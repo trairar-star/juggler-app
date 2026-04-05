@@ -9,8 +9,8 @@ except ImportError:
     GENAI_AVAILABLE = False
 
 def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importance=None):
-    st.header("🤖 Gemini スロットコンサルタント")
-    st.caption("AI（Gemini）にアプリの最新データを読み込ませて、立ち回りの相談や店舗の傾向についてチャットで質問できます。")
+    st.header("👩‍💼 ホール案内スタッフ（AI）")
+    st.caption("受付スタッフ風のAIに、アプリの最新データをもとにした立ち回りの相談や店舗の傾向についてチャットで質問できます。")
 
     # ライブラリのインストール確認
     if not GENAI_AVAILABLE:
@@ -88,6 +88,51 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     events_str = " / ".join(shop_events['イベント名'].tolist())
                     context_data += f"\n【{selected_shop} の明日 ({next_date_str}) のイベント情報】\n{events_str}\n"
 
+            # --- 1.5. 過去のイベント種別ごとのジャグラー実績 (シワ寄せ確認用) ---
+            if df_events is not None and not df_events.empty and not df_raw.empty:
+                shop_raw_ev = df_raw[df_raw[shop_col] == selected_shop].copy()
+                shop_events_all = df_events[df_events['店名'] == selected_shop].copy()
+                
+                if not shop_events_all.empty and not shop_raw_ev.empty:
+                    shop_events_all = shop_events_all.drop_duplicates(subset=['イベント日付'], keep='last')
+                    shop_raw_ev['対象日付'] = pd.to_datetime(shop_raw_ev['対象日付'])
+                    shop_events_all['イベント日付'] = pd.to_datetime(shop_events_all['イベント日付'])
+                    
+                    merged_ev = pd.merge(shop_raw_ev, shop_events_all[['イベント日付', 'イベントランク', '対象機種', 'イベント種別']], left_on='対象日付', right_on='イベント日付', how='inner')
+                    
+                    if not merged_ev.empty:
+                        def classify_target(row):
+                            rank = str(row.get('イベントランク', '通常日'))
+                            if rank == '通常日': return '通常日'
+                            
+                            t_mac = str(row.get('対象機種', '指定なし'))
+                            my_mac = str(row.get('機種名', ''))
+                            e_type = str(row.get('イベント種別', '全体')).replace('スロット/全体', '全体')
+                            
+                            if e_type == '対象外(無効)': return '通常日'
+                            if e_type == 'パチンコ専用': return 'パチンコ特日 (スロットへのシワ寄せ等)'
+                            
+                            if t_mac in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
+                                return 'スロット全体対象イベント'
+                            if t_mac == 'ジャグラー以外 (パチスロ他機種)':
+                                return 'ジャグラー以外対象 (シワ寄せ等)'
+                            if my_mac in t_mac or t_mac in my_mac:
+                                return '自身が対象機種'
+                            return '自身が対象外機種'
+                            
+                        merged_ev['対象ステータス'] = merged_ev.apply(classify_target, axis=1)
+                        target_stats = merged_ev[merged_ev['対象ステータス'] != '通常日'].groupby('対象ステータス').agg(
+                            差枚=('差枚', 'mean'),
+                            サンプル数=('台番号', 'count')
+                        ).reset_index()
+                        
+                        target_stats = target_stats[target_stats['サンプル数'] >= 10]
+                        
+                        if not target_stats.empty:
+                            context_data += f"\n【{selected_shop} の過去イベント時のジャグラー平均差枚 (シワ寄せ等の影響確認用)】\n"
+                            for _, row in target_stats.iterrows():
+                                context_data += f"・{row['対象ステータス']}: 平均 {int(row['差枚']):+d} 枚 (サンプル {row['サンプル数']}件)\n"
+
             # --- 2. AIが分析した店舗の店癖（設定投入傾向） ---
             if df_importance is not None and not df_importance.empty:
                 imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
@@ -128,7 +173,66 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")
                     
                     context_data += display_df.to_markdown(index=False) + "\n"
-
+            # --- 5. AIの過去予測の実績検証（直近1ヶ月の推奨台勝率） ---
+            df_pred_log = backend.load_prediction_log()
+            if not df_pred_log.empty and not df_raw.empty:
+                try:
+                    df_pred_log_temp = df_pred_log.copy()
+                    if '予測対象日' in df_pred_log_temp.columns:
+                        df_pred_log_temp['予測対象日_merge'] = pd.to_datetime(df_pred_log_temp['予測対象日'], errors='coerce').fillna(pd.to_datetime(df_pred_log_temp['対象日付'], errors='coerce') + pd.Timedelta(days=1))
+                    else:
+                        df_pred_log_temp['予測対象日_merge'] = pd.to_datetime(df_pred_log_temp['対象日付'], errors='coerce') + pd.Timedelta(days=1)
+                    
+                    shop_col_pred = '店名' if '店名' in df_pred_log_temp.columns else '店舗名'
+                    df_pred_log_shop = df_pred_log_temp[df_pred_log_temp[shop_col_pred] == selected_shop].copy()
+                    
+                    if not df_pred_log_shop.empty:
+                        df_pred_log_shop['台番号'] = df_pred_log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        if '実行日時' in df_pred_log_shop.columns:
+                            df_pred_log_shop = df_pred_log_shop.sort_values('実行日時', ascending=False).drop_duplicates(subset=['予測対象日_merge', '台番号'], keep='first')
+                            
+                        df_raw_temp = df_raw[df_raw[shop_col] == selected_shop].copy()
+                        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                        
+                        merged_acc = pd.merge(
+                            df_pred_log_shop, df_raw_temp,
+                            left_on=['予測対象日_merge', '台番号'], right_on=['対象日付', '台番号'],
+                            how='inner', suffixes=('_pred', '_raw')
+                        )
+                        
+                        if not merged_acc.empty and 'prediction_score' in merged_acc.columns:
+                            cutoff_date = merged_acc['予測対象日_merge'].max() - pd.Timedelta(days=30)
+                            merged_acc = merged_acc[merged_acc['予測対象日_merge'] > cutoff_date].copy()
+                            merged_acc['prediction_score'] = pd.to_numeric(merged_acc['prediction_score'], errors='coerce')
+                            
+                            merged_acc['daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
+                            top_k = max(3, min(10, int(df_raw_temp['台番号'].nunique() * 0.10)))
+                            
+                            high_expect_df = merged_acc[(merged_acc['daily_rank'] <= top_k) | (merged_acc['prediction_score'] >= 0.70)].copy()
+                            
+                            if not high_expect_df.empty:
+                                act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)
+                                act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
+                                
+                                high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & (act_diff.abs() >= 1000))
+                                high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
+                                
+                                valid_count = high_expect_df['valid_play'].sum()
+                                win_count = high_expect_df['valid_win'].sum()
+                                win_rate = (win_count / valid_count * 100) if valid_count > 0 else 0
+                                
+                                context_data += f"\n【{selected_shop} のAI予測実績 (直近1ヶ月)】\n"
+                                context_data += f"AI推奨台の勝率 (差枚プラス割合): {win_rate:.1f}% (有効稼働 {int(valid_count)}台中 {int(win_count)}台)\n"
+                                if win_rate >= 50:
+                                    context_data += "AI自己評価: 予測が店舗の傾向とよく噛み合っており、非常に信頼できる状態です。\n"
+                                elif win_rate >= 35:
+                                    context_data += "AI自己評価: 予測は標準的な精度です。店癖などの他要素も加味して狙い台を絞るのがおすすめです。\n"
+                                else:
+                                    context_data += "AI自己評価: 予測がフェイク設定等に騙されやすく、精度が低迷しています。稼働を控えるか、強イベント時のみに絞るなどの警戒が必要です。\n"
+                except Exception:
+                    pass
+                
         # --- マイ収支データをAIに読み込ませる ---
         df_balance = backend.load_my_balance()
         if not df_balance.empty:
@@ -153,9 +257,11 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # AIへの指示（システムプロンプト）の組み立て
         now_str = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y年%m月%d日 %H:%M')
         full_prompt = f"""
-あなたはプロのスロット立ち回りコンサルタントです。
-論理的かつ実践的に、友人のように親身になってアドバイスしてください。
-回答は長くなりすぎないよう、箇条書きなどを活用して「要点だけを短く簡潔に」まとめてください。
+あなたはパチンコ・スロットホールに勤務する、丁寧で親切な受付案内スタッフのお姉さんです。
+ユーザーをご来店されたお客様として扱い、上品で柔らかい敬語（「〜ですね」「〜いたしますね」など）を使ってアドバイスしてください。
+偉そうな態度は絶対に避け、お客様に寄り添うように優しく案内する口調を徹底してください。
+論理的なデータ分析を踏まえつつも、専門用語を使いすぎず分かりやすく説明してください。
+回答は長くなりすぎないよう、箇条書きなどを活用して「要点だけを簡潔に」まとめてください。
 
 現在日時: {now_str}
 ※「今日」「明日」という言葉はこの日時を基準にしてください。
@@ -165,6 +271,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 ・しかし最終的な予測期待度は、そのスコアを踏まえて「過去その店舗が実際にどういう営業をしたか」をAI（機械学習）が学習して算出しています。
 ・そのため、一般的には危険なイベントでも「過去の傾向から見てこの店は出している」とAIが判断すれば高い期待度が出力されます。
 ・アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
+・お客様が「パチンコや他機種のイベントの日の状況はどう？」と質問された場合、他機種自体の出玉状況ではなく「そのイベントのシワ寄せでジャグラー（スロット）が回収されているか、あるいは還元されているか」という情報を求めています。提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 
 以下は現在のアプリ内のデータです。最新の店舗状況として参考にしてください。
 {context_data if context_data else "現在選択されている店舗データはありません。"}

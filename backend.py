@@ -14,6 +14,10 @@ SPREADSHEET_KEY = '1ylt9mdIkKKk6YRcZh4O05O7fPF4d2BU6VXzboP_vs5s'
 SHEET_NAME = 'juggler_raw'
 HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
+# 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
+# （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
+APP_VERSION = "v3.0.0" 
+
 # ---------------------------------------------------------
 # 機種スペック情報
 # ---------------------------------------------------------
@@ -496,7 +500,7 @@ def save_prediction_log(df):
         log_sheet_name = 'prediction_log'
         
         # スプレッドシートのヘッダーが手動操作で壊れた場合（重複など）にも耐えられるように、保存する列を厳格に固定する
-        STANDARD_HEADER = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', '予測信頼度', 'おすすめ度', '予測差枚数', '根拠', 'ai_version']
+        STANDARD_HEADER = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', '予測信頼度', 'おすすめ度', '予測差枚数', '根拠', 'ai_version', 'app_version']
         
         try: 
             worksheet = sh.worksheet(log_sheet_name)
@@ -533,6 +537,7 @@ def save_prediction_log(df):
         save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:
             save_df['ai_version'] = "不明"
+        save_df['app_version'] = APP_VERSION
             
         if '店名' not in save_df.columns and '店舗名' in save_df.columns:
             save_df['店名'] = save_df['店舗名']
@@ -594,6 +599,52 @@ def save_prediction_log(df):
     except Exception as e: 
         st.error(f"保存エラー: {e}")
         return False
+        
+def delete_old_prediction_logs(months):
+    """指定した月数より古い予測ログを削除する（0の場合は全削除）"""
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('prediction_log')
+        
+        if months == 0:
+            data = worksheet.get_all_values()
+            if data:
+                header = data[0]
+                worksheet.clear()
+                try: worksheet.update(values=[header], range_name='A1')
+                except TypeError: worksheet.update('A1', [header])
+                return len(data) - 1
+            return 0
+            
+        data = worksheet.get_all_values()
+        if len(data) <= 1: return 0
+            
+        header = data[0]
+        if '実行日時' not in header: return 0
+            
+        df = pd.DataFrame(data[1:], columns=header)
+        df['実行日時'] = pd.to_datetime(df['実行日時'], errors='coerce')
+        
+        cutoff_date = pd.Timestamp.now(tz='Asia/Tokyo') - pd.DateOffset(months=months)
+        df_keep = df[df['実行日時'] >= cutoff_date].copy()
+        
+        if len(df) == len(df_keep): return 0
+            
+        deleted_count = len(df) - len(df_keep)
+        for col in df_keep.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_keep[col]): df_keep[col] = df_keep[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                
+        final_data = [header] + df_keep.fillna('').values.tolist()
+        worksheet.clear()
+        try: worksheet.update(values=final_data, range_name='A1')
+        except TypeError:
+            try: worksheet.update('A1', final_data)
+            except Exception: worksheet.update(final_data)
+        return deleted_count
+    except Exception as e:
+        st.error(f"予測ログの削除中にエラーが発生しました: {e}")
+        return -1
 
 @st.cache_data(ttl=3600)
 def load_shop_events():

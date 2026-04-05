@@ -93,15 +93,26 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             min_log_date = valid_dates.min().date()
             max_log_date = valid_dates.max().date()
             
-            with st.expander("⚙️ AI設定・バージョンで絞り込み", expanded=True):
-                st.caption("モデルの設定（学習回数や葉の数など）ごとに成績を分けて確認・比較できます。")
+            with st.expander("⚙️ プログラム＆AI設定で絞り込み", expanded=True):
+                st.caption("プログラムのバージョンや、モデルの設定ごとに成績を分けて確認・比較できます。")
+                
+                if 'app_version' not in df_pred_log.columns:
+                    df_pred_log['app_version'] = 'v1.0.0 (記録なし)'
+                df_pred_log['app_version'] = df_pred_log['app_version'].replace('', 'v1.0.0 (記録なし)').fillna('v1.0.0 (記録なし)')
                 
                 if 'ai_version' not in df_pred_log.columns:
                     df_pred_log['ai_version'] = 'v1.0 (記録なし)'
                 df_pred_log['ai_version'] = df_pred_log['ai_version'].replace('', 'v1.0 (記録なし)').fillna('v1.0 (記録なし)')
-                versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
-                # 過去のデータも表示されるよう、デフォルトで「すべて」を選択する
-                selected_version = st.selectbox("AIバージョンで絞り込み", versions, index=0)
+                
+                c_v1, c_v2 = st.columns(2)
+                
+                app_versions = ['すべて'] + sorted(list(df_pred_log['app_version'].astype(str).unique()))
+                selected_app_version = c_v1.selectbox("アプリバージョンで絞り込み", app_versions, index=0)
+                if selected_app_version != 'すべて':
+                    df_pred_log = df_pred_log[df_pred_log['app_version'] == selected_app_version]
+
+                ai_versions = ['すべて'] + sorted(list(df_pred_log['ai_version'].astype(str).unique()))
+                selected_version = c_v2.selectbox("AI設定(パラメータ)で絞り込み", ai_versions, index=0)
                 if selected_version != 'すべて':
                     df_pred_log = df_pred_log[df_pred_log['ai_version'] == selected_version]
 
@@ -202,6 +213,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     elif 'ai_version_current' in base_df.columns:
         base_df['ai_version'] = base_df['ai_version_current']
         
+    if 'app_version_saved' in base_df.columns:
+        base_df['app_version'] = base_df['app_version_saved']
+    elif 'app_version_current' in base_df.columns:
+        base_df['app_version'] = base_df['app_version_current']
+
     # --- 実際の成績を df_raw から直接取得 (未稼働台のデータ落ちを防ぐ) ---
     if '台番号' in df_raw.columns:
         df_raw_temp = df_raw.copy()
@@ -269,7 +285,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     for col in base_df.columns.copy():
         if col.endswith('_current'):
             orig_col = col.replace('_current', '')
-            if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠', 'next_diff', 'next_BIG', 'next_REG', 'next_累計ゲーム', 'ai_version']:
+            if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠', 'next_diff', 'next_BIG', 'next_REG', 'next_累計ゲーム', 'ai_version', 'app_version']:
                 base_df[orig_col] = base_df[col]
 
     base_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
@@ -350,10 +366,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         return
 
     # --- バージョン別成績比較表 (「すべて」選択時のみ表示) ---
-    if selected_version == 'すべて' and 'ai_version' in merged_df.columns:
+    if selected_version == 'すべて' and selected_app_version == 'すべて' and 'ai_version' in merged_df.columns:
         st.markdown("##### 🔍 バージョン別 成績比較")
-        st.caption("過去に試したAI設定ごとの成績一覧です。どの設定が最も優秀だったかを比較できます。")
-        ver_stats = ai_recom_df.groupby('ai_version').agg(
+        st.caption("過去に試したプログラムバージョンやAI設定ごとの成績一覧です。どの組み合わせが最も優秀だったかを比較できます。")
+        ai_recom_df['比較用バージョン'] = ai_recom_df['app_version'].astype(str) + " | " + ai_recom_df['ai_version'].astype(str)
+        ver_stats = ai_recom_df.groupby('比較用バージョン').agg(
             検証台数=('台番号', 'count'),
             高設定数=('valid_high', 'sum'),
             有効稼働数=('valid_play', 'sum'),
@@ -367,9 +384,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         ver_stats['平均期待度'] = ver_stats['平均期待度'] * 100
         
         st.dataframe(
-            ver_stats[['ai_version', '平均期待度', '検証台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '設定5近似度']],
+            ver_stats[['比較用バージョン', '平均期待度', '検証台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '設定5近似度']],
             column_config={
-                "ai_version": st.column_config.TextColumn("バージョン設定"),
+                "比較用バージョン": st.column_config.TextColumn("アプリ | AI設定"),
                 "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                 "検証台数": st.column_config.NumberColumn("台数", format="%d台"),
                 "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
@@ -1330,3 +1347,21 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         )
             else:
                 st.info("シミュレーション用のデータがありません。")
+
+        st.divider()
+        with st.expander("🗑️ 古い予測ログの整理 (リセット)", expanded=False):
+            st.warning("⚠️ プログラムの計算式変更などで基準が変わってしまい、過去の予測スコアが参考にならなくなった場合は、ここで古いログを削除してリセットできます。")
+            
+            del_months = st.selectbox("削除対象", ["すべてのログをリセット(全削除)", "1ヶ月より前のログを削除", "3ヶ月より前のログを削除"], index=0)
+            
+            if st.button("🗑️ 選択したログを削除する", type="primary"):
+                months = 3 if "3ヶ月" in del_months else (1 if "1ヶ月" in del_months else 0)
+                with st.spinner("古いログを削除しています..."):
+                    deleted_count = backend.delete_old_prediction_logs(months=months)
+                    if deleted_count > 0:
+                        st.success(f"{deleted_count}件の古い予測ログを削除しました！\n\n（※サイドバーの「データ更新」を押すと画面に反映されます）")
+                        backend.load_prediction_log.clear()
+                        st.cache_data.clear()
+                        st.rerun()
+                    elif deleted_count == 0:
+                        st.info("削除対象の古いログはありませんでした。")
