@@ -173,6 +173,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")
                     
                     context_data += display_df.to_markdown(index=False) + "\n"
+
             # --- 5. AIの過去予測の実績検証（直近1ヶ月の推奨台勝率） ---
             df_pred_log = backend.load_prediction_log()
             if not df_pred_log.empty and not df_raw.empty:
@@ -232,7 +233,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                                     context_data += "AI自己評価: 予測がフェイク設定等に騙されやすく、精度が低迷しています。稼働を控えるか、強イベント時のみに絞るなどの警戒が必要です。\n"
                 except Exception:
                     pass
-                
+
         # --- マイ収支データをAIに読み込ませる ---
         df_balance = backend.load_my_balance()
         if not df_balance.empty:
@@ -272,6 +273,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 ・そのため、一般的には危険なイベントでも「過去の傾向から見てこの店は出している」とAIが判断すれば高い期待度が出力されます。
 ・アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
 ・お客様が「パチンコや他機種のイベントの日の状況はどう？」と質問された場合、他機種自体の出玉状況ではなく「そのイベントのシワ寄せでジャグラー（スロット）が回収されているか、あるいは還元されているか」という情報を求めています。提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
+・「AI予測実績（勝率や自己評価）」のデータが提供されている場合は、AI自身の実力が現在その店舗でどれくらい通用しているかを客観的に捉え、勝率が低ければ無理に推奨台を薦めず「今は予測が当たりにくい危険な状態なので様子見が無難」といった警告も行ってください。
+・店舗の「強い末尾番号」や「強い曜日」のデータが提供されている場合は、それらも具体的な狙い目の根拠としてアドバイスに積極的に盛り込んでください。
 
 以下は現在のアプリ内のデータです。最新の店舗状況として参考にしてください。
 {context_data if context_data else "現在選択されている店舗データはありません。"}
