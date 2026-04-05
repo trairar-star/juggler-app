@@ -116,8 +116,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
                 try:
-                    # 最新の高性能モデル（gemini-2.0-flash）を指定して呼び出し
-                    model = genai.GenerativeModel('gemini-2.0-flash')
+                    # 無料枠が非常に大きく、安定して高速な標準モデル（gemini-1.5-flash）を指定
+                    model = genai.GenerativeModel('gemini-1.5-flash')
                     response = model.generate_content(full_prompt)
                     
                     # 回答の表示と履歴への追加
