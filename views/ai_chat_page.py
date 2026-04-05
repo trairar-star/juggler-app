@@ -78,6 +78,18 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         st.info("店舗を選択せずに質問すると、一般的な立ち回りの相談や「今日はどの店舗に行くべき？」といった店舗選びの相談ができます。")
 
     st.divider()
+    
+    # --- 使用するモデルの選択 ---
+    model_options = {
+        "Gemini 1.5 Flash (推奨・制限緩め・高速)": "gemini-1.5-flash",
+        "Gemini 1.5 Pro (高性能・制限やや厳しめ)": "gemini-1.5-pro",
+        "Gemini 2.5 Flash (最新・無料枠制限厳しめ)": "gemini-2.5-flash"
+    }
+    selected_model_label = st.selectbox(
+        "🧠 使用するAIモデルを選択", list(model_options.keys()), index=0,
+        help="無料枠の制限に引っかかった場合は「Gemini 1.5 Flash」を選択してください。1日1500回まで無料で利用できます。"
+    )
+    target_model = model_options[selected_model_label]
 
     # --- チャット履歴の表示 ---
     for msg in st.session_state.gemini_messages:
@@ -536,29 +548,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
                 try:
-                    # --- 利用可能なモデルをAPIから自動取得して最適なものを選択 ---
-                    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                    
-                    target_model = None
-                    # 優先順位1: 1.5 flash 系を名前の一部から探す
-                    for m in available_models:
-                        if '1.5-flash' in m:
-                            target_model = m.replace('models/', '')
-                            break
-                    # 優先順位2: なければ 1.5 pro 系を探す
-                    if not target_model:
-                        for m in available_models:
-                            if '1.5-pro' in m:
-                                target_model = m.replace('models/', '')
-                                break
-                    # フォールバック: とにかく一番最初に見つかったモデルを強制的に使う
-                    if not target_model and len(available_models) > 0:
-                        target_model = available_models[0].replace('models/', '')
-                    
-                    if not target_model:
-                        raise Exception(f"利用可能なGeminiモデルが見つかりませんでした。利用可能リスト: {available_models}")
-                        
-                    # 自動選択されたモデルで呼び出し
+                    # 選択されたモデルで呼び出し
                     model = genai.GenerativeModel(
                         model_name=target_model,
                         system_instruction=system_instruction
