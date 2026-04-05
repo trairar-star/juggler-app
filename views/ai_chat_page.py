@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import backend
 
 try:
     import google.generativeai as genai
@@ -90,6 +91,14 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
                         avg_diff = recent_data['差枚'].mean()
                         context_data += f"\n【{selected_shop} の直近1週間の店舗平均差枚】\n約 {int(avg_diff):+d} 枚\n"
 
+        # --- マイ収支データをAIに読み込ませる ---
+        df_balance = backend.load_my_balance()
+        if not df_balance.empty:
+            # 直近10件の収支履歴をテキスト化して渡す
+            recent_balance = df_balance.sort_values('日付', ascending=False).head(10)
+            context_data += "\n【あなたの直近の稼働収支データ (最新10件)】\n"
+            context_data += recent_balance[['日付', '店名', '機種名', '収支', 'メモ']].to_markdown(index=False) + "\n"
+
         # 過去の会話履歴をプロンプト用に構築
         history_text = ""
         for msg in st.session_state.gemini_messages[:-1]: # 最新の質問以外
@@ -116,8 +125,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col):
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
                 try:
-                    # 無料枠が非常に大きく、安定して高速な標準モデル（gemini-1.5-flash）を指定
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    # 世界中で最も安定して利用できる標準モデル（gemini-1.0-pro）を指定
+                    model = genai.GenerativeModel('gemini-1.0-pro')
                     response = model.generate_content(full_prompt)
                     
                     # 回答の表示と履歴への追加
