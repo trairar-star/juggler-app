@@ -616,8 +616,11 @@ def save_shop_event(shop_name, event_date, event_name, event_rank):
         sh = gc.open_by_key(SPREADSHEET_KEY)
         try: 
             worksheet = sh.worksheet('shop_events')
-            if 'イベントランク' not in worksheet.row_values(1):
-                worksheet.update_cell(1, len(worksheet.row_values(1)) + 1, 'イベントランク')
+            header = worksheet.row_values(1)
+            if 'イベントランク' not in header:
+                if worksheet.col_count < len(header) + 1:
+                    worksheet.add_cols((len(header) + 1) - worksheet.col_count)
+                worksheet.update_cell(1, len(header) + 1, 'イベントランク')
         except gspread.exceptions.WorksheetNotFound: 
             worksheet = sh.add_worksheet(title='shop_events', rows="1000", cols="6")
             worksheet.append_row(['登録日時', '店名', 'イベント日付', 'イベント名', '備考', 'イベントランク'])
@@ -721,6 +724,8 @@ def save_island_master(shop, island_name, rule_str):
             worksheet = sh.worksheet(sheet_name)
             header = worksheet.row_values(1)
             if '台番号ルール' not in header:
+                if worksheet.col_count < len(header) + 1:
+                    worksheet.add_cols((len(header) + 1) - worksheet.col_count)
                 worksheet.update_cell(1, len(header) + 1, '台番号ルール')
                 header.append('台番号ルール')
         except gspread.exceptions.WorksheetNotFound: 
@@ -836,6 +841,8 @@ def save_my_balance(date_obj, shop, machine, number, invest, recovery, hours, me
             
         # シートをクリアして一括更新
         worksheet.clear()
+        if worksheet.col_count < len(header):
+            worksheet.add_cols(len(header) - worksheet.col_count)
         try:
             worksheet.update(values=final_data, range_name='A1')
         except TypeError:
