@@ -34,8 +34,12 @@ def render_my_balance_page(df_raw):
                 # 機種名リスト
                 machines = []
                 if not df_raw.empty and '機種名' in df_raw.columns:
-                    machines = list(df_raw['機種名'].unique())
-                input_machine = st.selectbox("機種名", machines + ["その他 (手入力)"])
+                    machines = list(df_raw['機種名'].dropna().unique())
+                    
+                machine_options = machines + ["その他 (手入力)"]
+                default_idx = machine_options.index("マイジャグラーV") if "マイジャグラーV" in machine_options else 0
+                
+                input_machine = st.selectbox("機種名", machine_options, index=default_idx)
                 if input_machine == "その他 (手入力)":
                     input_machine = st.text_input("機種名を入力")
             

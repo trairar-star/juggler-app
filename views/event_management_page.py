@@ -90,7 +90,14 @@ def render_event_management_page(df_raw):
                 edit_type = st.radio("イベント種別", type_options, index=t_idx, horizontal=True, help="「パチンコ専用」にすると『パチンコの特日』として学習し、過去の実績からスロットの期待度を判断します。")
             with t_col2:
                 current_target = target_row.get('対象機種', '指定なし')
-                edit_target = st.text_input("対象機種", value=current_target, help="特定機種のイベントの場合、対象外の機種には『別機種の特日』という目印をつけて学習します。")
+                machine_list = ["指定なし", "ジャグラー全体", "ジャグラー以外 (パチスロ他機種)"]
+                if '機種名' in df_raw.columns:
+                    machine_list.extend(sorted(list(df_raw['機種名'].dropna().unique())))
+                if current_target not in machine_list:
+                    machine_list.insert(0, current_target)
+                target_idx = machine_list.index(current_target)
+                
+                edit_target = st.selectbox("対象機種", machine_list, index=target_idx, help="特定機種のイベントの場合、対象外の機種には『別機種の特日』という目印をつけて学習します。")
                 
             if st.form_submit_button("更新を保存", type="primary"):
                 e_t_mac = edit_target.strip() if edit_target.strip() else "指定なし"

@@ -1326,7 +1326,12 @@ def _generate_features(df, df_events, df_island, target_date):
 
                 # 特定機種が指定されている場合、関係ない機種はイベントの恩恵（スコア）を無効化、またはマイナス化
                 if score > 0 and t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
-                    if my_mac not in t_mac and t_mac not in my_mac:
+                    if t_mac == 'ジャグラー以外 (パチスロ他機種)':
+                        if is_super_event:
+                            score = 3
+                        else:
+                            score = -1
+                    elif my_mac not in t_mac and t_mac not in my_mac:
                         if 'ジャグラー' not in t_mac: # ジャグラー系指定でなければ弾く
                             if is_super_event:
                                 score = 3 # 特大イベントなら対象外機種でもおこぼれ(ベースアップ)としてスコアを残す
@@ -2235,9 +2240,9 @@ def _postprocess_predictions(predict_df, train_df):
             rank_str = f"(ランク{evt_rank})" if evt_rank else ""
             if evt_score < 0:
                 if e_avg < -100:
-                    reasons.append(f"【⚠️回収警戒】別機種・パチンコイベント「{evt_name}」対象日ですが、過去の同イベントの傾向(平均{int(e_avg)}枚)からジャグラーは出玉の原資として回収(冷遇)される危険性が高いです。")
+                    reasons.append(f"【⚠️回収警戒】新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日ですが、過去の同イベントの傾向(平均{int(e_avg)}枚)からジャグラーは出玉の原資として回収(冷遇)される危険性が高いです。")
                 else:
-                    reasons.append(f"本日は別機種・パチンコイベント「{evt_name}」対象日です（スロットへの波及効果は店舗の過去の傾向に基づきAIが判断します）。")
+                    reasons.append(f"本日は新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日です（ジャグラーへの波及効果は過去の傾向に基づきAIが判断します）。")
             elif evt_score > 0:
                 reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です。")
 
