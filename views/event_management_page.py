@@ -71,21 +71,45 @@ def render_event_management_page(df_raw):
     st.divider()
     st.subheader("✏️ イベント編集")
     
-    edit_target_uid = st.selectbox("編集するイベントを選択", df_display['uid'].unique(), key="edit_target")
+    def on_edit_event_change():
+        target_uid = st.session_state.edit_target
+        if target_uid:
+            try:
+                t_row = df_display[df_display['uid'] == target_uid].iloc[0]
+                st.session_state.ee_shop = t_row['店名']
+                st.session_state.ee_name = t_row['イベント名']
+                try:
+                    st.session_state.ee_date = pd.to_datetime(t_row['イベント日付']).date()
+                except:
+                    st.session_state.ee_date = pd.Timestamp.now(tz='Asia/Tokyo').date()
+            except:
+                pass
+
+    edit_target_uid = st.selectbox(
+        "編集するイベントを選択", 
+        df_display['uid'].unique(), 
+        key="edit_target",
+        on_change=on_edit_event_change
+    )
+    
+    if 'ee_shop' not in st.session_state and not df_display.empty:
+        on_edit_event_change()
+        
     if edit_target_uid:
         target_row = df_display[df_display['uid'] == edit_target_uid].iloc[0]
         
+        try:
+            old_date = pd.to_datetime(target_row['イベント日付']).date()
+        except:
+            old_date = pd.Timestamp.now(tz='Asia/Tokyo').date()
+            
         with st.form("edit_event_form"):
             e_col1, e_col2 = st.columns(2)
             with e_col1:
-                edit_shop = st.text_input("店舗名", value=target_row['店名'])
-                try:
-                    default_date = pd.to_datetime(target_row['イベント日付']).date()
-                except:
-                    default_date = pd.Timestamp.now(tz='Asia/Tokyo').date()
-                edit_date = st.date_input("イベント日付", value=default_date, key="edit_date")
+                edit_shop = st.text_input("店舗名", key="ee_shop")
+                edit_date = st.date_input("イベント日付", key="ee_date")
             with e_col2:
-                edit_name = st.text_input("イベント名", value=target_row['イベント名'], help="※イベント名に『周年』が含まれる場合、登録時の「年」は無視され、毎年自動的にループ適用されます。")
+                edit_name = st.text_input("イベント名", key="ee_name", help="※イベント名に『周年』が含まれる場合、登録時の「年」は無視され、毎年自動的にループ適用されます。")
                 rank_options = ["SS (周年)", "S", "A", "B", "C"]
                 current_rank = target_row.get('イベントランク', 'A')
                 idx = rank_options.index(current_rank) if current_rank in rank_options else 1
@@ -112,7 +136,7 @@ def render_event_management_page(df_raw):
                 
             if st.form_submit_button("更新を保存", type="primary"):
                 e_t_mac = edit_target.strip() if edit_target.strip() else "指定なし"
-                if backend.update_shop_event(target_row['店名'], default_date, target_row['イベント名'], edit_shop, edit_date, edit_name, edit_rank, edit_type, e_t_mac):
+                if backend.update_shop_event(target_row['店名'], old_date, target_row['イベント名'], edit_shop, edit_date, edit_name, edit_rank, edit_type, e_t_mac):
                     st.success("イベントを更新しました！\n\n💡 すべての編集が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
                     backend.load_shop_events.clear()
                     st.rerun()
