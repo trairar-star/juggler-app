@@ -17,10 +17,19 @@ def render_event_management_page(df_raw):
                 reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
                 reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
                 reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い, B:普通, C:弱め")
+                
+                st.markdown("**対象の絞り込み**")
+                reg_type = st.radio("イベント種別", ["スロット/全体", "パチンコ専用", "対象外(無効)"], horizontal=True, help="「パチンコ専用」にすると、AIは『パチンコの特日』という目印をつけて学習し、過去の傾向に基づいてスロットが回収されるか判断します。出玉に一切関係ない場合は「対象外(無効)」にしてください。")
+                machine_list = ["指定なし", "ジャグラー全体", "ジャグラー以外 (パチスロ他機種)"]
+                if '機種名' in df_raw.columns:
+                    machine_list.extend(sorted(list(df_raw['機種名'].dropna().unique())))
+                reg_target = st.selectbox("対象機種 (新台入替や特定機種イベントの場合)", machine_list, index=0, help="新台入替や特定機種のイベントの場合、ここに対象機種を指定してください。ジャグラー以外の新台入替なら『ジャグラー以外』を選べます。")
+                
                 submitted = st.form_submit_button("イベントを登録")
                 
                 if submitted:
-                    if backend.save_shop_event(reg_shop, reg_date, reg_name, reg_rank):
+                    t_mac = reg_target.strip() if reg_target.strip() else "指定なし"
+                    if backend.save_shop_event(reg_shop, reg_date, reg_name, reg_rank, reg_type, t_mac):
                         st.success(f"{reg_shop} のイベントを登録しました！")
                         st.cache_data.clear()
                         st.rerun()
