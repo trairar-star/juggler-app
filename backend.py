@@ -1315,7 +1315,7 @@ def _generate_features(df, df_events, df_island, target_date):
                     if is_super_event:
                         return 3 # スロットへの波及効果として中間スコア(Bランク相当)を与える
                     else:
-                        return -1 # スロットは回収に回されやすいためマイナススコア
+                        return -score if score > 0 else -1 # ランクが高いほどマイナス(回収)スコアを大きくする
                         
                 # 対象外(無効)だが「周年」で例外的に残ったデータの処理
                 if e_type == '対象外(無効)':
@@ -1330,13 +1330,13 @@ def _generate_features(df, df_events, df_island, target_date):
                         if is_super_event:
                             score = 3
                         else:
-                            score = -1
+                            score = -score # ランクが高いほどマイナススコアを大きくする
                     elif my_mac not in t_mac and t_mac not in my_mac:
-                        if 'ジャグラー' not in t_mac: # ジャグラー系指定でなければ弾く
-                            if is_super_event:
-                                score = 3 # 特大イベントなら対象外機種でもおこぼれ(ベースアップ)としてスコアを残す
-                            else:
-                                score = -1 # 別機種の特日＝ジャグラーは回収に回されやすいためマイナススコア
+                        # 対象外の機種（他のジャグラー含む）に対する処理
+                        if is_super_event:
+                            score = 3 # 特大イベントなら対象外機種でもおこぼれ(ベースアップ)としてスコアを残す
+                        else:
+                            score = -score # イベント対象機種やパチンコへの還元のシワ寄せで回収されるとみなしてマイナス評価
                 return score
             df['event_rank_score'] = df.apply(calc_rank_score, axis=1)
         else:
@@ -2239,10 +2239,19 @@ def _postprocess_predictions(predict_df, train_df):
             evt_rank = row.get('イベントランク', '')
             rank_str = f"(ランク{evt_rank})" if evt_rank else ""
             if evt_score < 0:
-                if e_avg < -100:
-                    reasons.append(f"【⚠️回収警戒】新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日ですが、過去の同イベントの傾向(平均{int(e_avg)}枚)からジャグラーは出玉の原資として回収(冷遇)される危険性が高いです。")
+                t_mac = str(row.get('対象機種', '指定なし'))
+                evt_mac_avg = row.get('event_x_machine_avg_diff', 0)
+                
+                if t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None', 'ジャグラー以外 (パチスロ他機種)']:
+                    if evt_mac_avg < -100:
+                        reasons.append(f"【⚠️回収警戒】本日は「{t_mac}」対象のイベント「{evt_name}」ですが、過去の傾向(本機種の平均{int(evt_mac_avg)}枚)から、対象外のこの機種は回収に回される危険性が高いです。")
+                    else:
+                        reasons.append(f"【⚠️対象外警戒】本日は「{t_mac}」対象のイベント「{evt_name}」です。対象外機種のため、過去の傾向から回収(冷遇)される危険性に警戒してください。")
                 else:
-                    reasons.append(f"本日は新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日です（ジャグラーへの波及効果は過去の傾向に基づきAIが判断します）。")
+                    if e_avg < -100:
+                        reasons.append(f"【⚠️回収警戒】新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日ですが、過去の同イベントの傾向(ジャグラー平均{int(e_avg)}枚)から出玉の原資として回収(冷遇)される危険性が高いです。")
+                    else:
+                        reasons.append(f"本日は新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日です（ジャグラーへの波及効果は過去の傾向に基づきAIが判断します）。")
             elif evt_score > 0:
                 reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です。")
 

@@ -373,8 +373,12 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 event_df = event_df.drop(columns=['イベントランク'])
                 
             events_unique = df_events.drop_duplicates(subset=['店名', 'イベント日付'], keep='last').copy()
-            if 'イベントランク' in events_unique.columns:
-                event_df = pd.merge(event_df, events_unique[['店名', 'イベント日付', 'イベントランク']], left_on=[shop_col, '対象日付'], right_on=['店名', 'イベント日付'], how='left')
+            merge_cols = ['店名', 'イベント日付']
+            for c in ['イベントランク', '対象機種', 'イベント種別']:
+                if c in events_unique.columns: merge_cols.append(c)
+                
+            if len(merge_cols) > 2:
+                event_df = pd.merge(event_df, events_unique[merge_cols], left_on=[shop_col, '対象日付'], right_on=['店名', 'イベント日付'], how='left')
             else:
                 event_df['イベントランク'] = np.nan
                 
@@ -419,6 +423,62 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         hide_index=True,
                         width="stretch"
                     )
+                    
+                # --- 対象機種・対象外のシワ寄せ分析 ---
+                if '対象機種' in event_df.columns:
+                    st.markdown("#### 🎯 特定機種イベント時の「対象外機種」の成績")
+                    st.caption("イベントで特定の機種が対象になった際、自分が打っている機種（対象外）がどれくらい回収に回されているかを確認します。")
+                    
+                    def classify_target(row):
+                        rank = str(row.get('イベントランク', '通常日'))
+                        if rank == '通常日': return np.nan
+                        
+                        t_mac = str(row.get('対象機種', '指定なし'))
+                        my_mac = str(row.get('機種名', ''))
+                        e_type = str(row.get('イベント種別', '全体')).replace('スロット/全体', '全体')
+                        
+                        if e_type == '対象外(無効)': return np.nan
+                        if e_type == 'パチンコ専用': return '🎰 パチンコ特日 (スロット回収警戒)'
+                        
+                        if t_mac in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
+                            return '🎈 全体対象イベント'
+                        if t_mac == 'ジャグラー以外 (パチスロ他機種)':
+                            return '⚠️ ジャグラー以外対象 (回収警戒)'
+                        if my_mac in t_mac or t_mac in my_mac:
+                            return '🎯 対象機種 (大チャンス)'
+                        return '⚠️ 対象外機種 (シワ寄せ回収警戒)'
+                        
+                    event_df['対象ステータス'] = event_df.apply(classify_target, axis=1)
+                    target_stats = event_df.dropna(subset=['対象ステータス']).groupby('対象ステータス').agg(
+                        高設定投入率=('高設定挙動', 'mean'),
+                        平均差枚=('差枚', 'mean'),
+                        サンプル数=('台番号', 'count')
+                    ).reset_index()
+                    
+                    if not target_stats.empty:
+                        target_stats['信頼度'] = target_stats['サンプル数'].apply(get_confidence_indicator)
+                        
+                        col_t1, col_t2 = st.columns(2)
+                        with col_t1:
+                            chart_t = alt.Chart(target_stats).mark_bar(color='#FF7043', opacity=0.8).encode(
+                                x=alt.X('高設定投入率', title='高設定(設定5基準)の割合 (%)'),
+                                y=alt.Y('対象ステータス', sort='-x', title='イベント時の自分の台の立場'),
+                                tooltip=['対象ステータス', alt.Tooltip('高設定投入率', format='.1f', title='高設定投入率 (%)'), alt.Tooltip('平均差枚', format='+.0f'), 'サンプル数', '信頼度']
+                            ).interactive()
+                            st.altair_chart(chart_t, width="stretch")
+                        with col_t2:
+                            st.dataframe(
+                                target_stats.sort_values('高設定投入率', ascending=False),
+                                column_config={
+                                    "対象ステータス": st.column_config.TextColumn("イベント時の立場"),
+                                    "高設定投入率": st.column_config.ProgressColumn("高設定割合", format="%.1f%%", min_value=0, max_value=100),
+                                    "平均差枚": st.column_config.NumberColumn("台平均差枚", format="%+d 枚"),
+                                    "サンプル数": st.column_config.NumberColumn("集計台数", format="%d 台"),
+                                    "信頼度": st.column_config.TextColumn("信頼度")
+                                },
+                                hide_index=True,
+                                width="stretch"
+                            )
             else:
                 st.info("イベントランクが登録されたデータがまだありません。サイドバーからイベントを登録すると傾向が表示されます。")
         else:
