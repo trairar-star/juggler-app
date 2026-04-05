@@ -225,7 +225,7 @@ def main():
     # 分析実行
     with st.spinner("AIがデータを分析し、予測を生成しています..."):
         # キャッシュキーとしてデータの長さを利用（簡易的）
-        df, df_verify, df_importance = backend.run_analysis(df_raw, df_events, df_island, st.session_state["shop_hyperparams"], target_date=predict_target_date)
+        df, df_verify, df_importance = backend.run_analysis(df_raw, _df_events=df_events, _df_island=df_island, shop_hyperparams=st.session_state["shop_hyperparams"], target_date=predict_target_date)
     
     if df.empty:
         st.warning(f"指定された予測対象日（{predict_target_date.strftime('%Y-%m-%d')}）以前の分析可能なデータがありません。")

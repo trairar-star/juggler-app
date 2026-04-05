@@ -59,7 +59,7 @@ def render_my_balance_page(df_raw):
                 else:
                     if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_hours, input_memo):
                         st.success("収支データを登録（または上書き更新）しました！")
-                        st.cache_data.clear()
+                        backend.load_my_balance.clear()
                         st.rerun()
 
     # --- 2. 収支データの表示 ---
@@ -304,12 +304,12 @@ def render_my_balance_page(df_raw):
                 if st.form_submit_button("更新を保存", type="primary"):
                     if backend.update_my_balance(target_uid, st.session_state.eb_date, st.session_state.eb_shop, st.session_state.eb_mac, st.session_state.eb_num, st.session_state.eb_inv, st.session_state.eb_rec, st.session_state.eb_hours, st.session_state.eb_memo):
                         st.success("収支データを更新しました！")
-                        st.cache_data.clear(); st.rerun()
+                        backend.load_my_balance.clear(); st.rerun()
                     else: st.error("更新に失敗しました。")
             
             with st.form("delete_balance_form"):
                 st.caption("※この操作は取り消せません")
                 if st.form_submit_button("このデータを削除", type="primary"):
                     if backend.delete_my_balance(target_uid):
-                        st.success("削除しました！"); st.cache_data.clear(); st.rerun()
+                        st.success("削除しました！"); backend.load_my_balance.clear(); st.rerun()
                     else: st.error("削除に失敗しました。")

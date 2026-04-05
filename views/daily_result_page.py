@@ -58,7 +58,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # --- 現在のAIでバックテスト（シミュレーション）を実行 ---
     with st.spinner(f"🤖 現在のAI設定で {selected_date.strftime('%Y-%m-%d')} の予測をシミュレーション中..."):
-        df_pred, _, _ = backend.run_analysis(df_raw, df_events, df_island, shop_hyperparams, target_date=selected_date)
+        df_pred, _, _ = backend.run_analysis(df_raw, _df_events=df_events, _df_island=df_island, shop_hyperparams=shop_hyperparams, target_date=selected_date)
         
     if not df_pred.empty:
         pred_shop_col = '店名' if '店名' in df_pred.columns else ('店舗名' if '店舗名' in df_pred.columns else None)

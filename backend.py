@@ -2374,14 +2374,14 @@ def _postprocess_predictions(predict_df, train_df):
 # 分析・予測ロジック (メイン関数)
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
-def run_analysis(df, df_events=None, df_island=None, shop_hyperparams=None, target_date=None):
+def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, target_date=None):
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     if shop_hyperparams is None:
         shop_hyperparams = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
 
     # 1. 特徴量エンジニアリング
-    df, features = _generate_features(df, df_events, df_island, target_date)
+    df, features = _generate_features(df, _df_events, _df_island, target_date)
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     train_df = df.dropna(subset=['next_diff']).copy()

@@ -105,10 +105,10 @@ def render_island_master_page(df_raw):
                 else:
                     main_corner_val = "指定なし" if input_main_corner == "対象台番号を指定してください" else input_main_corner
                     if backend.save_island_master(input_shop, input_island, final_rule, main_corner_val, input_island_type):
-                        st.success(f"{input_shop}の島マスターを登録しました！")
+                        st.success(f"{input_shop}の島マスターを登録しました！\n\n💡 すべての登録が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
                         for k in ["island_reg_name", "island_reg_machines", "island_reg_rule", "island_reg_main_corner", "island_reg_island_type"]:
                             if k in st.session_state: del st.session_state[k]
-                        st.cache_data.clear()
+                        backend.load_island_master.clear()
                         st.rerun()
 
     if not df_island.empty:
@@ -184,13 +184,13 @@ def render_island_master_page(df_raw):
                     else:
                         main_cor = "指定なし" if not edit_corner.strip() else edit_corner.strip()
                         if backend.update_island_master(edit_target, edit_shop, edit_name, edit_rule, main_cor, edit_type):
-                            st.success("島情報を更新しました！")
-                            st.cache_data.clear()
+                            st.success("島情報を更新しました！\n\n💡 すべての編集が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
+                            backend.load_island_master.clear()
                             st.rerun()
                             
             with st.form("delete_island_form"):
                 if st.form_submit_button("この島を削除"):
                     if backend.delete_island_master(edit_target):
-                        st.success("削除しました。")
-                        st.cache_data.clear()
+                        st.success("削除しました。\n\n💡 すべての削除が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
+                        backend.load_island_master.clear()
                         st.rerun()
