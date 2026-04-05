@@ -488,6 +488,19 @@ def load_prediction_log():
         return df
     except: return pd.DataFrame()
 
+@st.cache_data(ttl=3600)
+def load_daily_shop_scores():
+    """店舗全体の日別平均期待度を読み込む"""
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        worksheet = sh.worksheet('daily_shop_scores')
+        df = pd.DataFrame(worksheet.get_all_records())
+        if '店舗平均期待度' in df.columns:
+            df['店舗平均期待度'] = pd.to_numeric(df['店舗平均期待度'], errors='coerce')
+        return df
+    except: return pd.DataFrame()
+
 def save_prediction_log(df):
     if df.empty:
         st.warning("保存するデータがありません。")
@@ -495,7 +508,63 @@ def save_prediction_log(df):
     
     save_df_initial = df.copy()
     
-    # --- 保存する前に、各店舗の上位10%（最低3台）に絞り込む ---
+    # --- 1. 店舗全体の平均期待度を全台データから計算して別シートに保存 ---
+    if 'prediction_score' in save_df_initial.columns:
+        shop_col_for_score = '店名' if '店名' in save_df_initial.columns else ('店舗名' if '店舗名' in save_df_initial.columns else None)
+        if shop_col_for_score:
+            try:
+                gc = _get_gspread_client()
+                sh = gc.open_by_key(SPREADSHEET_KEY)
+                score_sheet_name = 'daily_shop_scores'
+                try: 
+                    score_ws = sh.worksheet(score_sheet_name)
+                    existing_score_data = score_ws.get_all_values()
+                except gspread.exceptions.WorksheetNotFound: 
+                    score_ws = sh.add_worksheet(title=score_sheet_name, rows="1000", cols="4")
+                    existing_score_data = []
+
+                SCORE_HEADER = ['実行日時', '予測対象日', '店名', '店舗平均期待度']
+                if existing_score_data and len(existing_score_data) > 1:
+                    df_score_existing = pd.DataFrame(existing_score_data[1:], columns=existing_score_data[0])
+                    for c in SCORE_HEADER:
+                        if c not in df_score_existing.columns: df_score_existing[c] = ''
+                    df_score_existing = df_score_existing[SCORE_HEADER]
+                else:
+                    df_score_existing = pd.DataFrame(columns=SCORE_HEADER)
+
+                # 新しいスコアの計算 (全台の平均)
+                temp_df = save_df_initial.copy()
+                if 'next_date' in temp_df.columns:
+                    temp_df['予測対象日'] = temp_df['next_date']
+                else:
+                    temp_df['予測対象日'] = temp_df['対象日付'] + pd.Timedelta(days=1)
+                    
+                df_score_new = temp_df.groupby([shop_col_for_score, '予測対象日'])['prediction_score'].mean().reset_index()
+                df_score_new = df_score_new.rename(columns={shop_col_for_score: '店名', 'prediction_score': '店舗平均期待度'})
+                df_score_new['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
+                df_score_new['予測対象日'] = pd.to_datetime(df_score_new['予測対象日']).dt.strftime('%Y-%m-%d')
+                df_score_new = df_score_new[SCORE_HEADER]
+                
+                # 既存データの該当部分を削除
+                if not df_score_existing.empty:
+                    save_dates_score = df_score_new['予測対象日'].astype(str).unique()
+                    save_shops_score = df_score_new['店名'].astype(str).unique()
+                    mask = df_score_existing['予測対象日'].astype(str).isin(save_dates_score) & df_score_existing['店名'].astype(str).isin(save_shops_score)
+                    df_score_existing = df_score_existing[~mask]
+
+                df_score_combined = pd.concat([df_score_existing, df_score_new], ignore_index=True)
+                df_score_combined = df_score_combined[SCORE_HEADER].fillna('')
+                final_score_data = [SCORE_HEADER] + df_score_combined.values.tolist()
+
+                score_ws.clear()
+                try: score_ws.update(values=final_score_data, range_name='A1')
+                except TypeError:
+                    try: score_ws.update('A1', final_score_data)
+                    except Exception: score_ws.update(final_score_data)
+            except Exception as e:
+                print(f"店舗平均期待度の保存エラー: {e}")
+    
+    # --- 2. 保存する前に、各店舗の上位10%（最低3台）に絞り込む ---
     if 'prediction_score' in save_df_initial.columns:
         shop_col = '店名' if '店名' in save_df_initial.columns else ('店舗名' if '店舗名' in save_df_initial.columns else None)
         if shop_col:
@@ -633,6 +702,15 @@ def delete_old_prediction_logs(months):
                 worksheet.clear()
                 try: worksheet.update(values=[header], range_name='A1')
                 except TypeError: worksheet.update('A1', [header])
+                # --- 店舗平均期待度ログも全削除 ---
+                try:
+                    score_ws = sh.worksheet('daily_shop_scores')
+                    s_data = score_ws.get_all_values()
+                    if s_data:
+                        score_ws.clear()
+                        try: score_ws.update(values=[s_data[0]], range_name='A1')
+                        except TypeError: score_ws.update('A1', [s_data[0]])
+                except: pass
                 return len(data) - 1
             return 0
             
@@ -660,6 +738,26 @@ def delete_old_prediction_logs(months):
         except TypeError:
             try: worksheet.update('A1', final_data)
             except Exception: worksheet.update(final_data)
+
+        # --- 店舗平均期待度ログも古いものを削除 ---
+        try:
+            score_ws = sh.worksheet('daily_shop_scores')
+            s_data = score_ws.get_all_values()
+            if len(s_data) > 1:
+                s_df = pd.DataFrame(s_data[1:], columns=s_data[0])
+                if '実行日時' in s_df.columns:
+                    s_df['実行日時'] = pd.to_datetime(s_df['実行日時'], errors='coerce')
+                    s_df_keep = s_df[s_df['実行日時'] >= cutoff_date].copy()
+                    for col in s_df_keep.columns:
+                        if pd.api.types.is_datetime64_any_dtype(s_df_keep[col]): s_df_keep[col] = s_df_keep[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                    s_final_data = [s_data[0]] + s_df_keep.fillna('').values.tolist()
+                    score_ws.clear()
+                    try: score_ws.update(values=s_final_data, range_name='A1')
+                    except TypeError:
+                        try: score_ws.update('A1', s_final_data)
+                        except Exception: score_ws.update(s_final_data)
+        except Exception: pass
+            
         return deleted_count
     except Exception as e:
         st.error(f"予測ログの削除中にエラーが発生しました: {e}")

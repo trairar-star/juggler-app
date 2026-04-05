@@ -27,11 +27,20 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
             全台数=('台番号', 'nunique')
         ).reset_index().sort_values('平均期待度', ascending=False)
         
+        def get_eval_badge(score):
+            if pd.isna(score): return "⚖️ 通常営業"
+            elif score >= 0.20: return "🔥 還元予測"
+            elif score < 0.10: return "🥶 回収警戒"
+            else: return "⚖️ 通常営業"
+            
+        shop_pred_stats['営業予測'] = shop_pred_stats['平均期待度'].apply(get_eval_badge)
+        
         if not shop_pred_stats.empty:
             st.dataframe(
-                shop_pred_stats,
+                shop_pred_stats[[shop_col, '営業予測', '平均期待度', '高期待台数', '全台数']],
                 column_config={
                     shop_col: st.column_config.TextColumn("店舗名"),
+                    "営業予測": st.column_config.TextColumn("AI営業予測"),
                     "平均期待度": st.column_config.ProgressColumn("店舗全体の平均期待度", format="%.2f", min_value=0, max_value=1.0),
                     "高期待台数": st.column_config.NumberColumn("推奨台(65%以上)", format="%d台"),
                     "全台数": st.column_config.NumberColumn("集計台数", format="%d台")

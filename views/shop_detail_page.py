@@ -406,7 +406,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if digit_avg_diff > 50:
                         advice_list.append(f"🔢 **特定日の傾向 ({target_digit}のつく日)**: 本日は **{target_digit}のつく日** です。過去の同日は店舗平均 **+{int(digit_avg_diff)}枚** と甘く使われており、勝率が高まるチャンス日です！")
                     elif digit_avg_diff < -50:
-                        advice_list.append(f"🔢 **特定日の傾向 ({target_digit}のつく日)**: 本日は **{target_digit}のつく日** ですが、過去の傾向では店舗平均 **{int(digit_avg_diff)}枚** と厳しめです。イベント等が重なっていない場合は慎重な立ち回りを推奨します。")
+                        advice_list.append(f"🚨 **特定日の傾向 ({target_digit}のつく日) [回収警戒]**: 本日は **{target_digit}のつく日** ですが、過去の傾向では店舗平均 **{int(digit_avg_diff)}枚** とかなり厳しめです。基本的には勝負を避けるべきですが、**AIが激アツと評価している上位台であれば試してみる価値はあります。** ただし、少しでも挙動が悪ければ即撤退を徹底してください。")
 
                 # 曜日の傾向
                 wd_df = df_raw_shop[df_raw_shop['対象日付'].dt.dayofweek == target_wd]
@@ -415,7 +415,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if wd_avg_diff > 50:
                         advice_list.append(f"📅 **曜日の傾向 ({wd_str}曜)**: この店舗は **{wd_str}曜日** に出玉を出してくる傾向があります (過去平均 **+{int(wd_avg_diff)}枚**)。曜日別の狙い目として有効です。")
                     elif wd_avg_diff < -50:
-                        advice_list.append(f"📅 **曜日の傾向 ({wd_str}曜)**: 過去のデータ上、**{wd_str}曜日** は回収傾向が強いです (過去平均 **{int(wd_avg_diff)}枚**)。")
+                        advice_list.append(f"🚨 **曜日の傾向 ({wd_str}曜) [回収警戒]**: 過去のデータ上、**{wd_str}曜日** は回収傾向が強いです (過去平均 **{int(wd_avg_diff)}枚**)。基本的には稼働を控えるのが無難ですが、**AIの激アツ台に絞って攻める場合も、撤退基準は普段より厳しく設定してください。**")
 
             # --- 3. 客層レベルと後ヅモ難易度 ---
             if not df_raw_shop.empty and '累計ゲーム' in df_raw_shop.columns:
@@ -432,13 +432,35 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             elif shop_7d_diff < -100:
                 advice_list.append(f"📉 **回収モード警戒**: 直近1週間の店舗全体がマイナス推移 (平均 **{int(shop_7d_diff)}枚**) しており、設定状況は厳しめです。強い根拠がない台は早めの見切りを推奨します。")
                 
+            # --- 5. AIの全体期待度による還元/回収予測 ---
+            if 'prediction_score' in df.columns:
+                avg_pred_score = df['prediction_score'].mean()
+                if avg_pred_score >= 0.20:
+                    advice_list.append(f"🔥 **本日のAI期待度 (激アツ)**: 店舗全体の平均期待度が **{avg_pred_score*100:.1f}%** と非常に高く、還元日(特定日など)の可能性が高いです。積極的に勝負できる日です！")
+                elif avg_pred_score < 0.10:
+                    advice_list.append(f"🥶 **本日のAI期待度 (回収警戒)**: 店舗全体の平均期待度が **{avg_pred_score*100:.1f}%** と低く、回収日の可能性が高いです。基本は勝負を避けるべきですが、**どうしても打つ場合は「期待度上位の激アツ台」のみに絞り、挙動が悪ければ即撤退してください。**")
+
             # イベント状況
             if 'イベント名' in df.columns:
                 event_names = df['イベント名'].dropna().unique()
                 event_names = [e for e in event_names if e != '通常' and str(e).strip() != '']
                 if event_names:
                     ev_str = "、".join(event_names)
-                    advice_list.append(f"🎉 **イベント対象日**: 本日は「**{ev_str}**」が予定されています。対象機種や過去の同イベントの傾向に注目してください。")
+                    
+                    past_ev_msg = ""
+                    if df_events is not None and not df_events.empty and not df_raw_shop.empty:
+                        past_ev_diffs = []
+                        for en in event_names:
+                            past_dates = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント名'] == en) & (df_events['イベント日付'].dt.date != pred_date.date())]['イベント日付'].dt.date.unique()
+                            if len(past_dates) > 0:
+                                past_raw = df_raw_shop[df_raw_shop['対象日付'].dt.date.isin(past_dates)]
+                                if not past_raw.empty:
+                                    avg_d = past_raw.groupby('対象日付')['差枚'].mean().mean()
+                                    past_ev_diffs.append(f"「{en}」(過去平均 **{int(avg_d):+d}枚**)")
+                        if past_ev_diffs:
+                            past_ev_msg = f" 過去の同イベント実績は {', '.join(past_ev_diffs)} となっており、当日の押し引きの参考にしてください。"
+                            
+                    advice_list.append(f"🎉 **イベント対象日**: 本日は「**{ev_str}**」が予定されています。{past_ev_msg}")
 
             # 店癖に基づく立ち回り
             if top_trends_df is not None and not top_trends_df.empty:
@@ -518,6 +540,36 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             # 表示
             st.info("\n\n".join([f"- {adv}" for adv in advice_list]))
             st.divider()
+
+        # --- 島（列）別 期待度ランキング (追加) ---
+        if selected_shop != '全て' and 'island_id' in df.columns:
+            island_pred_df = df[df['island_id'] != "Unknown"].copy()
+            if not island_pred_df.empty:
+                with st.expander("🏝️ 島（列）別 期待度ランキング", expanded=True):
+                    st.caption("AIの予測スコアを島（列）ごとに平均し、「どの島全体に設定が入りそうか（還元島か回収島か）」をランキング化しています。")
+                    island_pred_df['島名'] = island_pred_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                    
+                    isl_stats = island_pred_df.groupby('島名').agg(
+                        平均期待度=('prediction_score', 'mean'),
+                        激アツ台数=('prediction_score', lambda x: (x >= 0.65).sum()),
+                        全台数=('台番号', 'count')
+                    ).reset_index().sort_values('平均期待度', ascending=False)
+                    
+                    isl_stats['営業予測'] = isl_stats['平均期待度'].apply(lambda x: "🔥 還元島" if x >= 0.20 else ("🥶 回収島" if x < 0.10 else "⚖️ 通常"))
+                    isl_stats['平均期待度'] = isl_stats['平均期待度'] * 100
+                    
+                    st.dataframe(
+                        isl_stats,
+                        column_config={
+                            "島名": st.column_config.TextColumn("島名"),
+                            "営業予測": st.column_config.TextColumn("島全体の熱さ"),
+                            "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                            "激アツ台数": st.column_config.NumberColumn("推奨台(65%以上)", format="%d台"),
+                            "全台数": st.column_config.NumberColumn("総台数", format="%d台")
+                        },
+                        hide_index=True,
+                        width="stretch"
+                    )
 
         # --- 店舗別 期待度ランキング (追加) ---
         if selected_shop == '全て' and shop_col in df.columns:
@@ -661,14 +713,18 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
         
                 shop_stats['ソート用スコア'] = shop_stats.apply(calc_sort_score, axis=1)
                 
+                # 営業予測バッジの追加
+                shop_stats['営業予測'] = shop_stats['平均スコア'].apply(lambda x: "⚖️ 通常" if pd.isna(x) else ("🔥 還元" if x >= 0.20 else ("🥶 回収" if x < 0.10 else "⚖️ 通常")))
+                
                 # ソート用スコア（ペナルティ適用後）が高い順にソート
                 shop_stats = shop_stats.sort_values('ソート用スコア', ascending=False)
                 
                 st.caption(f"※{eval_period}の**ガチ予測（保存ログ）に対する正答率と勝率**です。この数値が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い等）と判断し、ランキング順位を下げるペナルティを適用しています。（※サンプル5台以上で適用）")
                 st.dataframe(
-                    shop_stats[[shop_col, '平均スコア', '推奨台数', '全台数', '収集日数', 'AI正答率', 'AI推奨台勝率']],
+                    shop_stats[[shop_col, '営業予測', '平均スコア', '推奨台数', '全台数', '収集日数', 'AI正答率', 'AI推奨台勝率']],
                     column_config={
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
+                        "営業予測": st.column_config.TextColumn("営業予測", width="small", help="AIの店舗全体期待度に基づく明日の予測"),
                         "平均スコア": st.column_config.ProgressColumn("期待度", width="small", min_value=0, max_value=1.0, format="%.2f", help="明日の店舗全体の平均的な設定5以上確率"),
                         "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が65%以上の激アツ台数"),
                         "全台数": st.column_config.NumberColumn("全台", width="small", format="%d台"),

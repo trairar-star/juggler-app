@@ -380,6 +380,15 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             actual_df_day = actual_df_day[actual_df_day['REG確率分母'] > 0].sort_values('REG確率分母', ascending=True).head(act_top_k)
                             
                     actual_top_machines = actual_df_day['台番号'].tolist()
+                    
+                # 当日の店舗全体の答え合わせサマリー
+                avg_pred_score = pred_df_day['prediction_score'].mean() if not pred_df_day.empty and 'prediction_score' in pred_df_day.columns else np.nan
+                day_eval_str = "🔥 還元日予測" if pd.notna(avg_pred_score) and avg_pred_score >= 0.20 else "🥶 回収日予測" if pd.notna(avg_pred_score) and avg_pred_score < 0.10 else "⚖️ 通常営業予測" if pd.notna(avg_pred_score) else "不明"
+                actual_avg_diff = actual_df_day['差枚'].mean() if not actual_df_day.empty and '差枚' in actual_df_day.columns else np.nan
+                actual_diff_str = f"{int(actual_avg_diff):+d} 枚" if pd.notna(actual_avg_diff) else "不明"
+                
+                st.markdown(f"##### 🎯 【{compare_shop}】 {selected_date} のランキング比較")
+                st.caption(f"**店舗全体のAI事前評価**: {avg_pred_score*100:.1f}% ({day_eval_str}) ｜ **実際の店舗全体平均差枚**: {actual_diff_str}")
 
                 # --- 上段: AI予測ランキング ---
                 with st.expander("🤖 AI推奨台 (上位10%)", expanded=True):

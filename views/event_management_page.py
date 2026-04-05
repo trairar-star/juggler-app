@@ -10,20 +10,63 @@ def render_event_management_page(df_raw):
     with st.expander("新しいイベントを登録", expanded=False):
         shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
         if shop_col in df_raw.columns:
-            unique_shops = df_raw[shop_col].unique()
+            unique_shops = list(df_raw[shop_col].unique())
+            
+            df_events_for_copy = backend.load_shop_events()
+            copy_options = ["(過去のイベントからコピーしない)"]
+            recent_events = pd.DataFrame()
+            if not df_events_for_copy.empty:
+                recent_events = df_events_for_copy.sort_values('イベント日付', ascending=False).drop_duplicates(subset=['店名', 'イベント名'])
+                for _, r in recent_events.iterrows():
+                    copy_options.append(f"{r['店名']} | {r['イベント名']} ({r.get('イベントランク', 'A')})")
+                    
+            def on_copy_change():
+                sel = st.session_state.copy_event_target
+                if sel and sel != "(過去のイベントからコピーしない)":
+                    try:
+                        c_shop = sel.split(" | ")[0]
+                        c_name = sel.split(" | ")[1].split(" (")[0]
+                        t_row = recent_events[(recent_events['店名'] == c_shop) & (recent_events['イベント名'] == c_name)].iloc[0]
+                        st.session_state.reg_shop = t_row['店名']
+                        st.session_state.reg_name = t_row['イベント名']
+                        st.session_state.reg_rank = t_row.get('イベントランク', 'A')
+                        st.session_state.reg_type = t_row.get('イベント種別', '全体')
+                        st.session_state.reg_target = t_row.get('対象機種', '指定なし')
+                    except Exception: pass
+                else:
+                    st.session_state.reg_name = ""
+                    
+            st.selectbox("📋 過去のイベントから内容をコピー (複写)", copy_options, key="copy_event_target", on_change=on_copy_change)
             
             with st.form("event_reg_form", clear_on_submit=True):
-                reg_shop = st.selectbox("店舗", unique_shops)
+                reg_shop_idx = 0
+                if st.session_state.get('reg_shop') in unique_shops:
+                    reg_shop_idx = unique_shops.index(st.session_state.get('reg_shop'))
+                    
+                reg_shop = st.selectbox("店舗", unique_shops, index=reg_shop_idx)
                 reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
-                reg_name = st.text_input("イベント名 (例: ○○取材, 周年, リニューアル)", help="※イベント名に『周年』が含まれる場合、登録時の「年」は無視され、毎年自動的にループ適用されます。")
-                reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い(新台6台〜など), B:普通(新台3〜5台), C:弱め(新台1〜2台)")
+                reg_name = st.text_input("イベント名 (例: ○○取材, 周年, リニューアル)", value=st.session_state.get('reg_name', ''), help="※イベント名に『周年』が含まれる場合、登録時の「年」は無視され、毎年自動的にループ適用されます。")
+                
+                rank_options = ["SS (周年)", "S", "A", "B", "C"]
+                reg_rank_val = st.session_state.get('reg_rank', 'S')
+                reg_rank_idx = rank_options.index(reg_rank_val) if reg_rank_val in rank_options else 1
+                reg_rank = st.selectbox("イベントの強さ (期待度)", rank_options, index=reg_rank_idx, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い(新台6台〜など), B:普通(新台3〜5台), C:弱め(新台1〜2台)")
                 
                 st.markdown("**対象の絞り込み**")
-                reg_type = st.radio("イベント種別", ["全体", "スロット専用", "パチンコ専用", "対象外(無効)"], horizontal=True, help="「パチンコ専用」にすると、AIは『パチンコの特日』という目印をつけて学習し、過去の傾向に基づいてスロットが回収されるか判断します。出玉に一切関係ない場合は「対象外(無効)」にしてください。")
+                type_options = ["全体", "スロット専用", "パチンコ専用", "対象外(無効)"]
+                reg_type_val = st.session_state.get('reg_type', '全体')
+                if reg_type_val == 'スロット/全体': reg_type_val = '全体'
+                reg_type_idx = type_options.index(reg_type_val) if reg_type_val in type_options else 0
+                reg_type = st.radio("イベント種別", type_options, index=reg_type_idx, horizontal=True, help="「パチンコ専用」にすると、AIは『パチンコの特日』という目印をつけて学習し、過去の傾向に基づいてスロットが回収されるか判断します。出玉に一切関係ない場合は「対象外(無効)」にしてください。")
+                
                 machine_list = ["指定なし", "ジャグラー全体", "ジャグラー以外 (パチスロ他機種)"]
                 if '機種名' in df_raw.columns:
                     machine_list.extend(sorted(list(df_raw['機種名'].dropna().unique())))
-                reg_target = st.selectbox("対象機種 (新台入替や特定機種イベントの場合)", machine_list, index=0, help="新台入替や特定機種のイベントの場合、ここに対象機種を指定してください。ジャグラー以外の新台入替なら『ジャグラー以外』を選べます。")
+                reg_target_val = st.session_state.get('reg_target', '指定なし')
+                if reg_target_val not in machine_list:
+                    machine_list.insert(0, reg_target_val)
+                reg_target_idx = machine_list.index(reg_target_val)
+                reg_target = st.selectbox("対象機種 (新台入替や特定機種イベントの場合)", machine_list, index=reg_target_idx, help="新台入替や特定機種のイベントの場合、ここに対象機種を指定してください。ジャグラー以外の新台入替なら『ジャグラー以外』を選べます。")
                 
                 submitted = st.form_submit_button("イベントを登録")
                 
@@ -32,6 +75,10 @@ def render_event_management_page(df_raw):
                     if backend.save_shop_event(reg_shop, reg_date, reg_name, reg_rank, reg_type, t_mac):
                         st.success(f"{reg_shop} のイベントを登録しました！\n\n💡 **続けて登録できます。**\nすべての登録が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
                         backend.load_shop_events.clear()
+                        for k in ['reg_shop', 'reg_name', 'reg_rank', 'reg_type', 'reg_target']:
+                            if k in st.session_state: del st.session_state[k]
+                        if 'copy_event_target' in st.session_state:
+                            del st.session_state['copy_event_target']
                         st.rerun()
         else:
             st.warning("店舗データが見つからないため、イベントを登録できません。")
@@ -54,8 +101,24 @@ def render_event_management_page(df_raw):
     df_display['イベント種別'] = df_display['イベント種別'].replace('スロット/全体', '全体')
     if '対象機種' not in df_display.columns: df_display['対象機種'] = '指定なし'
 
+    # 店舗平均差枚の結合
+    if not df_raw.empty:
+        shop_col_raw = '店名' if '店名' in df_raw.columns else '店舗名'
+        if '対象日付' in df_raw.columns and shop_col_raw in df_raw.columns:
+            raw_temp = df_raw.copy()
+            raw_temp['対象日付'] = pd.to_datetime(raw_temp['対象日付'], errors='coerce')
+            daily_diff = raw_temp.groupby(['対象日付', shop_col_raw])['差枚'].mean().reset_index()
+            daily_diff = daily_diff.rename(columns={'対象日付': 'イベント日付', shop_col_raw: '店名', '差枚': '店舗平均差枚'})
+            
+            df_display['イベント日付'] = pd.to_datetime(df_display['イベント日付'], errors='coerce')
+            df_display = pd.merge(df_display, daily_diff, on=['イベント日付', '店名'], how='left')
+        else:
+            df_display['店舗平均差枚'] = float('nan')
+    else:
+        df_display['店舗平均差枚'] = float('nan')
+
     st.dataframe(
-        df_display[['イベント日付', '店名', 'イベント名', 'イベントランク', 'イベント種別', '対象機種']],
+        df_display[['イベント日付', '店名', 'イベント名', 'イベントランク', 'イベント種別', '対象機種', '店舗平均差枚']],
         column_config={
             "イベント日付": st.column_config.DateColumn("日付", format="YYYY-MM-DD"),
             "店名": st.column_config.TextColumn("店舗"),
@@ -63,6 +126,7 @@ def render_event_management_page(df_raw):
             "イベントランク": st.column_config.TextColumn("ランク"),
             "イベント種別": st.column_config.TextColumn("種別"),
             "対象機種": st.column_config.TextColumn("対象機種"),
+            "店舗平均差枚": st.column_config.NumberColumn("店舗平均差枚", format="%+d 枚"),
         },
         width="stretch",
         hide_index=True

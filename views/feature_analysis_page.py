@@ -77,10 +77,65 @@ def _render_monthly_trend_analysis(viz_df):
             day_stats = trend_df.groupby('day')[y_col].mean()
             st.bar_chart(day_stats, color="#00E676" if chart_metric_shop == "平均差枚" else "#AB47BC")
 
-def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs):
+def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events=None):
     with st.expander(f"📅 {selected_shop} の傾向分析", expanded=True):
         st.caption("過去データに基づく、この店舗の店癖やイベント日・曜日ごとの傾向です。")
         
+        # --- 店舗全体の還元日 / 回収日の傾向 ---
+        if not df_raw_shop.empty and '対象日付' in df_raw_shop.columns:
+            st.markdown(f"**💰 {selected_shop} の店舗全体 還元日 / 回収日 の傾向**")
+            st.caption("店舗全体の平均差枚から、どの日が甘く（還元）、どの日が辛い（回収）かを示します。")
+            
+            shop_daily_df = df_raw_shop.groupby('対象日付').agg(
+                店舗平均差枚=('差枚', 'mean')
+            ).reset_index()
+            
+            shop_daily_df['曜日'] = shop_daily_df['対象日付'].dt.dayofweek
+            shop_daily_df['末尾'] = shop_daily_df['対象日付'].dt.day % 10
+            
+            if df_events is not None and not df_events.empty:
+                events_shop = df_events[df_events['店名'] == selected_shop].drop_duplicates(subset=['イベント日付'], keep='last')
+                events_shop['イベント日付'] = pd.to_datetime(events_shop['イベント日付'])
+                shop_daily_df = pd.merge(shop_daily_df, events_shop[['イベント日付', 'イベントランク']], left_on='対象日付', right_on='イベント日付', how='left')
+                shop_daily_df['イベント有無'] = shop_daily_df['イベント日付'].notna().map({True: 'イベント日', False: '通常日'})
+                shop_daily_df['イベントランク'] = shop_daily_df['イベントランク'].fillna('通常営業')
+            else:
+                shop_daily_df['イベント有無'] = '通常日'
+                shop_daily_df['イベントランク'] = '通常営業'
+            
+            wd_shop_stats = shop_daily_df.groupby('曜日').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
+            digit_shop_stats = shop_daily_df.groupby('末尾').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
+            ev_shop_stats = shop_daily_df.groupby('イベント有無').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
+            rank_shop_stats = shop_daily_df.groupby('イベントランク').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
+            
+            if not wd_shop_stats.empty and not digit_shop_stats.empty:
+                best_wd = wd_shop_stats.loc[wd_shop_stats['平均差枚'].idxmax()]
+                worst_wd = wd_shop_stats.loc[wd_shop_stats['平均差枚'].idxmin()]
+                
+                best_digit = digit_shop_stats.loc[digit_shop_stats['平均差枚'].idxmax()]
+                worst_digit = digit_shop_stats.loc[digit_shop_stats['平均差枚'].idxmin()]
+                
+                weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
+                
+                ev_hot_str = ""
+                ev_cold_str = ""
+                if not ev_shop_stats.empty and 'イベント日' in ev_shop_stats['イベント有無'].values and '通常日' in ev_shop_stats['イベント有無'].values:
+                    ev_diff = ev_shop_stats[ev_shop_stats['イベント有無']=='イベント日']['平均差枚'].iloc[0]
+                    norm_diff = ev_shop_stats[ev_shop_stats['イベント有無']=='通常日']['平均差枚'].iloc[0]
+                    
+                    rank_str_list = []
+                    for _, r in rank_shop_stats[rank_shop_stats['イベントランク'] != '通常営業'].sort_values('平均差枚', ascending=False).iterrows():
+                        rank_str_list.append(f"{r['イベントランク']}: {int(r['平均差枚']):+d}枚")
+                    rank_details = f" (ランク別: {', '.join(rank_str_list)})" if rank_str_list else ""
+                    
+                    if ev_diff > norm_diff:
+                        ev_hot_str = f"\n- **イベント日** (店舗全体平均 {int(ev_diff):+d}枚 / 通常営業 {int(norm_diff):+d}枚){rank_details}"
+                    else:
+                        ev_cold_str = f"\n- **イベント日** (店舗全体平均 {int(ev_diff):+d}枚 / 通常営業 {int(norm_diff):+d}枚){rank_details} ※イベント回収傾向"
+                
+                st.info(f"🔥 **還元傾向が強い日 (甘い日)**\n- **{int(best_digit['末尾'])}のつく日** (店舗全体平均 {int(best_digit['平均差枚']):+d}枚)\n- **{weekdays_map[int(best_wd['曜日'])]}曜日** (店舗全体平均 {int(best_wd['平均差枚']):+d}枚){ev_hot_str}")
+                st.warning(f"🥶 **回収傾向が強い日 (辛い日)**\n- **{int(worst_digit['末尾'])}のつく日** (店舗全体平均 {int(worst_digit['平均差枚']):+d}枚)\n- **{weekdays_map[int(worst_wd['曜日'])]}曜日** (店舗全体平均 {int(worst_wd['平均差枚']):+d}枚){ev_cold_str}")
+
         if top_trends_df is not None or worst_trends_df is not None:
             st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖/警戒条件**")
             if top_trends_df is not None and not top_trends_df.empty:
@@ -183,7 +238,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             top_trends_df = all_trends_dict[selected_shop]['top_df']
             worst_trends_df = all_trends_dict[selected_shop]['worst_df']
             
-        _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs)
+        _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events)
 
         # --- 機種別 成績 (設定5近似度など) ---
         with st.expander(f"🎰 {selected_shop} の機種別 基本成績 (設定投入傾向)", expanded=False):
@@ -359,6 +414,55 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 tooltip=['差枚区間', alt.Tooltip('target_rate', format='.1f', title='翌日高設定率 (%)')]
             )
             st.altair_chart(chart_d, width="stretch")
+
+    with st.expander("🏝️ 島（列）別の成績・傾向", expanded=False):
+        st.markdown("### 🏝️ 島（列）別の成績・傾向")
+        st.caption("島マスターに登録されている「島・列」ごとの過去の平均成績を比較します。どの島が普段から甘く使われているかがわかります。")
+        if 'island_id' in reg_df.columns:
+            island_df = reg_df[reg_df['island_id'] != "Unknown"].copy()
+            if not island_df.empty:
+                island_df['島名'] = island_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                
+                island_stats = island_df.groupby('島名').agg(
+                    高設定率=('target_rate', 'mean'),
+                    平均翌日差枚=('next_diff', 'mean'),
+                    サンプル数=('target', 'count')
+                ).reset_index().sort_values('高設定率', ascending=False)
+                
+                island_stats['信頼度'] = island_stats['サンプル数'].apply(get_confidence_indicator)
+                
+                chart_metric_isl = st.radio("📊 グラフの表示指標", ["平均翌日差枚", "高設定率"], horizontal=True, key="isl_metric")
+                y_field_isl = "平均翌日差枚" if chart_metric_isl == "平均翌日差枚" else "高設定率"
+                y_title_isl = "平均翌日差枚 (枚)" if chart_metric_isl == "平均翌日差枚" else "高設定率 (%)"
+                y_format_isl = "" if chart_metric_isl == "平均翌日差枚" else ".1f"
+                y_axis_isl = alt.Axis(format=y_format_isl, title=y_title_isl) if y_format_isl else alt.Axis(title=y_title_isl)
+                color_cond_isl = alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")) if chart_metric_isl == "平均翌日差枚" else alt.value("#AB47BC")
+
+                col_isl1, col_isl2 = st.columns([1, 1.2])
+                with col_isl1:
+                    st.dataframe(
+                        island_stats,
+                        column_config={
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                            "平均翌日差枚": st.column_config.NumberColumn("平均翌日差枚", format="%+d 枚"),
+                            "サンプル数": st.column_config.NumberColumn("集計台数", format="%d 台"),
+                            "信頼度": st.column_config.TextColumn("信頼度")
+                        },
+                        hide_index=True,
+                        width="stretch"
+                    )
+                with col_isl2:
+                    chart_isl = alt.Chart(island_stats).mark_bar().encode(
+                        x=alt.X('島名', title='島名', sort='-y'),
+                        y=alt.Y(y_field_isl, axis=y_axis_isl),
+                        color=color_cond_isl,
+                        tooltip=['島名', alt.Tooltip('高設定率', format='.1f', title='高設定率 (%)'), alt.Tooltip('平均翌日差枚', format='+.0f'), 'サンプル数', '信頼度']
+                    ).interactive()
+                    st.altair_chart(chart_isl, width="stretch")
+            else:
+                st.info("島マスターに登録された台の稼働データがありません。サイドバーの「島マスター管理」から島を登録してください。")
+        else:
+            st.info("島データがありません。")
 
     with st.expander("🎉 イベント傾向", expanded=False):
         # --- 4. イベントランク別の設定投入傾向 ---

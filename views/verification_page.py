@@ -445,8 +445,47 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         else:
             st.caption("※有効稼働データなし")
 
+    # --- 日別の店舗平均期待度 (還元/回収の目安) をスプレッドシートから取得 ---
+    df_daily_scores = backend.load_daily_shop_scores()
+    
+    if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
+        df_daily_scores['予測対象日'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce')
+        shop_daily_scores = df_daily_scores[df_daily_scores['店名'] == selected_shop].copy()
+        daily_avg_score_df = shop_daily_scores.rename(columns={'予測対象日': '対象日付'})
+        if '店舗平均期待度' not in daily_avg_score_df.columns:
+            daily_avg_score_df['店舗平均期待度'] = np.nan
+    else:
+        # 古いデータや保存がない場合のフォールバック（※推奨台の平均になってしまうため正確ではない）
+        daily_avg_score_df = merged_df.groupby('対象日付')['prediction_score'].mean().reset_index()
+        daily_avg_score_df = daily_avg_score_df.rename(columns={'prediction_score': '店舗平均期待度'})
+    
+    def classify_day_eval(score):
+        if pd.isna(score): return "⚖️ 通常営業予測 (10~19%)"
+        if score >= 0.20: return "🔥 還元日予測 (20%~)"
+        elif score < 0.10: return "🥶 回収日予測 (~9%)"
+        else: return "⚖️ 通常営業予測 (10~19%)"
+        
+    daily_avg_score_df['予測営業区分'] = daily_avg_score_df['店舗平均期待度'].apply(classify_day_eval)
+    
+    # --- 実際の店舗全体の成績を計算して結合 ---
+    if not df_raw_temp.empty:
+        shop_raw_temp = df_raw_temp[df_raw_temp[shop_col] == selected_shop]
+        shop_daily_actual = shop_raw_temp.groupby('対象日付').agg(店舗全体平均差枚=('差枚', 'mean')).reset_index()
+        if '対象日付' in daily_avg_score_df.columns:
+            daily_avg_score_df = pd.merge(daily_avg_score_df, shop_daily_actual, on='対象日付', how='left')
+    else:
+        daily_avg_score_df['店舗全体平均差枚'] = np.nan
+
+    if '対象日付' in daily_avg_score_df.columns:
+        # 重複カラムを避けるため必要なものだけ結合
+        ai_recom_df = pd.merge(ai_recom_df, daily_avg_score_df[['対象日付', '店舗平均期待度', '予測営業区分', '店舗全体平均差枚']], on='対象日付', how='left')
+    else:
+        ai_recom_df['店舗平均期待度'] = np.nan
+        ai_recom_df['予測営業区分'] = "⚖️ 通常営業予測 (10~19%)"
+        ai_recom_df['店舗全体平均差枚'] = np.nan
+
     # 日別推移データをAI評価より先に計算する
-    daily_stats = ai_recom_df.groupby('対象日付').agg(
+    daily_stats = ai_recom_df.groupby(['対象日付', '予測営業区分']).agg(
         high_setting_count=('valid_high', 'sum'),
         valid_count=('valid_play', 'sum'),
         total_profit=('差枚_actual', 'sum'),
@@ -454,6 +493,48 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         count=('台番号', 'count')
     ).reset_index().sort_values('対象日付')
     daily_stats['high_setting_rate'] = np.where(daily_stats['valid_count'] > 0, daily_stats['high_setting_count'] / daily_stats['valid_count'], 0.0)
+
+    # --- 還元日/回収日 予測別のAI成績 ---
+    st.divider()
+    st.subheader("🗓️ 還元日 / 回収日 予測別の成績")
+    st.caption("AIが店舗全体の期待度から「還元日」「通常営業」「回収日」と判断した日ごとの、推奨台の勝率や高設定率です。AIが回収日を正しく警戒できているか確認できます。")
+    
+    day_type_stats = ai_recom_df.groupby('予測営業区分').agg(
+        検証日数=('対象日付', 'nunique'),
+        検証台数=('台番号', 'count'),
+        有効稼働数=('valid_play', 'sum'),
+        高設定数=('valid_high', 'sum'),
+        勝数=('valid_win', 'sum'),
+        推奨台平均差枚=('差枚_actual', 'mean'),
+        平均設定5近似度=('設定5近似度', 'mean')
+    ).reset_index()
+    day_type_stats['推奨台勝率'] = np.where(day_type_stats['有効稼働数'] > 0, day_type_stats['勝数'] / day_type_stats['有効稼働数'] * 100, 0.0)
+    day_type_stats['推奨台高設定率'] = np.where(day_type_stats['有効稼働数'] > 0, day_type_stats['高設定数'] / day_type_stats['有効稼働数'] * 100, 0.0)
+    
+    # 店舗全体の実際の平均差枚を集計して結合
+    day_eval_summary = daily_avg_score_df.groupby('予測営業区分').agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
+    day_type_stats = pd.merge(day_type_stats, day_eval_summary, on='予測営業区分', how='left')
+    
+    day_order = {"🔥 還元日予測 (20%~)": 1, "⚖️ 通常営業予測 (10~19%)": 2, "🥶 回収日予測 (~9%)": 3}
+    day_type_stats['sort'] = day_type_stats['予測営業区分'].map(day_order).fillna(99)
+    day_type_stats = day_type_stats.sort_values('sort').drop('sort', axis=1)
+    
+    st.dataframe(
+        day_type_stats[['予測営業区分', '検証日数', '検証台数', '有効稼働数', '推奨台高設定率', '推奨台勝率', '推奨台平均差枚', '店舗全体平均差枚', '平均設定5近似度']],
+        column_config={
+            "予測営業区分": st.column_config.TextColumn("AIの営業予測"),
+            "検証日数": st.column_config.NumberColumn("日数", format="%d日"),
+            "検証台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
+            "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+            "推奨台高設定率": st.column_config.ProgressColumn("推奨台 高設定率", format="%.1f%%", min_value=0, max_value=100),
+            "推奨台勝率": st.column_config.ProgressColumn("推奨台 勝率", format="%.1f%%", min_value=0, max_value=100),
+            "推奨台平均差枚": st.column_config.NumberColumn("推奨台 平均差枚", format="%+d枚"),
+            "店舗全体平均差枚": st.column_config.NumberColumn("店舗全体 平均差枚", format="%+d枚", help="その日の店舗全体の実際の平均差枚。AIが還元日/回収日を正しく予測できていたかの答え合わせです。"),
+            "平均設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点")
+        },
+        hide_index=True,
+        width="stretch"
+    )
 
     # --- AI振り返りレポート ---
     st.divider()
@@ -790,10 +871,28 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 if len(high_score_df) >= 5 and (high_score_accuracy - period_high_setting_rate) < 0.05:
                     diag_shop = {"status": "🔴", "title": "店舗の素直さ(予測困難)", "msg": "データ・稼働・AI設定は悪くないにも関わらず、AI推奨台が結果を出せていません。店長が「完全ランダム」で設定を入れているか、前日の凹み台などを「意図的にフェイクとして使う」など、非常に読みにくい（騙してくる）店舗である可能性が高いです。"}
 
+            # 要因6: 還元/回収予測の精度
+            diag_eval = {"status": "🟢", "title": "店舗全体の還元/回収予測", "msg": "店舗全体の還元日・回収日をある程度正しく予測できています。"}
+            if 'day_type_stats' in locals() and not day_type_stats.empty and '店舗全体平均差枚' in day_type_stats.columns:
+                try:
+                    day_type_stats_dict = day_type_stats.set_index('予測営業区分')['店舗全体平均差枚'].to_dict()
+                    hot_diff = day_type_stats_dict.get("🔥 還元日予測 (20%~)", np.nan)
+                    cold_diff = day_type_stats_dict.get("🥶 回収日予測 (~9%)", np.nan)
+                    
+                    if pd.notna(hot_diff) and pd.notna(cold_diff):
+                        if cold_diff > hot_diff:
+                            diag_eval = {"status": "🔴", "title": "店舗全体の還元/回収予測", "msg": f"AIが「回収日」と予測した日（実際 {int(cold_diff):+d}枚）のほうが、「還元日」と予測した日（実際 {int(hot_diff):+d}枚）よりも出ているという逆転現象が起きています。店舗の熱さを見誤っている可能性があります。"}
+                        elif hot_diff < 0 and cold_diff < 0:
+                            diag_eval = {"status": "🟡", "title": "店舗全体の還元/回収予測", "msg": f"還元日予測（実際 {int(hot_diff):+d}枚）でも店舗全体がマイナスです。この店舗は全体的にかなり渋い（ベースが低い）可能性があります。"}
+                        elif hot_diff > 100 and cold_diff < 0:
+                            diag_eval = {"status": "🌟", "title": "店舗全体の還元/回収予測", "msg": f"還元日（実際 {int(hot_diff):+d}枚）と回収日（実際 {int(cold_diff):+d}枚）を見事に予測・判別できています！"}
+                except Exception:
+                    pass
+
             with st.expander("🤖 総合原因分析 (AIの自己診断レポート)", expanded=True):
                 st.markdown("精度検証の結果から、予測がうまくいっているか、あるいは**何が原因で精度が落ちているか**を総合的に診断します。")
                 
-                for diag in [diag_data, diag_kado, diag_ai, diag_feat, diag_shop]:
+                for diag in [diag_data, diag_kado, diag_ai, diag_feat, diag_shop, diag_eval]:
                     st.markdown(f"**{diag['status']} {diag['title']}**: {diag['msg']}")
                 
                 st.divider()

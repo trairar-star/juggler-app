@@ -211,10 +211,14 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         all_win_rate_str = f"{all_win_c / len(valid_all):.1%} ({all_win_c}/{len(valid_all)}台)"
     else:
         all_win_rate_str = "- (0/0台)"
-    st.caption(f"📊 店舗全体の勝率: **{all_win_rate_str}** (有効稼働のみ対象)")
+    all_avg_diff = all_diff.mean() if not all_diff.empty else 0
+    st.caption(f"📊 店舗全体の勝率: **{all_win_rate_str}** (有効稼働のみ対象) ｜ 店舗全体平均差枚: **{int(all_avg_diff):+d}枚**")
 
     # --- 本日のAI精度パーセントの計算と表示 ---
     if 'prediction_score' in display_df.columns:
+        avg_pred_score = display_df['prediction_score'].mean()
+        day_eval_str = "🔥 還元日予測" if pd.notna(avg_pred_score) and avg_pred_score >= 0.20 else "🥶 回収日予測" if pd.notna(avg_pred_score) and avg_pred_score < 0.10 else "⚖️ 通常営業予測"
+
         limit = max(3, int(len(display_df) * 0.10))
         if 'AI順位_num' in display_df.columns:
             ai_target_df = display_df[display_df['AI順位_num'] <= limit]
@@ -239,7 +243,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             else:
                 win_rate_str = "- (0/0台)"
                 
-            st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%**\n\n{target_label} **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
+            st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗の平均期待度: {avg_pred_score*100:.1f}% ({day_eval_str})\n\n{target_label} **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
 
     # --- 表示件数の絞り込み ---
     if display_mode == "厳選台 (上位10%)":

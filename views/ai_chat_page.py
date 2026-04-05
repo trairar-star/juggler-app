@@ -115,6 +115,47 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         avg_games = recent_data['累計ゲーム'].mean()
                         context_data += f"\n【{selected_shop} の直近1週間の店舗状況】\n店舗平均差枚: 約 {int(avg_diff):+d} 枚\n平均回転数: 約 {int(avg_games)} G (※稼働が高いほど客層レベルが高く後ヅモが困難)\n"
             
+                    # 店舗全体の還元日/回収日の傾向
+                    shop_daily_df = shop_raw.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
+                    shop_daily_df['曜日'] = shop_daily_df['対象日付'].dt.dayofweek
+                    shop_daily_df['末尾'] = shop_daily_df['対象日付'].dt.day % 10
+                    
+                    if df_events is not None and not df_events.empty:
+                        events_shop = df_events[df_events['店名'] == selected_shop].drop_duplicates(subset=['イベント日付'], keep='last')
+                        events_shop['イベント日付'] = pd.to_datetime(events_shop['イベント日付'])
+                        shop_daily_df = pd.merge(shop_daily_df, events_shop[['イベント日付', 'イベントランク']], left_on='対象日付', right_on='イベント日付', how='left')
+                        shop_daily_df['イベント有無'] = shop_daily_df['イベント日付'].notna().map({True: 'イベント日', False: '通常日'})
+                        shop_daily_df['イベントランク'] = shop_daily_df['イベントランク'].fillna('通常営業')
+                    else:
+                        shop_daily_df['イベント有無'] = '通常日'
+                        shop_daily_df['イベントランク'] = '通常営業'
+                    
+                    wd_stats = shop_daily_df.groupby('曜日')['店舗平均差枚'].mean()
+                    digit_stats = shop_daily_df.groupby('末尾')['店舗平均差枚'].mean()
+                    ev_stats = shop_daily_df.groupby('イベント有無')['店舗平均差枚'].mean()
+                    rank_stats = shop_daily_df.groupby('イベントランク')['店舗平均差枚'].mean().sort_values(ascending=False)
+                    
+                    if not wd_stats.empty and not digit_stats.empty:
+                        weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
+                        best_wd = wd_stats.idxmax()
+                        worst_wd = wd_stats.idxmin()
+                        best_digit = digit_stats.idxmax()
+                        worst_digit = digit_stats.idxmin()
+                        
+                        context_data += f"\n【{selected_shop} の全体的な還元/回収の傾向 (過去実績)】\n"
+                        context_data += f"・最も甘い(還元)曜日: {weekdays_map[best_wd]}曜日 (平均 {int(wd_stats[best_wd]):+d}枚)\n"
+                        context_data += f"・最も辛い(回収)曜日: {weekdays_map[worst_wd]}曜日 (平均 {int(wd_stats[worst_wd]):+d}枚)\n"
+                        context_data += f"・最も甘い(還元)特定日: {best_digit}のつく日 (平均 {int(digit_stats[best_digit]):+d}枚)\n"
+                        context_data += f"・最も辛い(回収)特定日: {worst_digit}のつく日 (平均 {int(digit_stats[worst_digit]):+d}枚)\n"
+                        if 'イベント日' in ev_stats.index and '通常日' in ev_stats.index:
+                            context_data += f"・イベント日の営業: イベント日 平均 {int(ev_stats['イベント日']):+d}枚 / 通常日 平均 {int(ev_stats['通常日']):+d}枚\n"
+                            rank_strs = []
+                            for r_name, r_val in rank_stats.items():
+                                if r_name != '通常営業':
+                                    rank_strs.append(f"{r_name}: {int(r_val):+d}枚")
+                            if rank_strs:
+                                context_data += f"  (イベントランク別実績: {', '.join(rank_strs)})\n"
+            
             if df_events is not None and not df_events.empty:
                 shop_events = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント日付'].dt.strftime('%Y-%m-%d') == target_date_str)]
                 if not shop_events.empty:
@@ -124,7 +165,20 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         ev_rank = ev.get('イベントランク', '不明')
                         ev_type = ev.get('イベント種別', '全体')
                         ev_target = ev.get('対象機種', '指定なし')
-                        context_data += f"・{ev_name} (ランク: {ev_rank}, 種別: {ev_type}, 対象: {ev_target})\n"
+                        
+                        # --- 過去の同名イベントの実績を集計 ---
+                        past_ev_stats_str = "過去実績なし"
+                        if not df_raw.empty:
+                            past_ev_dates = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント名'] == ev_name) & (df_events['イベント日付'].dt.strftime('%Y-%m-%d') != target_date_str)]['イベント日付'].dt.strftime('%Y-%m-%d').tolist()
+                            if past_ev_dates:
+                                shop_raw_temp = df_raw[df_raw[shop_col] == selected_shop].copy()
+                                shop_raw_temp['対象日付_str'] = pd.to_datetime(shop_raw_temp['対象日付'], errors='coerce').dt.strftime('%Y-%m-%d')
+                                past_ev_raw = shop_raw_temp[shop_raw_temp['対象日付_str'].isin(past_ev_dates)]
+                                if not past_ev_raw.empty:
+                                    past_ev_avg_diff = past_ev_raw.groupby('対象日付_str')['差枚'].mean().mean()
+                                    past_ev_stats_str = f"過去実績: 店舗平均 {int(past_ev_avg_diff):+d} 枚"
+                                    
+                        context_data += f"・{ev_name} (ランク: {ev_rank}, 種別: {ev_type}, 対象: {ev_target}) ｜ {past_ev_stats_str}\n"
 
             # --- 1.5. 過去のイベント種別ごとのジャグラー実績 (シワ寄せ確認用) ---
             if df_events is not None and not df_events.empty and not df_raw.empty:
@@ -212,6 +266,34 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
             if not df_predict.empty:
                 shop_pred = df_predict[df_predict[shop_col] == selected_shop].sort_values('prediction_score', ascending=False)
                 if not shop_pred.empty:
+                    # スプレッドシートから正確な店舗全体の平均期待度を取得
+                    df_daily_scores = backend.load_daily_shop_scores()
+                    avg_pred_score = None
+                    if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
+                        try:
+                            target_dt_str = pd.to_datetime(target_date_str).strftime('%Y-%m-%d')
+                            temp_scores = df_daily_scores.copy()
+                            temp_scores['予測対象日_str'] = pd.to_datetime(temp_scores['予測対象日'], errors='coerce').dt.strftime('%Y-%m-%d')
+                            shop_daily = temp_scores[(temp_scores['店名'] == selected_shop) & (temp_scores['予測対象日_str'] == target_dt_str)]
+                            if not shop_daily.empty and '店舗平均期待度' in shop_daily.columns:
+                                avg_pred_score = shop_daily['店舗平均期待度'].dropna().iloc[0]
+                        except Exception: pass
+                            
+                    if avg_pred_score is None or pd.isna(avg_pred_score):
+                        avg_pred_score = shop_pred['prediction_score'].mean()
+
+                    context_data += f"\n【{selected_shop} の {target_date_str} の店舗全体AI期待度 (還元日/回収日の目安)】\n"
+                    if pd.notna(avg_pred_score):
+                        context_data += f"店舗全体の平均期待度: {avg_pred_score*100:.1f}%\n"
+                        if avg_pred_score >= 0.20:
+                            context_data += "AI評価: 全体的にベースが高く、還元日(特定日など)の可能性が高いです。積極的に勝負できる日です。\n"
+                        elif avg_pred_score >= 0.10:
+                            context_data += "AI評価: 通常営業レベルの平均的な配分です。狙い台をしっかり絞る必要があります。\n"
+                        else:
+                            context_data += "AI評価: 店舗全体がかなり弱く、回収日の可能性が高いです。強い根拠がない限りは無理な勝負を避けるべきです。\n"
+                    else:
+                        context_data += "店舗全体の平均期待度: 不明\n"
+
                     context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (全台の期待度ランキング)】\n"
                     cols = ['台番号', '機種名', 'prediction_score', '根拠']
                     available_cols = [c for c in cols if c in shop_pred.columns]
@@ -221,6 +303,17 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")
                     
                     context_data += display_df.to_markdown(index=False) + "\n"
+
+                    # --- 4.2. 島（列）ごとの期待度 ---
+                    if 'island_id' in shop_pred.columns:
+                        island_pred = shop_pred[shop_pred['island_id'] != "Unknown"].copy()
+                        if not island_pred.empty:
+                            island_pred['島名'] = island_pred['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                            isl_stats = island_pred.groupby('島名')['prediction_score'].mean().sort_values(ascending=False)
+                            context_data += f"\n【{selected_shop} の {target_date_str} の島(列)別 平均期待度 (どの島が熱いか)】\n"
+                            for i_name, i_score in isl_stats.items():
+                                eval_str = "還元島" if i_score >= 0.20 else "通常" if i_score >= 0.10 else "回収島"
+                                context_data += f"・{i_name}: 平均期待度 {i_score*100:.1f}% ({eval_str})\n"
 
                     # --- 4.5. 上位推奨台の直近3日間の個別履歴データ ---
                     if not df_raw.empty:
@@ -358,6 +451,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 ・アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
 ・お客様が「パチンコや他機種のイベントの日の状況はどう？」と質問された場合、他機種自体の出玉状況ではなく「そのイベントのシワ寄せでジャグラー（スロット）が回収されているか、あるいは還元されているか」という情報を求めています。提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 ・「AI予測実績（勝率や自己評価）」のデータが提供されている場合は、AI自身の実力が現在その店舗でどれくらい通用しているかを客観的に捉え、勝率が低ければ無理に推奨台を薦めず「今は予測が当たりにくい危険な状態なので様子見が無難」といった警告も行ってください。
+・対象日のイベント情報に「過去実績: 店舗平均 +〇〇枚」とある場合、そのイベントは過去に還元している実績がある強いイベントであることをお客様にお伝えし、おすすめしてください。逆に過去実績がマイナスの場合は「過去の傾向では回収されているイベント」として注意喚起してください。
+・お客様が「今日はどう？」と全体的な状況を聞いてきた場合、提供されている「店舗全体AI期待度 (還元日/回収日の目安)」を元に、その日が「還元日」か「回収日」かを判断し、全体的な立ち回りの方針（攻めるべきか、撤退すべきか）を必ずアドバイスに含めてください。
+・お客様から「どんな日が還元日？回収日？」と傾向を聞かれた場合、提供されている「全体的な還元/回収の傾向 (過去実績)」のデータから、甘い曜日・特定日や辛い曜日・特定日を具体的に教えてください。また、その日が「辛い曜日・特定日」に該当する場合、または全体的な状況が「回収日」である場合、「基本的には勝負を避けるべき（行かないほうが無難）」と警告しつつも、「AIが特に高く評価している上位の期待台（激アツ台）であれば試してみる価値はある」とフォローしてください。ただし、その場合は「少しでも挙動が悪ければ即撤退する」など、撤退基準を非常に厳しく設定するよう強く念押ししてください。
 ・店舗の「強い末尾番号」や「強い曜日」のデータが提供されている場合は、それらも具体的な狙い目の根拠としてアドバイスに積極的に盛り込んでください。
 ・お客様が稼働中の台のデータ（機種名、現在の総回転数、BIG回数、REG回数など）を提示して相談された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を自ら計算し、高設定の期待度や押し引き（ヤメ時）の的確なアドバイスを行ってください。
 ・お客様から特定の「台番号」について相談された場合、提供されている「予測データ (全台の期待度ランキング)」からその台の事前期待度と根拠を確認して回答してください。もし上位10台に含まれていれば「個別データ(直近3日間の履歴)」も交えて具体的にアドバイスし、逆に期待度が低い台（期待外れ・危険台）の場合はその旨と低評価の根拠を正直に伝えて撤退などの注意を促してください。
