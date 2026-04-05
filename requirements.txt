@@ -9,3 +9,4 @@ gspread
 google-auth
 pyarrow
 google-generativeai
+tabulate
