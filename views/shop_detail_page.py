@@ -527,7 +527,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 # 店舗ごとの集計
                 shop_stats = df.groupby(shop_col).agg(
                     平均スコア=('prediction_score', 'mean'),
-                    推奨台数=('prediction_score', lambda x: (x >= 0.50).sum()),
+                    推奨台数=('prediction_score', lambda x: (x >= 0.65).sum()),
                     全台数=('台番号', 'nunique')
                 ).reset_index()
                 
@@ -593,8 +593,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         merged['top_k_threshold'] = merged[shop_col].apply(lambda x: max(3, min(10, int(shop_machine_counts.get(x, 50) * 0.10))))
                         
                         merged['daily_rank'] = merged.groupby(['予測対象日_merge', shop_col])['prediction_score'].rank(method='first', ascending=False)
-                        # 上位10%枠に入っていなくても、期待度50%以上の熱い台は評価対象に含める
-                        high_expect_df = merged[(merged['daily_rank'] <= merged['top_k_threshold']) | (merged['prediction_score'] >= 0.50)].copy()
+                        high_expect_df = merged[merged['daily_rank'] <= merged['top_k_threshold']].copy()
                         
                         if not high_expect_df.empty:
                             act_b = pd.to_numeric(high_expect_df['BIG'], errors='coerce').fillna(0)
@@ -671,11 +670,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     column_config={
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
                         "平均スコア": st.column_config.ProgressColumn("期待度", width="small", min_value=0, max_value=1.0, format="%.2f", help="明日の店舗全体の平均的な設定5以上確率"),
-                        "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が50%以上の台数"),
+                        "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が65%以上の激アツ台数"),
                         "全台数": st.column_config.NumberColumn("全台", width="small", format="%d台"),
                         "収集日数": st.column_config.ProgressColumn("進捗", width="small", format="%d日/30日", min_value=0, max_value=30, help="AIの信頼度が最大になる30日分のデータ収集までの進捗です。"),
-                        "AI正答率": st.column_config.TextColumn("正答率", width="small", help=f"{eval_period}にAIが推奨した台（上位約10% または 期待度50%以上）が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
-                        "AI推奨台勝率": st.column_config.TextColumn("勝率", width="small", help="AIが推奨した台（上位約10% または 期待度50%以上）が、実際に差枚プラスで終わった割合と台数です。"),
+                        "AI正答率": st.column_config.TextColumn("正答率", width="small", help=f"{eval_period}にAIが推奨した台（上位約10%）が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
+                        "AI推奨台勝率": st.column_config.TextColumn("勝率", width="small", help="AIが推奨した台（上位約10%）が、実際に差枚プラスで終わった割合と台数です。"),
                     },
                     hide_index=True,
                     width="stretch"

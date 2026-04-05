@@ -284,7 +284,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             merged_acc['daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
                             top_k = max(3, min(10, int(df_raw_temp['台番号'].nunique() * 0.10)))
                             
-                            high_expect_df = merged_acc[(merged_acc['daily_rank'] <= top_k) | (merged_acc['prediction_score'] >= 0.70)].copy()
+                            high_expect_df = merged_acc[merged_acc['daily_rank'] <= top_k].copy()
                             
                             if not high_expect_df.empty:
                                 act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)

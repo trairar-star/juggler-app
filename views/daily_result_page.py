@@ -215,11 +215,12 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # --- 本日のAI精度パーセントの計算と表示 ---
     if 'prediction_score' in display_df.columns:
-        ai_target_df = display_df[display_df['prediction_score'] >= 0.50]
-        target_label = "AI推奨台(期待度50%以上)"
-        if ai_target_df.empty and 'AI順位_num' in display_df.columns:
-            ai_target_df = display_df[display_df['AI順位_num'] <= 10]
-            target_label = "AI予測上位10台"
+        limit = max(3, int(len(display_df) * 0.10))
+        if 'AI順位_num' in display_df.columns:
+            ai_target_df = display_df[display_df['AI順位_num'] <= limit]
+        else:
+            ai_target_df = display_df.sort_values('prediction_score', ascending=False).head(limit)
+        target_label = f"AI推奨台(上位10%・計{len(ai_target_df)}台)"
             
         if not ai_target_df.empty:
             hit_df = ai_target_df[(ai_target_df['差枚'] > 0) | (ai_target_df['結果点数'] >= 50)]
