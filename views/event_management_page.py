@@ -30,8 +30,8 @@ def render_event_management_page(df_raw):
                 if submitted:
                     t_mac = reg_target.strip() if reg_target.strip() else "指定なし"
                     if backend.save_shop_event(reg_shop, reg_date, reg_name, reg_rank, reg_type, t_mac):
-                        st.success(f"{reg_shop} のイベントを登録しました！")
-                        st.cache_data.clear()
+                        st.success(f"{reg_shop} のイベントを登録しました！\n\n💡 **続けて登録できます。**\nすべての登録が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
+                        backend.load_shop_events.clear()
                         st.rerun()
         else:
             st.warning("店舗データが見つからないため、イベントを登録できません。")
@@ -113,8 +113,8 @@ def render_event_management_page(df_raw):
             if st.form_submit_button("更新を保存", type="primary"):
                 e_t_mac = edit_target.strip() if edit_target.strip() else "指定なし"
                 if backend.update_shop_event(target_row['店名'], default_date, target_row['イベント名'], edit_shop, edit_date, edit_name, edit_rank, edit_type, e_t_mac):
-                    st.success("イベントを更新しました！")
-                    st.cache_data.clear()
+                    st.success("イベントを更新しました！\n\n💡 すべての編集が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
+                    backend.load_shop_events.clear()
                     st.rerun()
                 else:
                     st.error("イベントの更新に失敗しました。")
@@ -130,8 +130,8 @@ def render_event_management_page(df_raw):
             target_row = df_display[df_display['uid'] == target_uid].iloc[0]
             
             if backend.delete_shop_event(target_row['店名'], target_row['イベント日付'], target_row['イベント名']):
-                st.success(f"削除しました: {target_uid}")
-                st.cache_data.clear() # キャッシュクリア
+                st.success(f"削除しました: {target_uid}\n\n💡 すべての削除が終わったら、サイドバーの「🔄 データ更新 (再読み込み)」を押してAIに反映させてください。")
+                backend.load_shop_events.clear()
                 st.rerun()
             else:
                 st.error("削除に失敗しました。")
