@@ -79,15 +79,36 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 
     st.divider()
     
-    # --- 使用するモデルの選択 ---
-    model_options = {
-        "Gemini 1.5 Flash (推奨・制限緩め・高速)": "gemini-1.5-flash",
-        "Gemini 1.5 Pro (高性能・制限やや厳しめ)": "gemini-1.5-pro",
-        "Gemini 2.5 Flash (最新・無料枠制限厳しめ)": "gemini-2.5-flash"
-    }
+    # --- APIキーで利用可能なモデルを動的取得して選択肢を作成 ---
+    @st.cache_data(ttl=3600)
+    def get_available_models():
+        if "GEMINI_API_KEY" in st.secrets:
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        try:
+            return [m.name.replace('models/', '') for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        except Exception:
+            return []
+            
+    available_models = get_available_models()
+    model_options = {}
+    
+    flash_15 = next((m for m in available_models if "1.5-flash" in m and "8b" not in m), None)
+    pro_15 = next((m for m in available_models if "1.5-pro" in m), None)
+    flash_25 = next((m for m in available_models if "2.5-flash" in m), None)
+    
+    if flash_15: model_options[f"{flash_15} (推奨・制限緩め)"] = flash_15
+    if pro_15: model_options[f"{pro_15} (高性能)"] = pro_15
+    if flash_25: model_options[f"{flash_25} (最新・制限厳しめ)"] = flash_25
+        
+    if not model_options and available_models:
+        for m in available_models: model_options[m] = m
+            
+    if not model_options:
+        model_options = {"gemini-1.5-flash-latest (推奨)": "gemini-1.5-flash-latest", "gemini-1.5-pro-latest": "gemini-1.5-pro-latest"}
+
     selected_model_label = st.selectbox(
         "🧠 使用するAIモデルを選択", list(model_options.keys()), index=0,
-        help="無料枠の制限に引っかかった場合は「Gemini 1.5 Flash」を選択してください。1日1500回まで無料で利用できます。"
+        help="現在お使いのAPIキーで実際に利用可能なモデルを自動取得して表示しています。"
     )
     target_model = model_options[selected_model_label]
 
@@ -572,6 +593,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     if "429" in error_msg or "Quota exceeded" in error_msg:
                         st.error("⚠️ AIの利用制限（APIリクエスト上限）に達しました。")
                         st.warning("無料枠の利用制限（1分あたりの回数、または1日あたりの上限）に引っかかっています。しばらく時間（約1分〜翌日）を置いてから再度お試しください。\n\n※継続して発生する場合は、Google AI StudioでAPIキーのプラン（課金設定）を確認してください。")
+                    elif "404" in error_msg and "not found" in error_msg:
+                        st.error(f"⚠️ 指定されたAIモデル（{target_model}）が見つかりません。")
+                        st.warning("現在お使いのAPIキーではこのモデル名にアクセスできない可能性があります。プルダウンから別のモデルを選択してお試しください。")
                     else:
                         st.error(f"APIリクエスト中にエラーが発生しました: {e}")
                     
