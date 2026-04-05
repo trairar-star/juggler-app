@@ -2243,21 +2243,21 @@ def _postprocess_predictions(predict_df, train_df):
     predict_df = all_df[all_df['next_diff'].isna()].copy()
 
     def get_rating(score):
-        if score >= 0.85: return 'A'
-        elif score >= 0.70: return 'B'
-        elif score >= 0.50: return 'C'
-        elif score >= 0.30: return 'D'
+        if score >= 0.70: return 'A'
+        elif score >= 0.55: return 'B'
+        elif score >= 0.40: return 'C'
+        elif score >= 0.25: return 'D'
         else: return 'E'
 
     def get_reason(row):
         comments, reasons = [], []
         score = row.get('prediction_score', 0)
-        if score > 0.8: comments.append("【激アツ】AIの自信度が非常に高いです。")
+        if score > 0.60: comments.append("【激アツ】AIの自信度が非常に高いです。")
         
         past_score = row.get('past_prediction_score', 0)
         diff = row.get('差枚', 0)
         
-        if past_score >= 0.70:
+        if past_score >= 0.50:
             if diff <= -500:
                 reasons.append(f"【AIリベンジ狙い】前日もAIが強く推奨(期待度{past_score*100:.0f}%)していましたが不発でした。高設定据え置きのリベンジが期待できます。")
             elif diff > 0:
@@ -2420,7 +2420,7 @@ def _postprocess_predictions(predict_df, train_df):
             comments.append(" ".join(reasons))
             
         if not has_strong_reason:
-            if score > 0.6: comments.append("目立った特徴はありませんが、全体バランスからAIが高く評価しました。")
+            if score > 0.40: comments.append("目立った特徴はありませんが、全体バランスからAIが高く評価しました。")
             else: comments.append("特筆すべき強い根拠はありません。")
             
         base_reason = " ".join(comments)

@@ -216,7 +216,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     cols = ['台番号', '機種名', 'prediction_score', '根拠']
                     available_cols = [c for c in cols if c in shop_pred.columns]
                     
-                    display_df = top_10[available_cols].copy()
                     display_df = shop_pred[available_cols].copy()
                     if 'prediction_score' in display_df.columns:
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")

@@ -744,7 +744,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
             total_eval_count = len(prob_analysis_df)
             period_high_setting_rate = prob_analysis_df['valid_high'].sum() / prob_analysis_df['valid_play'].sum() if prob_analysis_df['valid_play'].sum() > 0 else 0
-            high_score_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.65]
+            high_score_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.50]
             high_score_accuracy = high_score_df['valid_high'].sum() / high_score_df['valid_play'].sum() if high_score_df['valid_play'].sum() > 0 else 0
             score_mean = prob_analysis_df['prediction_score'].mean()
             
@@ -780,7 +780,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # 要因4: 特徴量の多さ (次元の呪い)
             diag_feat = {"status": "🟢", "title": "特徴量の多さ", "msg": "学習データに対して適切な条件分岐が行われています。"}
             if total_eval_count >= 50 and len(high_score_df) == 0:
-                 diag_feat = {"status": "🟡", "title": "特徴量の多さ(条件厳格化)", "msg": "期待度65%を超える台が1台もありません。AIが多くの特徴量（条件）を同時に満たす完璧な台を探しすぎて、身動きが取れなくなっています。"}
+                 diag_feat = {"status": "🟡", "title": "特徴量の多さ(条件厳格化)", "msg": "期待度50%を超える台が1台もありません。AIが多くの特徴量（条件）を同時に満たす完璧な台を探しすぎて、身動きが取れなくなっています。"}
 
             # 要因5: 店舗の読みにくさ (ランダム・フェイク)
             diag_shop = {"status": "🟢", "title": "店舗の素直さ", "msg": "店舗のクセをある程度捉えられています。"}
@@ -1093,7 +1093,6 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if test_btn:
             with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
                 import lightgbm as lgb
-                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
                 base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
                 actual_features = [f for f in base_features if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]

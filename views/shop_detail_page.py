@@ -527,7 +527,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 # 店舗ごとの集計
                 shop_stats = df.groupby(shop_col).agg(
                     平均スコア=('prediction_score', 'mean'),
-                    推奨台数=('prediction_score', lambda x: (x >= 0.70).sum()),
+                    推奨台数=('prediction_score', lambda x: (x >= 0.50).sum()),
                     全台数=('台番号', 'nunique')
                 ).reset_index()
                 
@@ -593,8 +593,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         merged['top_k_threshold'] = merged[shop_col].apply(lambda x: max(3, min(10, int(shop_machine_counts.get(x, 50) * 0.10))))
                         
                         merged['daily_rank'] = merged.groupby(['予測対象日_merge', shop_col])['prediction_score'].rank(method='first', ascending=False)
-                        # 上位10%枠に入っていなくても、期待度70%以上の激アツ台は評価対象に含める
-                        high_expect_df = merged[(merged['daily_rank'] <= merged['top_k_threshold']) | (merged['prediction_score'] >= 0.70)].copy()
+                        # 上位10%枠に入っていなくても、期待度50%以上の熱い台は評価対象に含める
+                        high_expect_df = merged[(merged['daily_rank'] <= merged['top_k_threshold']) | (merged['prediction_score'] >= 0.50)].copy()
                         
                         if not high_expect_df.empty:
                             act_b = pd.to_numeric(high_expect_df['BIG'], errors='coerce').fillna(0)
@@ -671,11 +671,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     column_config={
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
                         "平均スコア": st.column_config.ProgressColumn("期待度", width="small", min_value=0, max_value=1.0, format="%.2f", help="明日の店舗全体の平均的な設定5以上確率"),
-                        "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が70%以上の台数"),
+                        "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が50%以上の台数"),
                         "全台数": st.column_config.NumberColumn("全台", width="small", format="%d台"),
                         "収集日数": st.column_config.ProgressColumn("進捗", width="small", format="%d日/30日", min_value=0, max_value=30, help="AIの信頼度が最大になる30日分のデータ収集までの進捗です。"),
-                        "AI正答率": st.column_config.TextColumn("正答率", width="small", help=f"{eval_period}にAIが推奨した台（上位約10% または 期待度70%以上）が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
-                        "AI推奨台勝率": st.column_config.TextColumn("勝率", width="small", help="AIが推奨した台（上位約10% または 期待度70%以上）が、実際に差枚プラスで終わった割合と台数です。"),
+                        "AI正答率": st.column_config.TextColumn("正答率", width="small", help=f"{eval_period}にAIが推奨した台（上位約10% または 期待度50%以上）が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
+                        "AI推奨台勝率": st.column_config.TextColumn("勝率", width="small", help="AIが推奨した台（上位約10% または 期待度50%以上）が、実際に差枚プラスで終わった割合と台数です。"),
                     },
                     hide_index=True,
                     width="stretch"
@@ -684,9 +684,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
         # --- 🚨 激アツ台 アラート ---
         if 'prediction_score' in df.columns:
             if '予測信頼度' in df.columns:
-                super_hot_df = df[(df['prediction_score'] >= 0.80) & (df['予測信頼度'] != '🔻低')]
+                super_hot_df = df[(df['prediction_score'] >= 0.60) & (df['予測信頼度'] != '🔻低')]
             else:
-                super_hot_df = df[df['prediction_score'] >= 0.80]
+                super_hot_df = df[df['prediction_score'] >= 0.60]
                 
             super_hot_df = super_hot_df.sort_values('prediction_score', ascending=False)
             
@@ -694,7 +694,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 html_str = f"""
                 <div style="background-color: rgba(244, 67, 54, 0.1); border-left: 5px solid #f44336; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
                     <h4 style="color: #d32f2f; margin-top: 0; margin-bottom: 10px;">🚨 激アツ台 発見！ ({len(super_hot_df)}台)</h4>
-                    <p style="color: #b71c1c; margin-bottom: 10px; font-size: 0.9em;">期待度80%以上かつデータ信頼度が十分な、超・狙い目台です！最優先での確保をおすすめします。</p>
+                    <p style="color: #b71c1c; margin-bottom: 10px; font-size: 0.9em;">期待度60%以上かつデータ信頼度が十分な、超・狙い目台です！最優先での確保をおすすめします。</p>
                     <ul style="color: #b71c1c; margin-bottom: 0;">
                 """
                 for _, r in super_hot_df.iterrows():
@@ -706,7 +706,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
     
         # --- メインコンテンツ: 予測ランキング表示 (上部に配置) ---
         with st.expander("🏆 予測期待度ランキング", expanded=True):
-            display_mode = st.radio("表示件数", ["厳選推奨台 (店舗別 上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True)
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                display_mode = st.radio("表示件数", ["厳選推奨台 (店舗別 上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True)
+            with col_d2:
+                min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=0, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。")
         
             sort_cols = []
             if 'prediction_score' in df.columns: sort_cols.append('prediction_score')
@@ -764,6 +768,12 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 
             if df_display.empty:
                 st.info("推奨台がありません。")
+                
+            # --- スライダーによる期待度フィルターの適用 ---
+            if not df_display.empty and '予想設定5以上確率' in df_display.columns and min_score_filter > 0:
+                df_display = df_display[df_display['予想設定5以上確率'] >= min_score_filter]
+                if df_display.empty:
+                    st.warning(f"期待度が {min_score_filter}% 以上の台はありません。スライダーを下げてみてください。")
         
             # 常に「店名」を表示するようにカラムを厳選
             base_cols = ['AI順位', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
