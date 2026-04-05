@@ -16,7 +16,7 @@ def render_event_management_page(df_raw):
                 reg_shop = st.selectbox("店舗", unique_shops)
                 reg_date = st.date_input("日付", pd.Timestamp.now(tz='Asia/Tokyo').date())
                 reg_name = st.text_input("イベント名 (例: ○○取材, リニューアル)")
-                reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い, B:普通, C:弱め")
+                reg_rank = st.selectbox("イベントの強さ (期待度)", ["SS (周年)", "S", "A", "B", "C"], index=1, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い(新台6台〜など), B:普通(新台3〜5台), C:弱め(新台1〜2台)")
                 
                 st.markdown("**対象の絞り込み**")
                 reg_type = st.radio("イベント種別", ["全体", "スロット専用", "パチンコ専用", "対象外(無効)"], horizontal=True, help="「パチンコ専用」にすると、AIは『パチンコの特日』という目印をつけて学習し、過去の傾向に基づいてスロットが回収されるか判断します。出玉に一切関係ない場合は「対象外(無効)」にしてください。")
@@ -89,7 +89,7 @@ def render_event_management_page(df_raw):
                 rank_options = ["SS (周年)", "S", "A", "B", "C"]
                 current_rank = target_row.get('イベントランク', 'A')
                 idx = rank_options.index(current_rank) if current_rank in rank_options else 1
-                edit_rank = st.selectbox("イベントの強さ", rank_options, index=idx)
+                edit_rank = st.selectbox("イベントの強さ", rank_options, index=idx, help="SS:周年・グランド・リニューアル等, S:激アツ, A:強い(新台6台〜など), B:普通(新台3〜5台), C:弱め(新台1〜2台)")
                 
             st.markdown("**対象の絞り込み**")
             t_col1, t_col2 = st.columns(2)

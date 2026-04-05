@@ -1275,30 +1275,20 @@ def _generate_features(df, df_events, df_island, target_date):
     df['target_date_end_digit'] = df['next_date'].dt.day % 10
 
     if df_events is not None and not df_events.empty and shop_col:
-        events_unique = df_events.drop_duplicates(subset=['店名', 'イベント日付'], keep='last').copy()
+        valid_events = df_events.copy()
         
-        # 「対象外(無効)」イベントのみAIの学習から除外（完全に無視する）
-        # パチンコ専用イベントは「スロットの回収日」としてマイナス学習させるため残す
-        # ただし「SS (周年)」クラスの特大イベントは、店全体に影響が波及するため除外しない
-        if 'イベント種別' in events_unique.columns:
-            cond_exclude = events_unique['イベント種別'] == '対象外(無効)'
-            cond_ss = (events_unique['イベントランク'] == 'SS (周年)') | (events_unique['イベント名'].astype(str).str.contains('周年|リニューアル|グランド'))
-            events_unique = events_unique[~(cond_exclude & ~cond_ss)]
+        # 「対象外(無効)」イベントのみAIの学習から除外
+        if 'イベント種別' in valid_events.columns:
+            cond_exclude = valid_events['イベント種別'] == '対象外(無効)'
+            cond_ss = (valid_events['イベントランク'] == 'SS (周年)') | (valid_events['イベント名'].astype(str).str.contains('周年|リニューアル|グランド'))
+            valid_events = valid_events[~(cond_exclude & ~cond_ss)].copy()
 
-        merge_cols = ['店名', 'イベント日付', 'イベント名']
-        if 'イベントランク' in events_unique.columns: merge_cols.append('イベントランク')
-        if '対象機種' in events_unique.columns: merge_cols.append('対象機種')
-
-        df = pd.merge(df, events_unique[merge_cols], on=None, left_on=['店名', 'next_date'], right_on=['店名', 'イベント日付'], how='left')
-        df = df.drop(columns=['店名_y', 'イベント日付'], errors='ignore')
-        df = df.rename(columns={'店名_x': '店名'}, errors='ignore')
+        unique_combinations = df[['店名', 'next_date', '機種名']].drop_duplicates()
+        merged_ev = pd.merge(unique_combinations, valid_events, left_on=['店名', 'next_date'], right_on=['店名', 'イベント日付'], how='inner')
         
-        df['イベント名'] = df['イベント名'].fillna('通常')
-        df['event_code'] = df['イベント名'].astype('category').cat.codes
-        
-        if '対象機種' in df.columns:
-            def calc_rank_score(row):
-                rank = row.get('イベントランク', '')
+        if not merged_ev.empty:
+            def calc_single_score(row):
+                rank = str(row.get('イベントランク', ''))
                 t_mac = str(row.get('対象機種', '指定なし'))
                 my_mac = str(row.get('機種名', ''))
                 e_type = str(row.get('イベント種別', '全体')).replace('スロット/全体', '全体')
@@ -1310,7 +1300,7 @@ def _generate_features(df, df_events, df_island, target_date):
                 if is_super_event and score < 6:
                     score = max(score, 5) # 特大イベントは最低でもSランク相当のパワーを保証
 
-                # パチンコ専用イベントの処理（特大イベントでなければ回収警戒のマイナススコア）
+                # パチンコ専用イベントの処理
                 if e_type == 'パチンコ専用':
                     if is_super_event:
                         return 3 # スロットへの波及効果として中間スコア(Bランク相当)を与える
@@ -1324,7 +1314,7 @@ def _generate_features(df, df_events, df_island, target_date):
                     else:
                         return 0
 
-                # 特定機種が指定されている場合、関係ない機種はイベントの恩恵（スコア）を無効化、またはマイナス化
+                # 特定機種が指定されている場合、関係ない機種はイベントの恩恵（スコア）をマイナス化
                 if score > 0 and t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
                     if t_mac == 'ジャグラー以外 (パチスロ他機種)':
                         if is_super_event:
@@ -1338,11 +1328,26 @@ def _generate_features(df, df_events, df_island, target_date):
                         else:
                             score = -score # イベント対象機種やパチンコへの還元のシワ寄せで回収されるとみなしてマイナス評価
                 return score
-            df['event_rank_score'] = df.apply(calc_rank_score, axis=1)
+                
+            merged_ev['single_score'] = merged_ev.apply(calc_single_score, axis=1)
+            
+            # 同日・同店舗の複数イベントのスコアと名前を合算・結合する
+            ev_summary = merged_ev.groupby(['店名', 'next_date', '機種名']).agg(
+                event_rank_score=('single_score', 'sum'),
+                イベント名=('イベント名', lambda x: ' + '.join(x.astype(str))),
+                イベントランク=('イベントランク', lambda x: ' + '.join(x.astype(str)))
+            ).reset_index()
+            
+            df = pd.merge(df, ev_summary, on=['店名', 'next_date', '機種名'], how='left')
+            df['イベント名'] = df['イベント名'].fillna('通常')
+            df['event_rank_score'] = df['event_rank_score'].fillna(0)
+            df['イベントランク'] = df['イベントランク'].fillna('')
+            df['event_code'] = df['イベント名'].astype('category').cat.codes
         else:
-            if 'イベントランク' in df.columns:
-                rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
-                df['event_rank_score'] = df['イベントランク'].map(rank_map).fillna(0)
+            df['イベント名'] = '通常'
+            df['event_rank_score'] = 0
+            df['イベントランク'] = ''
+            df['event_code'] = 0
 
     # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更
     df = df.sort_values('対象日付').reset_index(drop=True)
@@ -1462,17 +1467,65 @@ def _generate_features(df, df_events, df_island, target_date):
     # 台ごとの過去データ件数（履歴の長さ）を計算し、信頼度の指標とする
     df['history_count'] = df.groupby(group_keys).cumcount() + 1
 
+    if '機種名' in df.columns:
+        mac_group_keys = group_keys + ['機種名']
+        df['machine_history_count'] = df.groupby(mac_group_keys).cumcount() + 1
+    else:
+        df['machine_history_count'] = df['history_count']
+
     # --- 新台・配置変更の正確な検知 ---
     if shop_col:
         # その日時点での、その店舗の最大データ蓄積日数を取得
         df['shop_date_max_history'] = df.groupby([shop_col, '対象日付'])['history_count'].transform('max')
-        # 店舗として14日以上データがある状態（取得開始直後ではない）で、その台の履歴が7日以下のものを新台とみなす
-        df['is_new_machine'] = ((df['shop_date_max_history'] >= 14) & (df['history_count'] <= 7)).astype(int)
-        df = df.drop(columns=['shop_date_max_history'])
+        is_recent_machine = (df['shop_date_max_history'] >= 14) & (df['machine_history_count'] <= 7)
+        
+        df['first_active_date'] = df.groupby([shop_col, '台番号', '機種名'])['対象日付'].transform('min')
+        
+        if df_events is not None and not df_events.empty:
+            valid_ev = df_events.copy()
+            if 'イベント種別' in valid_ev.columns:
+                valid_ev = valid_ev[~valid_ev['イベント種別'].isin(['パチンコ専用', '対象外(無効)'])]
+            
+            ev_for_new = valid_ev[['店名', 'イベント日付', '対象機種', 'イベント名']].copy()
+            ev_for_new = ev_for_new.rename(columns={'店名': shop_col})
+            
+            first_dates = df.loc[is_recent_machine, [shop_col, '台番号', '機種名', 'first_active_date']].drop_duplicates()
+            merged_first = pd.merge(first_dates, ev_for_new, left_on=[shop_col, 'first_active_date'], right_on=[shop_col, 'イベント日付'], how='left')
+            
+            def check_new_machine(row):
+                if pd.isna(row['イベント日付']): return 0
+                t_mac = str(row['対象機種'])
+                my_mac = str(row['機種名'])
+                ev_name = str(row['イベント名'])
+                
+                is_shindai_event = '新台' in ev_name or '入替' in ev_name or '導入' in ev_name
+                
+                if t_mac in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
+                    return 1 if is_shindai_event else 0
+                elif my_mac in t_mac or t_mac in my_mac:
+                    return 1
+                elif t_mac == 'ジャグラー以外 (パチスロ他機種)':
+                    return 0
+                return 0
+                
+            merged_first['is_real_new'] = merged_first.apply(check_new_machine, axis=1)
+            real_new_map = merged_first.groupby([shop_col, '台番号', '機種名'])['is_real_new'].max().reset_index()
+            
+            df = pd.merge(df, real_new_map, on=[shop_col, '台番号', '機種名'], how='left')
+            df['is_real_new'] = df['is_real_new'].fillna(0)
+            
+            df['is_new_machine'] = (is_recent_machine & (df['is_real_new'] == 1)).astype(int)
+            df['is_moved_machine'] = (is_recent_machine & (df['is_real_new'] == 0)).astype(int)
+            df = df.drop(columns=['shop_date_max_history', 'machine_history_count', 'first_active_date', 'is_real_new'])
+        else:
+            df['is_new_machine'] = 0
+            df['is_moved_machine'] = is_recent_machine.astype(int)
+            df = df.drop(columns=['shop_date_max_history', 'machine_history_count', 'first_active_date'])
     else:
         df['is_new_machine'] = 0
+        df['is_moved_machine'] = 0
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob']
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
         if f in df.columns: features.append(f)
         
@@ -2193,7 +2246,9 @@ def _postprocess_predictions(predict_df, train_df):
             reasons.append(f"【機種冷遇】過去30日間、この機種(平均{int(mac_30d)}枚)は冷遇気味ですが、この台単体は評価されています。")
 
         if row.get('is_new_machine', 0) == 1:
-            reasons.append("【新台/移動】新台導入または配置変更から1週間以内のため、店側のアピール(高設定投入)が期待できます。")
+            reasons.append("【新台】新台導入から1週間以内のため、店側のアピール(高設定投入)が期待できます。")
+        if row.get('is_moved_machine', 0) == 1:
+            reasons.append("【配置変更】配置変更(移動)から1週間以内のため、扱いが変化している可能性があります。")
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)
@@ -2238,22 +2293,12 @@ def _postprocess_predictions(predict_df, train_df):
         if evt_name != '通常' and pd.notna(evt_name):
             evt_rank = row.get('イベントランク', '')
             rank_str = f"(ランク{evt_rank})" if evt_rank else ""
-            if evt_score < 0:
-                t_mac = str(row.get('対象機種', '指定なし'))
-                evt_mac_avg = row.get('event_x_machine_avg_diff', 0)
-                
-                if t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None', 'ジャグラー以外 (パチスロ他機種)']:
-                    if evt_mac_avg < -100:
-                        reasons.append(f"【⚠️回収警戒】本日は「{t_mac}」対象のイベント「{evt_name}」ですが、過去の傾向(本機種の平均{int(evt_mac_avg)}枚)から、対象外のこの機種は回収に回される危険性が高いです。")
-                    else:
-                        reasons.append(f"【⚠️対象外警戒】本日は「{t_mac}」対象のイベント「{evt_name}」です。対象外機種のため、過去の傾向から回収(冷遇)される危険性に警戒してください。")
-                else:
-                    if e_avg < -100:
-                        reasons.append(f"【⚠️回収警戒】新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日ですが、過去の同イベントの傾向(ジャグラー平均{int(e_avg)}枚)から出玉の原資として回収(冷遇)される危険性が高いです。")
-                    else:
-                        reasons.append(f"本日は新台入替や別機種・パチンコ等のイベント「{evt_name}」対象日です（ジャグラーへの波及効果は過去の傾向に基づきAIが判断します）。")
+            if evt_score <= -5:
+                reasons.append(f"【🚨極悪回収警戒】本日は複合イベント「{evt_name}」ですが、他機種やパチンコへの還元によるシワ寄せで、極めて強い回収(期待度スコア: {evt_score})が予測されます。")
+            elif evt_score < 0:
+                reasons.append(f"【⚠️回収警戒】本日は複合イベント「{evt_name}」ですが、対象外機種であるため回収に回される危険性が高いです。")
             elif evt_score > 0:
-                reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です。")
+                reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です(複合スコア: {evt_score})。")
 
         w_avg = row.get('weekday_avg_diff', 0)
         if w_avg > 150:
