@@ -48,6 +48,19 @@ def render_my_balance_page(df_raw):
             with c2: input_recovery = st.number_input("回収金額 (円)", min_value=0, step=1000)
             with c3: input_hours = st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, value=0.0, help="0.5時間=30分として記録します。")
             
+            # --- 追加: ボーナス入力 ---
+            st.markdown("**🎰 データ入力 (任意)**")
+            st.caption("打ち始めと終了時のデータを入力すると、自分が回した分のボーナス確率が自動計算され、AIチャットでの相性相談に利用されます。")
+            s_c1, s_c2, s_c3 = st.columns(3)
+            with s_c1: start_g = st.number_input("開始時 総回転 (G)", min_value=0, step=100)
+            with s_c2: start_b = st.number_input("開始時 BIG回数", min_value=0, step=1)
+            with s_c3: start_r = st.number_input("開始時 REG回数", min_value=0, step=1)
+
+            e_c1, e_c2, e_c3 = st.columns(3)
+            with e_c1: end_g = st.number_input("終了時 総回転 (G)", min_value=0, step=100)
+            with e_c2: end_b = st.number_input("終了時 BIG回数", min_value=0, step=1)
+            with e_c3: end_r = st.number_input("終了時 REG回数", min_value=0, step=1)
+
             st.metric("収支", f"{(input_recovery - input_invest):+d} 円")
             
             input_memo = st.text_area("メモ", value=f"【{wd_str}曜】", placeholder="設定示唆、挙動など", height=80)
@@ -57,7 +70,15 @@ def render_my_balance_page(df_raw):
                 if not input_shop or not input_machine:
                     st.error("店舗名と機種名は必須です。")
                 else:
-                    if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_hours, input_memo):
+                    # メモにボーナス情報を自動結合して保存
+                    final_memo = input_memo
+                    if end_g > 0 or end_b > 0 or end_r > 0:
+                        my_g = max(0, end_g - start_g)
+                        my_b = max(0, end_b - start_b)
+                        my_r = max(0, end_r - start_r)
+                        final_memo = f"【データ】自分稼働:{int(my_g)}G BIG:{int(my_b)} REG:{int(my_r)} (開始 {int(start_g)}G B{int(start_b)} R{int(start_r)} → 終了 {int(end_g)}G B{int(end_b)} R{int(end_r)})\n" + input_memo
+
+                    if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_hours, final_memo):
                         st.success("収支データを登録（または上書き更新）しました！")
                         backend.load_my_balance.clear()
                         st.rerun()
@@ -161,8 +182,25 @@ def render_my_balance_page(df_raw):
     total_count = len(df_balance)
     win_rate = win_count / total_count if total_count > 0 else 0
     
+    # 通算の自力合算の計算
+    import re
+    def _extract_sum_data(x, kind):
+        if pd.isna(x): return 0
+        m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', str(x))
+        if m_new:
+            return int(m_new.group(1)) if kind == 'G' else int(m_new.group(2)) if kind == 'B' else int(m_new.group(3))
+        m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', str(x))
+        if m_old:
+            return int(m_old.group(1)) if kind == 'G' else int(m_old.group(2)) if kind == 'B' else int(m_old.group(3))
+        return 0
+        
+    total_my_g = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'G')).sum()
+    total_my_b = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'B')).sum()
+    total_my_r = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'R')).sum()
+    my_total_prob = f"1/{total_my_g / (total_my_b + total_my_r):.1f}" if (total_my_b + total_my_r) > 0 and total_my_g > 0 else "-"
+
     st.subheader("📊 通算成績")
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
     k1.metric("総収支", f"{total_balance:+d} 円", delta_color="normal")
     k2.metric("回収率", f"{(total_recovery/total_invest*100):.1f} %" if total_invest > 0 else "-")
     k3.metric("勝率", f"{win_rate:.1%}")
@@ -171,6 +209,7 @@ def render_my_balance_page(df_raw):
     
     avg_pred_score = df_balance['prediction_score'].mean() if 'prediction_score' in df_balance.columns else np.nan
     k6.metric("平均打台期待度", f"{avg_pred_score*100:.1f}%" if pd.notna(avg_pred_score) else "-")
+    k7.metric("通算 自力合算", my_total_prob)
 
     # --- 月別収支グラフ ---
     st.subheader("🗓️ 月別収支")
@@ -360,7 +399,28 @@ def render_my_balance_page(df_raw):
 
     # テーブル表示
     st.subheader("📝 稼働履歴一覧")
-    display_cols = ['日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', '期待度_pct', 'メモ']
+    
+    def extract_my_prob(memo_text):
+        if pd.isna(memo_text): return None
+        memo_str = str(memo_text)
+        import re
+        m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', memo_str)
+        if m_new:
+            g, b, r = int(m_new.group(1)), int(m_new.group(2)), int(m_new.group(3))
+            if b + r > 0 and g > 0: return f"1/{g / (b + r):.1f}"
+            elif g > 0: return "1/--"
+            return None
+        m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', memo_str)
+        if m_old:
+            g, b, r = int(m_old.group(1)), int(m_old.group(2)), int(m_old.group(3))
+            if b + r > 0 and g > 0: return f"1/{g / (b + r):.1f}"
+            elif g > 0: return "1/--"
+            return None
+        return None
+
+    df_balance['自力合算'] = df_balance['メモ'].apply(extract_my_prob)
+
+    display_cols = ['日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', '期待度_pct', '自力合算', 'メモ']
     available_cols = [c for c in display_cols if c in df_balance.columns]
     styled_balance = df_balance[available_cols].style.bar(subset=['収支'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-30000, vmax=30000)
     st.dataframe(
@@ -372,6 +432,7 @@ def render_my_balance_page(df_raw):
             "収支": st.column_config.NumberColumn("収支", format="%+d 円"),
             "稼働時間": st.column_config.NumberColumn("時間", format="%.1f h"),
             "期待度_pct": st.column_config.NumberColumn("事前AI期待度", format="%.1f%%", help="打った台の事前のAI予測期待度(保存ログから取得)"),
+            "自力合算": st.column_config.TextColumn("自力合算", help="メモ欄の入力から計算した自分が回した分の合算確率"),
         },
         width="stretch",
         hide_index=True
@@ -402,6 +463,26 @@ def render_my_balance_page(df_raw):
                     st.session_state.eb_rec = int(target_row['回収'])
                     st.session_state.eb_hours = float(target_row.get('稼働時間', 0.0) if pd.notna(target_row.get('稼働時間')) and target_row.get('稼働時間') != '' else 0.0)
                     st.session_state.eb_memo = str(target_row.get('メモ', ''))
+
+                    import re
+                    m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', st.session_state.eb_memo)
+                    m_new = re.search(r'開始 (\d+)G B(\d+) R(\d+) → 終了 (\d+)G B(\d+) R(\d+)', st.session_state.eb_memo)
+                    
+                    if m_new:
+                        st.session_state.eb_sg = int(m_new.group(1))
+                        st.session_state.eb_sb = int(m_new.group(2))
+                        st.session_state.eb_sr = int(m_new.group(3))
+                        st.session_state.eb_eg = int(m_new.group(4))
+                        st.session_state.eb_eb = int(m_new.group(5))
+                        st.session_state.eb_er = int(m_new.group(6))
+                    elif m_old:
+                        st.session_state.eb_sg = 0; st.session_state.eb_sb = 0; st.session_state.eb_sr = 0
+                        st.session_state.eb_eg = int(m_old.group(1))
+                        st.session_state.eb_eb = int(m_old.group(2))
+                        st.session_state.eb_er = int(m_old.group(3))
+                    else:
+                        st.session_state.eb_sg = 0; st.session_state.eb_sb = 0; st.session_state.eb_sr = 0
+                        st.session_state.eb_eg = 0; st.session_state.eb_eb = 0; st.session_state.eb_er = 0
                 except (IndexError, KeyError):
                     # データが見つからない場合は何もしない
                     pass
@@ -430,9 +511,33 @@ def render_my_balance_page(df_raw):
                     st.number_input("投資金額 (円)", min_value=0, step=1000, key="eb_inv")
                     st.number_input("回収金額 (円)", min_value=0, step=1000, key="eb_rec")
                 st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, key="eb_hours")
+
+                st.markdown("**🎰 データ入力 (任意)**")
+                s_c1, s_c2, s_c3 = st.columns(3)
+                with s_c1: st.number_input("開始時 総回転 (G)", min_value=0, step=100, key="eb_sg")
+                with s_c2: st.number_input("開始時 BIG回数", min_value=0, step=1, key="eb_sb")
+                with s_c3: st.number_input("開始時 REG回数", min_value=0, step=1, key="eb_sr")
+
+                e_c1, e_c2, e_c3 = st.columns(3)
+                with e_c1: st.number_input("終了時 総回転 (G)", min_value=0, step=100, key="eb_eg")
+                with e_c2: st.number_input("終了時 BIG回数", min_value=0, step=1, key="eb_eb")
+                with e_c3: st.number_input("終了時 REG回数", min_value=0, step=1, key="eb_er")
+
                 st.text_area("メモ", height=80, key="eb_memo")
                 if st.form_submit_button("更新を保存", type="primary"):
-                    if backend.update_my_balance(target_uid, st.session_state.eb_date, st.session_state.eb_shop, st.session_state.eb_mac, st.session_state.eb_num, st.session_state.eb_inv, st.session_state.eb_rec, st.session_state.eb_hours, st.session_state.eb_memo):
+                    final_memo = st.session_state.eb_memo
+                    if st.session_state.eb_eg > 0 or st.session_state.eb_eb > 0 or st.session_state.eb_er > 0:
+                        import re
+                        final_memo = re.sub(r'【データ】総回転:\d+G BIG:\d+ REG:\d+\n?', '', final_memo)
+                        final_memo = re.sub(r'【データ】自分稼働:\d+G BIG:\d+ REG:\d+ \(開始 \d+G B\d+ R\d+ → 終了 \d+G B\d+ R\d+\)\n?', '', final_memo)
+                        
+                        my_g = max(0, st.session_state.eb_eg - st.session_state.eb_sg)
+                        my_b = max(0, st.session_state.eb_eb - st.session_state.eb_sb)
+                        my_r = max(0, st.session_state.eb_er - st.session_state.eb_sr)
+                        
+                        final_memo = f"【データ】自分稼働:{my_g}G BIG:{my_b} REG:{my_r} (開始 {st.session_state.eb_sg}G B{st.session_state.eb_sb} R{st.session_state.eb_sr} → 終了 {st.session_state.eb_eg}G B{st.session_state.eb_eb} R{st.session_state.eb_er})\n" + final_memo
+
+                    if backend.update_my_balance(target_uid, st.session_state.eb_date, st.session_state.eb_shop, st.session_state.eb_mac, st.session_state.eb_num, st.session_state.eb_inv, st.session_state.eb_rec, st.session_state.eb_hours, final_memo):
                         st.success("収支データを更新しました！")
                         backend.load_my_balance.clear(); st.rerun()
                     else: st.error("更新に失敗しました。")

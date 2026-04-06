@@ -449,7 +449,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     df_daily_scores = backend.load_daily_shop_scores()
     
     if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
-        df_daily_scores['予測対象日'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce')
+        df_daily_scores['予測対象日'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce').dt.normalize()
         shop_daily_scores = df_daily_scores[df_daily_scores['店名'] == selected_shop].copy()
         daily_avg_score_df = shop_daily_scores.rename(columns={'予測対象日': '対象日付'})
         if '店舗平均期待度' not in daily_avg_score_df.columns:
@@ -457,6 +457,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     else:
         # 古いデータや保存がない場合のフォールバック（※推奨台の平均になってしまうため正確ではない）
         daily_avg_score_df = merged_df.groupby('対象日付')['prediction_score'].mean().reset_index()
+        daily_avg_score_df['対象日付'] = pd.to_datetime(daily_avg_score_df['対象日付']).dt.normalize()
         daily_avg_score_df = daily_avg_score_df.rename(columns={'prediction_score': '店舗平均期待度'})
     
     def classify_day_eval(score):
@@ -469,7 +470,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     
     # --- 実際の店舗全体の成績を計算して結合 ---
     if not df_raw_temp.empty:
-        shop_raw_temp = df_raw_temp[df_raw_temp[shop_col] == selected_shop]
+        shop_raw_temp = df_raw_temp[df_raw_temp[shop_col] == selected_shop].copy()
+        shop_raw_temp['対象日付'] = pd.to_datetime(shop_raw_temp['対象日付']).dt.normalize()
         shop_daily_actual = shop_raw_temp.groupby('対象日付').agg(店舗全体平均差枚=('差枚', 'mean')).reset_index()
         if '対象日付' in daily_avg_score_df.columns:
             daily_avg_score_df = pd.merge(daily_avg_score_df, shop_daily_actual, on='対象日付', how='left')
@@ -477,8 +479,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         daily_avg_score_df['店舗全体平均差枚'] = np.nan
 
     if '対象日付' in daily_avg_score_df.columns:
-        # 重複カラムを避けるため必要なものだけ結合
-        ai_recom_df = pd.merge(ai_recom_df, daily_avg_score_df[['対象日付', '店舗平均期待度', '予測営業区分', '店舗全体平均差枚']], on='対象日付', how='left')
+        ai_recom_df['対象日付_merge_key'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
+        ai_recom_df = pd.merge(ai_recom_df, daily_avg_score_df[['対象日付', '店舗平均期待度', '予測営業区分', '店舗全体平均差枚']], left_on='対象日付_merge_key', right_on='対象日付', how='left', suffixes=('', '_drop'))
+        ai_recom_df = ai_recom_df.drop(columns=['対象日付_merge_key', '対象日付_drop'], errors='ignore')
+        ai_recom_df['予測営業区分'] = ai_recom_df['予測営業区分'].fillna("⚖️ 通常営業予測 (10~19%)")
     else:
         ai_recom_df['店舗平均期待度'] = np.nan
         ai_recom_df['予測営業区分'] = "⚖️ 通常営業予測 (10~19%)"

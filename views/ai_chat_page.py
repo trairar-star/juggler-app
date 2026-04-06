@@ -642,6 +642,41 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
             context_data += "\n【あなたの直近の稼働収支データ (最新10件)】\n"
             context_data += recent_balance[['日付', '店名', '機種名', '収支', 'メモ']].to_markdown(index=False) + "\n"
 
+            # --- 機種別の通算ボーナス成績をメモ欄から集計 ---
+            if 'メモ' in df_balance.columns:
+                import re
+                temp_bal = df_balance.copy()
+                
+                def extract_my_data(x, kind):
+                    m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', x)
+                    if m_new:
+                        if kind == 'G': return int(m_new.group(1))
+                        if kind == 'B': return int(m_new.group(2))
+                        if kind == 'R': return int(m_new.group(3))
+                    m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', x)
+                    if m_old:
+                        if kind == 'G': return int(m_old.group(1))
+                        if kind == 'B': return int(m_old.group(2))
+                        if kind == 'R': return int(m_old.group(3))
+                    return 0
+
+                temp_bal['G'] = temp_bal['メモ'].astype(str).apply(lambda x: extract_my_data(x, 'G'))
+                temp_bal['B'] = temp_bal['メモ'].astype(str).apply(lambda x: extract_my_data(x, 'B'))
+                temp_bal['R'] = temp_bal['メモ'].astype(str).apply(lambda x: extract_my_data(x, 'R'))
+                
+                mac_stats = temp_bal[temp_bal['G'] > 0].groupby('機種名').agg({'G': 'sum', 'B': 'sum', 'R': 'sum', '収支': 'count'}).reset_index()
+                if not mac_stats.empty:
+                    context_data += "\n【あなたの機種別 通算ボーナス成績 (メモから自動集計)】\n"
+                    for _, row in mac_stats.iterrows():
+                        g, b, r, c = row['G'], row['B'], row['R'], row['収支']
+                        b_prob = g / b if b > 0 else 0
+                        r_prob = g / r if r > 0 else 0
+                        t_prob = g / (b + r) if (b + r) > 0 else 0
+                        b_str = f"1/{b_prob:.1f}" if b > 0 else "-"
+                        r_str = f"1/{r_prob:.1f}" if r > 0 else "-"
+                        t_str = f"1/{t_prob:.1f}" if (b+r) > 0 else "-"
+                        context_data += f"・{row['機種名']} (有効稼働{c}回): 総回転 {g}G / BIG {b}回 ({b_str}) / REG {r}回 ({r_str}) / 合算 {t_str}\n"
+
         # 過去の会話履歴をプロンプト用に構築
         history_text = ""
         for msg in st.session_state.gemini_messages[:-1]: # 最新の質問以外
@@ -673,6 +708,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が50%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
 - [スケジュール提案]: 「1週間のスケジュール」「今後の予定」などを聞かれた場合、提供されている「向こう1週間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして1週間の立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
+- [ユーザー自身の成績]: 提供されている「あなたの機種別 通算ボーナス成績」に基づき、ユーザーのヒキや各機種の相性について回答してください。「BIGは引けていますがREG確率が低いですね」などの客観的な評価を行い、立ち回りの改善に繋がるアドバイスをしてください。
 
 現在日時: {now_str}
 ※提供されているデータは【{target_date_str}】の予測・イベント情報、および向こう1週間のスケジュール検討用データです。
