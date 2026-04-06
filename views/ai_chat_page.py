@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import json
+import os
 import backend
 
 try:
@@ -7,6 +10,27 @@ try:
     GENAI_AVAILABLE = True
 except ImportError:
     GENAI_AVAILABLE = False
+
+# --- チャット履歴のローカル保存用設定 ---
+CHAT_HISTORY_FILE = "ai_chat_history.json"
+
+def load_chat_history():
+    """ローカルファイルからチャット履歴を読み込む"""
+    if os.path.exists(CHAT_HISTORY_FILE):
+        try:
+            with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_chat_history(messages):
+    """チャット履歴をローカルファイルに保存する"""
+    try:
+        with open(CHAT_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(messages, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importance=None):
     st.header("👩‍💼 ホール案内スタッフ（AI）")
@@ -55,9 +79,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
     # APIキーの初期化
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # 会話履歴の初期化
+    # 会話履歴の初期化 (ファイルから復元)
     if "gemini_messages" not in st.session_state:
-        st.session_state.gemini_messages = []
+        st.session_state.gemini_messages = load_chat_history()
 
     # --- 連携する店舗の選択 ---
     shops = ["店舗を選択してください"]
@@ -112,6 +136,27 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
     )
     target_model = model_options[selected_model_label]
 
+    # --- 会話履歴の操作ボタン ---
+    if st.session_state.gemini_messages:
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            chat_text = ""
+            for msg in st.session_state.gemini_messages:
+                role = "👤 あなた" if msg["role"] == "user" else "👩‍💼 AIコンシェルジュ"
+                chat_text += f"【{role}】\n{msg['content']}\n\n{'='*40}\n\n"
+            st.download_button(
+                label="💾 会話ログを保存 (テキスト)",
+                data=chat_text,
+                file_name=f"ai_chat_log_{pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col_c2:
+            if st.button("🗑️ 会話履歴を破棄 (リセット)", use_container_width=True):
+                st.session_state.gemini_messages = []
+                save_chat_history([])
+                st.rerun()
+
     # --- チャット履歴の表示 ---
     for msg in st.session_state.gemini_messages:
         with st.chat_message(msg["role"]):
@@ -123,6 +168,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # ユーザーの質問を表示し、履歴に追加
         st.chat_message("user").markdown(prompt)
         st.session_state.gemini_messages.append({"role": "user", "content": prompt})
+        save_chat_history(st.session_state.gemini_messages)
 
         # --- アプリ内のデータをGemini用に文字列化して準備 ---
         context_data = ""
@@ -515,6 +561,72 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
             else:
                 context_data += "本日の予測データがありません。\n"
 
+        # --- 1週間のスケジュール用データを追加 ---
+        context_data += f"\n【向こう1週間のスケジュール検討用データ ({target_date_str} から7日間)】\n"
+        context_data += "以下のデータから、向こう1週間の各日の「最も期待値が高いおすすめ店舗」のスケジュールを提案できます。\n"
+        
+        target_dt = pd.to_datetime(target_date_str)
+        weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
+        
+        shop_stats_by_wd = {}
+        shop_stats_by_digit = {}
+        if not df_raw.empty and shop_col in df_raw.columns:
+            df_raw_temp = df_raw.copy()
+            df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'])
+            df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
+            df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+            
+            shop_daily = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾']).agg(
+                店舗平均差枚=('差枚', 'mean')
+            ).reset_index()
+            
+            for shop in shops:
+                if shop == "店舗を選択してください": continue
+                shop_data = shop_daily[shop_daily[shop_col] == shop]
+                if not shop_data.empty:
+                    shop_stats_by_wd[shop] = shop_data.groupby('曜日')['店舗平均差枚'].mean().to_dict()
+                    shop_stats_by_digit[shop] = shop_data.groupby('末尾')['店舗平均差枚'].mean().to_dict()
+        
+        for i in range(7):
+            curr_dt = target_dt + pd.Timedelta(days=i)
+            curr_wd = curr_dt.dayofweek
+            curr_digit = curr_dt.day % 10
+            curr_str = curr_dt.strftime('%m/%d')
+            
+            context_data += f"\n■ {curr_str} ({weekdays_map[curr_wd]}曜 / {curr_digit}のつく日)\n"
+            
+            # イベント情報
+            if df_events is not None and not df_events.empty:
+                day_events = df_events[df_events['イベント日付'].dt.date == curr_dt.date()]
+                if not day_events.empty:
+                    context_data += "  [イベント]\n"
+                    for _, ev in day_events.iterrows():
+                        ev_shop = ev.get('店名', '')
+                        ev_name = ev.get('イベント名', '')
+                        ev_rank = ev.get('イベントランク', '不明')
+                        context_data += f"    - {ev_shop}: {ev_name} (ランク: {ev_rank})\n"
+            
+            # 過去実績に基づく有力店舗
+            day_shop_scores = {}
+            for shop in shops:
+                if shop == "店舗を選択してください": continue
+                wd_score = shop_stats_by_wd.get(shop, {}).get(curr_wd, np.nan)
+                digit_score = shop_stats_by_digit.get(shop, {}).get(curr_digit, np.nan)
+                
+                scores = [s for s in [wd_score, digit_score] if pd.notna(s)]
+                if scores:
+                    day_shop_scores[shop] = max(scores) # 曜日と特定日の強い方を採用
+            
+            if day_shop_scores:
+                sorted_shops = sorted(day_shop_scores.items(), key=lambda x: x[1], reverse=True)
+                top_shops = [s for s in sorted_shops if s[1] > 0][:3] # プラスの店舗から上位3件
+                if top_shops:
+                    context_data += "  [過去実績に基づく有力店舗]\n"
+                    for s_name, s_score in top_shops:
+                        context_data += f"    - {s_name}: 期待差枚 +{int(s_score)}枚\n"
+                else:
+                    context_data += "  [過去実績に基づく有力店舗] 該当なし (全店舗マイナス傾向)\n"
+
         # --- マイ収支データをAIに読み込ませる ---
         df_balance = backend.load_my_balance()
         if not df_balance.empty:
@@ -559,11 +671,12 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
 - [還元日/回収日の判断]: 「店舗全体のAI期待度」や「特定日/曜日の過去平均差枚」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（50%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が50%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
+- [スケジュール提案]: 「1週間のスケジュール」「今後の予定」などを聞かれた場合、提供されている「向こう1週間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして1週間の立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
 
 現在日時: {now_str}
-※提供されているデータは【{target_date_str}】の予測・イベント情報です。
-お客様の質問が「今日」や「明日」といった曖昧な日付表現であっても、基本的には提供されている【{target_date_str}】のデータに関する相談と解釈して、その日付を基準に回答してください。
+※提供されているデータは【{target_date_str}】の予測・イベント情報、および向こう1週間のスケジュール検討用データです。
+「1週間の予定」を聞かれた場合は、スケジュール検討用データを元に回答してください。「今日」「明日」などの質問は【{target_date_str}】のデータに関する相談と解釈してください。
 """
 
         full_prompt = f"""
@@ -601,6 +714,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     
                     # 履歴への追加
                     st.session_state.gemini_messages.append({"role": "assistant", "content": full_response})
+                    save_chat_history(st.session_state.gemini_messages)
                 except Exception as e:
                     error_msg = str(e)
                     if "429" in error_msg or "Quota exceeded" in error_msg:
@@ -615,3 +729,4 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # 履歴が長くなりすぎてAPIコストや制限に引っかかるのを防ぐ
         if len(st.session_state.gemini_messages) > 20:
             st.session_state.gemini_messages = st.session_state.gemini_messages[-20:]
+            save_chat_history(st.session_state.gemini_messages)

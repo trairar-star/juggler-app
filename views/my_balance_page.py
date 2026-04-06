@@ -69,6 +69,82 @@ def render_my_balance_page(df_raw):
         st.info("まだ収支データがありません。「収支データを登録」から記録をつけてみましょう。")
         return
 
+    # --- 過去の予測ログから期待度を取得して結合 ---
+    df_pred_log = backend.load_prediction_log()
+    
+    # 手動で再計算したキャッシュがあればログに追加
+    if 'recalc_preds' in st.session_state and not st.session_state.recalc_preds.empty:
+        if not df_pred_log.empty:
+            df_pred_log = pd.concat([df_pred_log, st.session_state.recalc_preds], ignore_index=True)
+        else:
+            df_pred_log = st.session_state.recalc_preds.copy()
+            
+    if not df_pred_log.empty:
+        df_pred_log_temp = df_pred_log.copy()
+        if '予測対象日' in df_pred_log_temp.columns:
+            df_pred_log_temp['予測対象日_merge'] = pd.to_datetime(df_pred_log_temp['予測対象日'], errors='coerce').fillna(pd.to_datetime(df_pred_log_temp['対象日付'], errors='coerce') + pd.Timedelta(days=1))
+        else:
+            df_pred_log_temp['予測対象日_merge'] = pd.to_datetime(df_pred_log_temp['対象日付'], errors='coerce') + pd.Timedelta(days=1)
+            
+        shop_col_pred = '店名' if '店名' in df_pred_log_temp.columns else '店舗名'
+        if shop_col_pred != '店名':
+            df_pred_log_temp = df_pred_log_temp.rename(columns={shop_col_pred: '店名'})
+            
+        df_pred_log_temp['台番号'] = df_pred_log_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+        if '実行日時' in df_pred_log_temp.columns:
+            df_pred_log_temp['実行日時'] = pd.to_datetime(df_pred_log_temp['実行日時'], errors='coerce')
+            df_pred_log_temp = df_pred_log_temp.sort_values('実行日時', ascending=False).drop_duplicates(
+                subset=['予測対象日_merge', '店名', '台番号'], keep='first'
+            )
+            
+        df_balance['日付_merge'] = pd.to_datetime(df_balance['日付'])
+        df_balance['台番号_str'] = df_balance['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_pred_log_temp['prediction_score'] = pd.to_numeric(df_pred_log_temp['prediction_score'], errors='coerce')
+        
+        df_balance = pd.merge(df_balance, df_pred_log_temp[['予測対象日_merge', '店名', '台番号', 'prediction_score']], left_on=['日付_merge', '店名', '台番号_str'], right_on=['予測対象日_merge', '店名', '台番号'], how='left', suffixes=('', '_pred'))
+        df_balance = df_balance.drop(columns=['日付_merge', '台番号_str', '予測対象日_merge', '台番号_pred'], errors='ignore')
+    else:
+        df_balance['prediction_score'] = np.nan
+
+    df_balance['期待度_pct'] = df_balance['prediction_score'] * 100
+
+    # --- 欠損している期待度を再計算する機能 ---
+    missing_dates = df_balance[df_balance['prediction_score'].isna()]['日付'].dropna().dt.date.unique()
+    if len(missing_dates) > 0 and not df_raw.empty:
+        st.info(f"💡 事前期待度のログがない稼働データが {len(missing_dates)} 日分あります。過去の生データから当時の状況をシミュレーションしてAI期待度を補完できます。")
+        if st.button("🔄 過去データから欠損している期待度を再計算する"):
+            with st.spinner("AIが当時の状況を再現して期待度を計算中...（日数によっては時間がかかります）"):
+                df_events = backend.load_shop_events()
+                df_island = backend.load_island_master()
+                shop_hp = st.session_state.get("shop_hyperparams", {})
+                
+                if 'recalc_preds' not in st.session_state:
+                    st.session_state.recalc_preds = pd.DataFrame()
+                    
+                new_preds = []
+                progress_bar = st.progress(0)
+                for i, target_d in enumerate(missing_dates):
+                    try:
+                        df_pred, _, _ = backend.run_analysis(
+                            df_raw, _df_events=df_events, _df_island=df_island, shop_hyperparams=shop_hp, target_date=target_d
+                        )
+                        if not df_pred.empty:
+                            df_pred_temp = df_pred.copy()
+                            df_pred_temp['予測対象日'] = pd.to_datetime(target_d)
+                            shop_col_pred = '店名' if '店名' in df_pred_temp.columns else '店舗名'
+                            if shop_col_pred != '店名':
+                                df_pred_temp = df_pred_temp.rename(columns={shop_col_pred: '店名'})
+                            df_pred_temp['台番号'] = df_pred_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                            new_preds.append(df_pred_temp[['予測対象日', '店名', '台番号', 'prediction_score']])
+                    except Exception:
+                        pass
+                    progress_bar.progress((i + 1) / len(missing_dates))
+                
+                if new_preds:
+                    st.session_state.recalc_preds = pd.concat([st.session_state.recalc_preds, pd.concat(new_preds, ignore_index=True)], ignore_index=True)
+                    st.rerun()
+
     # 日付ソート
     df_balance = df_balance.sort_values('日付', ascending=False)
 
@@ -86,12 +162,15 @@ def render_my_balance_page(df_raw):
     win_rate = win_count / total_count if total_count > 0 else 0
     
     st.subheader("📊 通算成績")
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
     k1.metric("総収支", f"{total_balance:+d} 円", delta_color="normal")
     k2.metric("回収率", f"{(total_recovery/total_invest*100):.1f} %" if total_invest > 0 else "-")
     k3.metric("勝率", f"{win_rate:.1%}")
     k4.metric("稼働数", f"{total_count} 回")
     k5.metric("時給", f"{int(hourly_wage):,} 円/h" if total_hours > 0 else "-")
+    
+    avg_pred_score = df_balance['prediction_score'].mean() if 'prediction_score' in df_balance.columns else np.nan
+    k6.metric("平均打台期待度", f"{avg_pred_score*100:.1f}%" if pd.notna(avg_pred_score) else "-")
 
     # --- 月別収支グラフ ---
     st.subheader("🗓️ 月別収支")
@@ -111,6 +190,50 @@ def render_my_balance_page(df_raw):
     )
     st.altair_chart(alt.layer(bar_m, line_m).resolve_scale(y='independent').interactive(), use_container_width=True)
 
+    # --- AI期待度別の成績比較 ---
+    st.divider()
+    st.subheader("🤖 AI期待度別の成績比較")
+    st.caption("稼働した台の事前のAI期待度別に、収支や勝率を比較します。（※保存された予測ログがある稼働のみ集計されます）")
+
+    def classify_pred_score(pct):
+        if pd.isna(pct):
+            return "不明 (ログなし)"
+        elif pct >= 70:
+            return "🔥 70%以上 (激アツ)"
+        elif pct >= 30:
+            return "⚖️ 30%〜69% (通常)"
+        else:
+            return "🥶 30%未満 (危険)"
+
+    df_balance['期待度区分'] = df_balance['期待度_pct'].apply(classify_pred_score)
+    
+    pred_rank = df_balance.groupby('期待度区分').agg(
+        総収支=('収支', 'sum'),
+        勝率=('収支', lambda x: (x > 0).mean() * 100),
+        稼働数=('収支', 'count'),
+        稼働時間=('稼働時間', 'sum'),
+        平均期待度=('期待度_pct', 'mean')
+    ).reset_index()
+    
+    order_map = {"🔥 70%以上 (激アツ)": 1, "⚖️ 30%〜69% (通常)": 2, "🥶 30%未満 (危険)": 3, "不明 (ログなし)": 4}
+    pred_rank['sort'] = pred_rank['期待度区分'].map(order_map)
+    pred_rank = pred_rank.sort_values('sort').drop(columns=['sort'])
+    pred_rank['時給'] = np.where(pred_rank['稼働時間'] > 0, pred_rank['総収支'] / pred_rank['稼働時間'], 0)
+
+    st.dataframe(
+        pred_rank[['期待度区分', '総収支', '時給', '勝率', '稼働数', '平均期待度']],
+        column_config={
+            "期待度区分": st.column_config.TextColumn("AI期待度"),
+            "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
+            "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
+            "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
+            "稼働数": st.column_config.NumberColumn("回数"),
+            "平均期待度": st.column_config.NumberColumn("平均期待度", format="%.1f%%"),
+        },
+        width="stretch",
+        hide_index=True
+    )
+
     # --- 店舗別・機種別ランキング ---
     st.divider()
     col_r1, col_r2 = st.columns(2)
@@ -121,18 +244,20 @@ def render_my_balance_page(df_raw):
             総収支=('収支', 'sum'),
             勝率=('収支', lambda x: (x > 0).mean() * 100),
             稼働数=('収支', 'count'),
-            稼働時間=('稼働時間', 'sum')
+            稼働時間=('稼働時間', 'sum'),
+            平均期待度=('期待度_pct', 'mean')
         ).sort_values('総収支', ascending=False).reset_index()
         shop_rank['時給'] = np.where(shop_rank['稼働時間'] > 0, shop_rank['総収支'] / shop_rank['稼働時間'], 0)
         
         st.dataframe(
-            shop_rank[['店名', '総収支', '時給', '勝率', '稼働数']],
+            shop_rank[['店名', '総収支', '時給', '勝率', '稼働数', '平均期待度']],
             column_config={
                 "店名": st.column_config.TextColumn("店舗"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
                 "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
                 "稼働数": st.column_config.NumberColumn("回数"),
+                "平均期待度": st.column_config.NumberColumn("平均期待度", format="%.1f%%"),
             },
             width="stretch",
             hide_index=True
@@ -144,18 +269,20 @@ def render_my_balance_page(df_raw):
             総収支=('収支', 'sum'),
             勝率=('収支', lambda x: (x > 0).mean() * 100),
             稼働数=('収支', 'count'),
-            稼働時間=('稼働時間', 'sum')
+            稼働時間=('稼働時間', 'sum'),
+            平均期待度=('期待度_pct', 'mean')
         ).sort_values('総収支', ascending=False).reset_index()
         machine_rank['時給'] = np.where(machine_rank['稼働時間'] > 0, machine_rank['総収支'] / machine_rank['稼働時間'], 0)
         
         st.dataframe(
-            machine_rank[['機種名', '総収支', '時給', '勝率', '稼働数']],
+            machine_rank[['機種名', '総収支', '時給', '勝率', '稼働数', '平均期待度']],
             column_config={
                 "機種名": st.column_config.TextColumn("機種"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
                 "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
                 "稼働数": st.column_config.NumberColumn("回数"),
+                "平均期待度": st.column_config.NumberColumn("平均期待度", format="%.1f%%"),
             },
             width="stretch",
             hide_index=True
@@ -175,7 +302,8 @@ def render_my_balance_page(df_raw):
         総収支=('収支', 'sum'),
         勝率=('収支', lambda x: (x > 0).mean() * 100),
         稼働数=('収支', 'count'),
-        稼働時間=('稼働時間', 'sum')
+        稼働時間=('稼働時間', 'sum'),
+        平均期待度=('期待度_pct', 'mean')
     ).reset_index().sort_values('曜日_num')
     weekday_rank['時給'] = np.where(weekday_rank['稼働時間'] > 0, weekday_rank['総収支'] / weekday_rank['稼働時間'], 0)
     
@@ -196,13 +324,14 @@ def render_my_balance_page(df_raw):
         
     with col_w2:
         st.dataframe(
-            weekday_rank[['曜日', '総収支', '時給', '勝率', '稼働数']],
+            weekday_rank[['曜日', '総収支', '時給', '勝率', '稼働数', '平均期待度']],
             column_config={
                 "曜日": st.column_config.TextColumn("曜日"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
                 "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
                 "稼働数": st.column_config.NumberColumn("回数"),
+                "平均期待度": st.column_config.NumberColumn("平均期待度", format="%.1f%%"),
             },
             width="stretch",
             hide_index=True
@@ -231,7 +360,7 @@ def render_my_balance_page(df_raw):
 
     # テーブル表示
     st.subheader("📝 稼働履歴一覧")
-    display_cols = ['日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', 'メモ']
+    display_cols = ['日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', '期待度_pct', 'メモ']
     available_cols = [c for c in display_cols if c in df_balance.columns]
     styled_balance = df_balance[available_cols].style.bar(subset=['収支'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-30000, vmax=30000)
     st.dataframe(
@@ -242,6 +371,7 @@ def render_my_balance_page(df_raw):
             "回収": st.column_config.NumberColumn("回収", format="%d 円"),
             "収支": st.column_config.NumberColumn("収支", format="%+d 円"),
             "稼働時間": st.column_config.NumberColumn("時間", format="%.1f h"),
+            "期待度_pct": st.column_config.NumberColumn("事前AI期待度", format="%.1f%%", help="打った台の事前のAI予測期待度(保存ログから取得)"),
         },
         width="stretch",
         hide_index=True
