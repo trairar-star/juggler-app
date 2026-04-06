@@ -72,10 +72,10 @@ def render_my_balance_page(df_raw):
                 else:
                     # メモにボーナス情報を自動結合して保存
                     final_memo = input_memo
-                    if end_g > 0 or end_b > 0 or end_r > 0:
-                        my_g = max(0, end_g - start_g)
-                        my_b = max(0, end_b - start_b)
-                        my_r = max(0, end_r - start_r)
+                    if start_g > 0 or start_b > 0 or start_r > 0 or end_g > 0 or end_b > 0 or end_r > 0:
+                        my_g = max(0, end_g - start_g) if end_g > 0 else 0
+                        my_b = max(0, end_b - start_b) if end_b > 0 else 0
+                        my_r = max(0, end_r - start_r) if end_r > 0 else 0
                         final_memo = f"【データ】自分稼働:{int(my_g)}G BIG:{int(my_b)} REG:{int(my_r)} (開始 {int(start_g)}G B{int(start_b)} R{int(start_r)} → 終了 {int(end_g)}G B{int(end_b)} R{int(end_r)})\n" + input_memo
 
                     if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_hours, final_memo):
@@ -526,14 +526,14 @@ def render_my_balance_page(df_raw):
                 st.text_area("メモ", height=80, key="eb_memo")
                 if st.form_submit_button("更新を保存", type="primary"):
                     final_memo = st.session_state.eb_memo
-                    if st.session_state.eb_eg > 0 or st.session_state.eb_eb > 0 or st.session_state.eb_er > 0:
+                    if st.session_state.eb_sg > 0 or st.session_state.eb_sb > 0 or st.session_state.eb_sr > 0 or st.session_state.eb_eg > 0 or st.session_state.eb_eb > 0 or st.session_state.eb_er > 0:
                         import re
                         final_memo = re.sub(r'【データ】総回転:\d+G BIG:\d+ REG:\d+\n?', '', final_memo)
                         final_memo = re.sub(r'【データ】自分稼働:\d+G BIG:\d+ REG:\d+ \(開始 \d+G B\d+ R\d+ → 終了 \d+G B\d+ R\d+\)\n?', '', final_memo)
                         
-                        my_g = max(0, st.session_state.eb_eg - st.session_state.eb_sg)
-                        my_b = max(0, st.session_state.eb_eb - st.session_state.eb_sb)
-                        my_r = max(0, st.session_state.eb_er - st.session_state.eb_sr)
+                        my_g = max(0, st.session_state.eb_eg - st.session_state.eb_sg) if st.session_state.eb_eg > 0 else 0
+                        my_b = max(0, st.session_state.eb_eb - st.session_state.eb_sb) if st.session_state.eb_eb > 0 else 0
+                        my_r = max(0, st.session_state.eb_er - st.session_state.eb_sr) if st.session_state.eb_er > 0 else 0
                         
                         final_memo = f"【データ】自分稼働:{my_g}G BIG:{my_b} REG:{my_r} (開始 {st.session_state.eb_sg}G B{st.session_state.eb_sb} R{st.session_state.eb_sr} → 終了 {st.session_state.eb_eg}G B{st.session_state.eb_eb} R{st.session_state.eb_er})\n" + final_memo
 
