@@ -8,83 +8,197 @@ def render_my_balance_page(df_raw):
     st.header("💰 マイ収支管理")
     st.caption("あなたの稼働実績（投資・回収・収支）を記録・分析します。")
 
-    # --- 1. 収支入力フォーム ---
-    with st.expander("📝 収支データを登録", expanded=False):
-        # 日付選択をフォーム外に配置し、変更時に即座に曜日を反映させる
-        input_date = st.date_input("稼働日", pd.Timestamp.now(tz='Asia/Tokyo').date())
-        weekdays = ['月', '火', '水', '木', '金', '土', '日']
-        wd_str = weekdays[input_date.weekday()]
+    df_balance = backend.load_my_balance()
 
-        with st.form("balance_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                # 既存データから店名リストを取得
-                shops = []
-                if not df_raw.empty:
-                    shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
-                    if shop_col in df_raw.columns:
-                        shops = list(df_raw[shop_col].unique())
-                input_shop = st.selectbox("店舗名", shops + ["その他 (手入力)"])
-                if input_shop == "その他 (手入力)":
-                    input_shop = st.text_input("店舗名を入力")
-                
-                input_number = st.text_input("台番号", placeholder="例: 123")
-                
-            with col2:
-                # 機種名リスト
-                machines = []
-                if not df_raw.empty and '機種名' in df_raw.columns:
-                    machines = list(df_raw['機種名'].dropna().unique())
+    # --- 1. 収支入力・編集フォーム ---
+    with st.expander("📝 収支データを登録・編集", expanded=False):
+        input_mode = st.radio("操作を選択", ["新規登録", "既存データの編集"], horizontal=True, label_visibility="collapsed")
+        
+        if input_mode == "新規登録":
+            # 日付選択をフォーム外に配置し、変更時に即座に曜日を反映させる
+            input_date = st.date_input("稼働日", pd.Timestamp.now(tz='Asia/Tokyo').date())
+            weekdays = ['月', '火', '水', '木', '金', '土', '日']
+            wd_str = weekdays[input_date.weekday()]
+    
+            with st.form("balance_form", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    # 既存データから店名リストを取得
+                    shops = []
+                    if not df_raw.empty:
+                        shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
+                        if shop_col in df_raw.columns:
+                            shops = list(df_raw[shop_col].unique())
+                    input_shop = st.selectbox("店舗名", shops + ["その他 (手入力)"])
+                    if input_shop == "その他 (手入力)":
+                        input_shop = st.text_input("店舗名を入力")
                     
-                machine_options = machines + ["その他 (手入力)"]
-                default_idx = machine_options.index("マイジャグラーV") if "マイジャグラーV" in machine_options else 0
+                    input_number = st.text_input("台番号", placeholder="例: 123")
+                    
+                with col2:
+                    # 機種名リスト
+                    machines = []
+                    if not df_raw.empty and '機種名' in df_raw.columns:
+                        machines = list(df_raw['機種名'].dropna().unique())
+                        
+                    machine_options = machines + ["その他 (手入力)"]
+                    default_idx = machine_options.index("マイジャグラーV") if "マイジャグラーV" in machine_options else 0
+                    
+                    input_machine = st.selectbox("機種名", machine_options, index=default_idx)
+                    if input_machine == "その他 (手入力)":
+                        input_machine = st.text_input("機種名を入力")
                 
-                input_machine = st.selectbox("機種名", machine_options, index=default_idx)
-                if input_machine == "その他 (手入力)":
-                    input_machine = st.text_input("機種名を入力")
+                c1, c2, c3 = st.columns(3)
+                with c1: input_invest = st.number_input("投資金額 (円)", min_value=0, step=1000)
+                with c2: input_recovery = st.number_input("回収金額 (円)", min_value=0, step=1000)
+                with c3: input_hours = st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, value=0.0, help="0.5時間=30分として記録します。")
+                
+                # --- 追加: ボーナス入力 ---
+                st.markdown("**🎰 データ入力 (任意)**")
+                st.caption("打ち始めと終了時のデータを入力すると、自分が回した分のボーナス確率が自動計算され、AIチャットでの相性相談に利用されます。")
+                s_c1, s_c2, s_c3 = st.columns(3)
+                with s_c1: start_g = st.number_input("開始時 総回転 (G)", min_value=0, step=100)
+                with s_c2: start_b = st.number_input("開始時 BIG回数", min_value=0, step=1)
+                with s_c3: start_r = st.number_input("開始時 REG回数", min_value=0, step=1)
+    
+                e_c1, e_c2, e_c3 = st.columns(3)
+                with e_c1: end_g = st.number_input("終了時 総回転 (G)", min_value=0, step=100)
+                with e_c2: end_b = st.number_input("終了時 BIG回数", min_value=0, step=1)
+                with e_c3: end_r = st.number_input("終了時 REG回数", min_value=0, step=1)
+    
+                st.metric("収支", f"{(input_recovery - input_invest):+d} 円")
+                
+                input_memo = st.text_area("メモ", value=f"【{wd_str}曜】", placeholder="設定示唆、挙動など", height=80)
+                
+                submitted = st.form_submit_button("登録する", type="primary")
+                if submitted:
+                    if not input_shop or not input_machine:
+                        st.error("店舗名と機種名は必須です。")
+                    else:
+                        # メモにボーナス情報を自動結合して保存
+                        final_memo = input_memo
+                        if start_g > 0 or start_b > 0 or start_r > 0 or end_g > 0 or end_b > 0 or end_r > 0:
+                            my_g = max(0, end_g - start_g) if end_g > 0 else 0
+                            my_b = max(0, end_b - start_b) if end_b > 0 else 0
+                            my_r = max(0, end_r - start_r) if end_r > 0 else 0
+                            final_memo = f"【データ】自分稼働:{int(my_g)}G BIG:{int(my_b)} REG:{int(my_r)} (開始 {int(start_g)}G B{int(start_b)} R{int(start_r)} → 終了 {int(end_g)}G B{int(end_b)} R{int(end_r)})\n" + input_memo
+    
+                        if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_hours, final_memo):
+                            st.success("収支データを登録（または上書き更新）しました！")
+                            backend.load_my_balance.clear()
+                            st.rerun()
+        else:
+            if df_balance.empty or '登録日時' not in df_balance.columns:
+                st.info("編集できる収支データがまだありません。")
+            else:
+                def format_balance_label(uid):
+                    row = df_balance[df_balance['登録日時'] == uid].iloc[0]
+                    d_str = row['日付'].strftime('%Y-%m-%d') if pd.notna(row['日付']) else "不明"
+                    return f"{d_str} | {row['店名']} | {row['機種名']} ({row['収支']}円)"
+                
+                def on_edit_target_change():
+                    """編集対象が変更されたときにフォームの値を更新するコールバック"""
+                    target_uid = st.session_state.edit_balance_target
+                    if target_uid:
+                        try:
+                            target_row = df_balance[df_balance['登録日時'] == target_uid].iloc[0]
+                            st.session_state.eb_date = pd.to_datetime(target_row['日付']).date()
+                            st.session_state.eb_shop = target_row['店名']
+                            st.session_state.eb_num = str(target_row['台番号'])
+                            st.session_state.eb_mac = target_row['機種名']
+                            st.session_state.eb_inv = int(target_row['投資']) if pd.notna(target_row['投資']) and str(target_row['投資']).strip() != '' else 0
+                            st.session_state.eb_rec = int(target_row['回収']) if pd.notna(target_row['回収']) and str(target_row['回収']).strip() != '' else 0
+                            st.session_state.eb_hours = float(target_row.get('稼働時間', 0.0) if pd.notna(target_row.get('稼働時間')) and target_row.get('稼働時間') != '' else 0.0)
+                            st.session_state.eb_memo = str(target_row.get('メモ', ''))
+        
+                            import re
+                            m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', st.session_state.eb_memo)
+                            m_new = re.search(r'開始 (\d+)G B(\d+) R(\d+) → 終了 (\d+)G B(\d+) R(\d+)', st.session_state.eb_memo)
+                            
+                            if m_new:
+                                st.session_state.eb_sg = int(m_new.group(1))
+                                st.session_state.eb_sb = int(m_new.group(2))
+                                st.session_state.eb_sr = int(m_new.group(3))
+                                st.session_state.eb_eg = int(m_new.group(4))
+                                st.session_state.eb_eb = int(m_new.group(5))
+                                st.session_state.eb_er = int(m_new.group(6))
+                            elif m_old:
+                                st.session_state.eb_sg = 0; st.session_state.eb_sb = 0; st.session_state.eb_sr = 0
+                                st.session_state.eb_eg = int(m_old.group(1))
+                                st.session_state.eb_eb = int(m_old.group(2))
+                                st.session_state.eb_er = int(m_old.group(3))
+                            else:
+                                st.session_state.eb_sg = 0; st.session_state.eb_sb = 0; st.session_state.eb_sr = 0
+                                st.session_state.eb_eg = 0; st.session_state.eb_eb = 0; st.session_state.eb_er = 0
+                        except (IndexError, KeyError, ValueError):
+                            pass
+        
+                target_uid = st.selectbox(
+                    "編集・削除するデータを選択", 
+                    df_balance['登録日時'].unique(), 
+                    format_func=format_balance_label, 
+                    key="edit_balance_target",
+                    on_change=on_edit_target_change
+                )
+                
+                # 初回実行時にフォームの値を初期化
+                if 'eb_date' not in st.session_state and not df_balance.empty:
+                    on_edit_target_change()
+                
+                if target_uid:
+                    with st.form("edit_balance_form"):
+                        e_col1, e_col2 = st.columns(2)
+                        with e_col1:
+                            st.date_input("稼働日", key="eb_date")
+                            st.text_input("店舗名", key="eb_shop")
+                            st.text_input("台番号", key="eb_num")
+                        with e_col2:
+                            st.text_input("機種名", key="eb_mac")
+                            st.number_input("投資金額 (円)", min_value=0, step=1000, key="eb_inv")
+                            st.number_input("回収金額 (円)", min_value=0, step=1000, key="eb_rec")
+                        st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, key="eb_hours")
+        
+                        st.markdown("**🎰 データ入力 (任意)**")
+                        s_c1, s_c2, s_c3 = st.columns(3)
+                        with s_c1: st.number_input("開始時 総回転 (G)", min_value=0, step=100, key="eb_sg")
+                        with s_c2: st.number_input("開始時 BIG回数", min_value=0, step=1, key="eb_sb")
+                        with s_c3: st.number_input("開始時 REG回数", min_value=0, step=1, key="eb_sr")
+        
+                        e_c1, e_c2, e_c3 = st.columns(3)
+                        with e_c1: st.number_input("終了時 総回転 (G)", min_value=0, step=100, key="eb_eg")
+                        with e_c2: st.number_input("終了時 BIG回数", min_value=0, step=1, key="eb_eb")
+                        with e_c3: st.number_input("終了時 REG回数", min_value=0, step=1, key="eb_er")
+        
+                        st.text_area("メモ", height=80, key="eb_memo")
+                        if st.form_submit_button("更新を保存", type="primary"):
+                            if not st.session_state.eb_shop or not st.session_state.eb_mac:
+                                st.error("店舗名と機種名は必須です。")
+                            else:
+                                final_memo = st.session_state.eb_memo
+                                if st.session_state.eb_sg > 0 or st.session_state.eb_sb > 0 or st.session_state.eb_sr > 0 or st.session_state.eb_eg > 0 or st.session_state.eb_eb > 0 or st.session_state.eb_er > 0:
+                                    import re
+                                    final_memo = re.sub(r'【データ】総回転:\d+G BIG:\d+ REG:\d+\n?', '', final_memo)
+                                    final_memo = re.sub(r'【データ】自分稼働:\d+G BIG:\d+ REG:\d+ \(開始 \d+G B\d+ R\d+ → 終了 \d+G B\d+ R\d+\)\n?', '', final_memo)
+                                    
+                                    my_g = max(0, st.session_state.eb_eg - st.session_state.eb_sg) if st.session_state.eb_eg > 0 else 0
+                                    my_b = max(0, st.session_state.eb_eb - st.session_state.eb_sb) if st.session_state.eb_eb > 0 else 0
+                                    my_r = max(0, st.session_state.eb_er - st.session_state.eb_sr) if st.session_state.eb_er > 0 else 0
+                                    
+                                    final_memo = f"【データ】自分稼働:{my_g}G BIG:{my_b} REG:{my_r} (開始 {st.session_state.eb_sg}G B{st.session_state.eb_sb} R{st.session_state.eb_sr} → 終了 {st.session_state.eb_eg}G B{st.session_state.eb_eb} R{st.session_state.eb_er})\n" + final_memo
             
-            c1, c2, c3 = st.columns(3)
-            with c1: input_invest = st.number_input("投資金額 (円)", min_value=0, step=1000)
-            with c2: input_recovery = st.number_input("回収金額 (円)", min_value=0, step=1000)
-            with c3: input_hours = st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, value=0.0, help="0.5時間=30分として記録します。")
-            
-            # --- 追加: ボーナス入力 ---
-            st.markdown("**🎰 データ入力 (任意)**")
-            st.caption("打ち始めと終了時のデータを入力すると、自分が回した分のボーナス確率が自動計算され、AIチャットでの相性相談に利用されます。")
-            s_c1, s_c2, s_c3 = st.columns(3)
-            with s_c1: start_g = st.number_input("開始時 総回転 (G)", min_value=0, step=100)
-            with s_c2: start_b = st.number_input("開始時 BIG回数", min_value=0, step=1)
-            with s_c3: start_r = st.number_input("開始時 REG回数", min_value=0, step=1)
-
-            e_c1, e_c2, e_c3 = st.columns(3)
-            with e_c1: end_g = st.number_input("終了時 総回転 (G)", min_value=0, step=100)
-            with e_c2: end_b = st.number_input("終了時 BIG回数", min_value=0, step=1)
-            with e_c3: end_r = st.number_input("終了時 REG回数", min_value=0, step=1)
-
-            st.metric("収支", f"{(input_recovery - input_invest):+d} 円")
-            
-            input_memo = st.text_area("メモ", value=f"【{wd_str}曜】", placeholder="設定示唆、挙動など", height=80)
-            
-            submitted = st.form_submit_button("登録する", type="primary")
-            if submitted:
-                if not input_shop or not input_machine:
-                    st.error("店舗名と機種名は必須です。")
-                else:
-                    # メモにボーナス情報を自動結合して保存
-                    final_memo = input_memo
-                    if start_g > 0 or start_b > 0 or start_r > 0 or end_g > 0 or end_b > 0 or end_r > 0:
-                        my_g = max(0, end_g - start_g) if end_g > 0 else 0
-                        my_b = max(0, end_b - start_b) if end_b > 0 else 0
-                        my_r = max(0, end_r - start_r) if end_r > 0 else 0
-                        final_memo = f"【データ】自分稼働:{int(my_g)}G BIG:{int(my_b)} REG:{int(my_r)} (開始 {int(start_g)}G B{int(start_b)} R{int(start_r)} → 終了 {int(end_g)}G B{int(end_b)} R{int(end_r)})\n" + input_memo
-
-                    if backend.save_my_balance(input_date, input_shop, input_machine, input_number, input_invest, input_recovery, input_hours, final_memo):
-                        st.success("収支データを登録（または上書き更新）しました！")
-                        backend.load_my_balance.clear()
-                        st.rerun()
+                                if backend.update_my_balance(target_uid, st.session_state.eb_date, st.session_state.eb_shop, st.session_state.eb_mac, st.session_state.eb_num, st.session_state.eb_inv, st.session_state.eb_rec, st.session_state.eb_hours, final_memo):
+                                    st.success("収支データを更新しました！")
+                                    backend.load_my_balance.clear(); st.rerun()
+                                else: st.error("更新に失敗しました。")
+                    
+                    with st.form("delete_balance_form"):
+                        st.caption("※この操作は取り消せません")
+                        if st.form_submit_button("このデータを削除", type="primary"):
+                            if backend.delete_my_balance(target_uid):
+                                st.success("削除しました！"); backend.load_my_balance.clear(); st.rerun()
+                            else: st.error("削除に失敗しました。")
 
     # --- 2. 収支データの表示 ---
-    df_balance = backend.load_my_balance()
     
     if df_balance.empty:
         st.info("まだ収支データがありません。「収支データを登録」から記録をつけてみましょう。")
@@ -437,114 +551,3 @@ def render_my_balance_page(df_raw):
         width="stretch",
         hide_index=True
     )
-
-    # --- 3. 収支データの編集・削除 ---
-    if '登録日時' in df_balance.columns:
-        st.divider()
-        st.subheader("✏️ 収支データの編集・削除")
-        
-        # セレクトボックス用に表示名を作成
-        def format_balance_label(uid):
-            row = df_balance[df_balance['登録日時'] == uid].iloc[0]
-            d_str = row['日付'].strftime('%Y-%m-%d') if pd.notna(row['日付']) else "不明"
-            return f"{d_str} | {row['店名']} | {row['機種名']} ({row['収支']}円)"
-        
-        def on_edit_target_change():
-            """編集対象が変更されたときにフォームの値を更新するコールバック"""
-            target_uid = st.session_state.edit_balance_target
-            if target_uid:
-                try:
-                    target_row = df_balance[df_balance['登録日時'] == target_uid].iloc[0]
-                    st.session_state.eb_date = pd.to_datetime(target_row['日付']).date()
-                    st.session_state.eb_shop = target_row['店名']
-                    st.session_state.eb_num = str(target_row['台番号'])
-                    st.session_state.eb_mac = target_row['機種名']
-                    st.session_state.eb_inv = int(target_row['投資'])
-                    st.session_state.eb_rec = int(target_row['回収'])
-                    st.session_state.eb_hours = float(target_row.get('稼働時間', 0.0) if pd.notna(target_row.get('稼働時間')) and target_row.get('稼働時間') != '' else 0.0)
-                    st.session_state.eb_memo = str(target_row.get('メモ', ''))
-
-                    import re
-                    m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', st.session_state.eb_memo)
-                    m_new = re.search(r'開始 (\d+)G B(\d+) R(\d+) → 終了 (\d+)G B(\d+) R(\d+)', st.session_state.eb_memo)
-                    
-                    if m_new:
-                        st.session_state.eb_sg = int(m_new.group(1))
-                        st.session_state.eb_sb = int(m_new.group(2))
-                        st.session_state.eb_sr = int(m_new.group(3))
-                        st.session_state.eb_eg = int(m_new.group(4))
-                        st.session_state.eb_eb = int(m_new.group(5))
-                        st.session_state.eb_er = int(m_new.group(6))
-                    elif m_old:
-                        st.session_state.eb_sg = 0; st.session_state.eb_sb = 0; st.session_state.eb_sr = 0
-                        st.session_state.eb_eg = int(m_old.group(1))
-                        st.session_state.eb_eb = int(m_old.group(2))
-                        st.session_state.eb_er = int(m_old.group(3))
-                    else:
-                        st.session_state.eb_sg = 0; st.session_state.eb_sb = 0; st.session_state.eb_sr = 0
-                        st.session_state.eb_eg = 0; st.session_state.eb_eb = 0; st.session_state.eb_er = 0
-                except (IndexError, KeyError):
-                    # データが見つからない場合は何もしない
-                    pass
-
-        target_uid = st.selectbox(
-            "編集・削除するデータを選択", 
-            df_balance['登録日時'].unique(), 
-            format_func=format_balance_label, 
-            key="edit_balance_target",
-            on_change=on_edit_target_change
-        )
-        
-        # 初回実行時にフォームの値を初期化
-        if 'eb_date' not in st.session_state and not df_balance.empty:
-            on_edit_target_change()
-        
-        if target_uid:
-            with st.form("edit_balance_form"):
-                e_col1, e_col2 = st.columns(2)
-                with e_col1:
-                    st.date_input("稼働日", key="eb_date")
-                    st.text_input("店舗名", key="eb_shop")
-                    st.text_input("台番号", key="eb_num")
-                with e_col2:
-                    st.text_input("機種名", key="eb_mac")
-                    st.number_input("投資金額 (円)", min_value=0, step=1000, key="eb_inv")
-                    st.number_input("回収金額 (円)", min_value=0, step=1000, key="eb_rec")
-                st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, key="eb_hours")
-
-                st.markdown("**🎰 データ入力 (任意)**")
-                s_c1, s_c2, s_c3 = st.columns(3)
-                with s_c1: st.number_input("開始時 総回転 (G)", min_value=0, step=100, key="eb_sg")
-                with s_c2: st.number_input("開始時 BIG回数", min_value=0, step=1, key="eb_sb")
-                with s_c3: st.number_input("開始時 REG回数", min_value=0, step=1, key="eb_sr")
-
-                e_c1, e_c2, e_c3 = st.columns(3)
-                with e_c1: st.number_input("終了時 総回転 (G)", min_value=0, step=100, key="eb_eg")
-                with e_c2: st.number_input("終了時 BIG回数", min_value=0, step=1, key="eb_eb")
-                with e_c3: st.number_input("終了時 REG回数", min_value=0, step=1, key="eb_er")
-
-                st.text_area("メモ", height=80, key="eb_memo")
-                if st.form_submit_button("更新を保存", type="primary"):
-                    final_memo = st.session_state.eb_memo
-                    if st.session_state.eb_sg > 0 or st.session_state.eb_sb > 0 or st.session_state.eb_sr > 0 or st.session_state.eb_eg > 0 or st.session_state.eb_eb > 0 or st.session_state.eb_er > 0:
-                        import re
-                        final_memo = re.sub(r'【データ】総回転:\d+G BIG:\d+ REG:\d+\n?', '', final_memo)
-                        final_memo = re.sub(r'【データ】自分稼働:\d+G BIG:\d+ REG:\d+ \(開始 \d+G B\d+ R\d+ → 終了 \d+G B\d+ R\d+\)\n?', '', final_memo)
-                        
-                        my_g = max(0, st.session_state.eb_eg - st.session_state.eb_sg) if st.session_state.eb_eg > 0 else 0
-                        my_b = max(0, st.session_state.eb_eb - st.session_state.eb_sb) if st.session_state.eb_eb > 0 else 0
-                        my_r = max(0, st.session_state.eb_er - st.session_state.eb_sr) if st.session_state.eb_er > 0 else 0
-                        
-                        final_memo = f"【データ】自分稼働:{my_g}G BIG:{my_b} REG:{my_r} (開始 {st.session_state.eb_sg}G B{st.session_state.eb_sb} R{st.session_state.eb_sr} → 終了 {st.session_state.eb_eg}G B{st.session_state.eb_eb} R{st.session_state.eb_er})\n" + final_memo
-
-                    if backend.update_my_balance(target_uid, st.session_state.eb_date, st.session_state.eb_shop, st.session_state.eb_mac, st.session_state.eb_num, st.session_state.eb_inv, st.session_state.eb_rec, st.session_state.eb_hours, final_memo):
-                        st.success("収支データを更新しました！")
-                        backend.load_my_balance.clear(); st.rerun()
-                    else: st.error("更新に失敗しました。")
-            
-            with st.form("delete_balance_form"):
-                st.caption("※この操作は取り消せません")
-                if st.form_submit_button("このデータを削除", type="primary"):
-                    if backend.delete_my_balance(target_uid):
-                        st.success("削除しました！"); backend.load_my_balance.clear(); st.rerun()
-                    else: st.error("削除に失敗しました。")
