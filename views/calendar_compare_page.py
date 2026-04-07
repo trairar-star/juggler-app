@@ -56,19 +56,28 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     # --- 2. 過去の実績ヒートマップ ---
     st.subheader("🔥 過去の実績ヒートマップ")
     
-    view_days = st.slider("表示する過去の日数", min_value=7, max_value=30, value=14, step=1)
-    
     # データの準備
     df_history = df_raw.copy()
     df_history[date_col] = pd.to_datetime(df_history[date_col], errors='coerce')
     df_history = df_history.dropna(subset=[date_col])
     
-    max_date = df_history[date_col].max()
-    cutoff_date = max_date - pd.Timedelta(days=view_days)
-    df_recent = df_history[df_history[date_col] > cutoff_date].copy()
+    if df_history.empty:
+        st.warning("履歴データがありません。")
+        return
+        
+    df_history['年月'] = df_history[date_col].dt.strftime('%Y-%m')
+    available_months = sorted(df_history['年月'].unique(), reverse=True)
+    
+    if not available_months:
+        st.warning("有効な履歴データがありません。")
+        return
+
+    selected_month = st.selectbox("📅 表示する対象月を選択", available_months, index=0)
+    
+    df_recent = df_history[df_history['年月'] == selected_month].copy()
     
     if df_recent.empty:
-        st.warning("直近のデータがありません。")
+        st.warning("指定された月のデータがありません。")
         return
 
     df_recent['表示日'] = df_recent[date_col].dt.strftime('%m/%d')
