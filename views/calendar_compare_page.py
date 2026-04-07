@@ -72,12 +72,18 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         st.warning("有効な履歴データがありません。")
         return
 
-    selected_month = st.selectbox("📅 表示する対象月を選択", available_months, index=0)
+    period_options = ["直近30日"] + available_months
+    selected_period = st.selectbox("📅 表示する期間を選択", period_options, index=0)
     
-    df_recent = df_history[df_history['年月'] == selected_month].copy()
+    if selected_period == "直近30日":
+        max_date = df_history[date_col].max()
+        cutoff_date = max_date - pd.Timedelta(days=30)
+        df_recent = df_history[df_history[date_col] > cutoff_date].copy()
+    else:
+        df_recent = df_history[df_history['年月'] == selected_period].copy()
     
     if df_recent.empty:
-        st.warning("指定された月のデータがありません。")
+        st.warning("指定された期間のデータがありません。")
         return
 
     df_recent['表示日'] = df_recent[date_col].dt.strftime('%m/%d')
