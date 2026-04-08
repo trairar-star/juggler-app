@@ -5,7 +5,7 @@ import altair as alt # type: ignore
 from utils import get_confidence_indicator
 import backend
 
-def _render_monthly_trend_analysis(viz_df):
+def _render_monthly_trend_analysis(viz_df, analysis_df=None):
     with st.expander("🗓️ 月間トレンド (月初・月末の傾向)", expanded=False):
         st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数や高設定率です。")
         
@@ -76,8 +76,45 @@ def _render_monthly_trend_analysis(viz_df):
             st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
             day_stats = trend_df.groupby('day')[y_col].mean()
             st.bar_chart(day_stats, color="#00E676" if chart_metric_shop == "平均差枚" else "#AB47BC")
+            
+        if analysis_df is not None and not analysis_df.empty and 'shop_monthly_cumulative_diff' in analysis_df.columns:
+            st.divider()
+            st.markdown("### 💼 店長の予算（ノルマ進捗）別 営業傾向")
+            st.caption("「前日までの月間累計差枚（店の赤字/黒字）」と「月の中の時期」を掛け合わせ、店がいつ回収し、いつ還元するかのクセを分析します。")
+            
+            daily_shop_df = analysis_df.groupby('対象日付').agg(
+                店舗平均差枚=('差枚', 'mean'),
+                月間累計差枚=('shop_monthly_cumulative_diff', 'first')
+            ).reset_index()
+            
+            daily_shop_df['時期'] = daily_shop_df['対象日付'].dt.day.apply(lambda d: '1.月初 (1-7日)' if d<=7 else '3.月末 (25日-)' if d>=25 else '2.中旬 (8-24日)')
+            
+            def get_budget_status(diff):
+                # 差枚は客側。客がマイナス＝店が黒字
+                if diff <= -15000: return '1.🟦 余裕あり (店の大黒字: 客-1.5万枚〜)'
+                elif diff <= 0: return '2.🟩 トントン (店の黒字: 客-1.5万〜0枚)'
+                else: return '3.🟥 厳しい (店の赤字: 客+0枚〜)'
+                
+            daily_shop_df['予算状況(前日まで)'] = daily_shop_df['月間累計差枚'].apply(get_budget_status)
+            
+            budget_pivot = daily_shop_df.pivot_table(
+                index='予算状況(前日まで)',
+                columns='時期',
+                values='店舗平均差枚',
+                aggfunc='mean'
+            ).round(0)
+            
+            for col in ['1.月初 (1-7日)', '2.中旬 (8-24日)', '3.月末 (25日-)']:
+                if col not in budget_pivot.columns: budget_pivot[col] = np.nan
+            budget_pivot = budget_pivot[['1.月初 (1-7日)', '2.中旬 (8-24日)', '3.月末 (25日-)']]
+            
+            st.info("💡 **表の見方**: 値は「その日の店舗の平均差枚」です。プラス（赤色）なら還元傾向、マイナス（青色）なら回収傾向を示します。たとえば『店が厳しい(赤字)時の月末』が真っ青なら、ノルマ達成のためのド回収が行われている証拠です。")
+            st.dataframe(
+                budget_pivot.style.background_gradient(cmap='RdYlBu_r', axis=None, vmin=-150, vmax=150).format("{:+.0f} 枚", na_rep="-"),
+                width="stretch"
+            )
 
-def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events=None):
+def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events=None, analysis_df=None):
     with st.expander(f"📅 {selected_shop} の傾向分析", expanded=True):
         st.caption("過去データに基づく、この店舗の店癖やイベント日・曜日ごとの傾向です。")
         
@@ -164,7 +201,7 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
         else:
             viz_df['高設定_rate'] = np.nan
         
-    _render_monthly_trend_analysis(viz_df)
+    _render_monthly_trend_analysis(viz_df, analysis_df)
 
 def render_feature_analysis_page(df_train, df_importance=None, df_events=None, df_raw=None, passed_shop_col=None, pre_selected_shop=None):
     if not pre_selected_shop:
@@ -238,7 +275,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             top_trends_df = all_trends_dict[selected_shop]['top_df']
             worst_trends_df = all_trends_dict[selected_shop]['worst_df']
             
-        _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events)
+        _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events, analysis_df)
 
         # --- 機種別 成績 (設定5近似度など) ---
         with st.expander(f"🎰 {selected_shop} の機種別 基本成績 (設定投入傾向)", expanded=False):
@@ -1108,6 +1145,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'neighbor_avg_diff': '配置: 両隣の平均差枚',
                 'event_avg_diff': 'イベント: 平均差枚',
                 'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
+                'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',
                 'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
                 'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
                 'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
@@ -1115,6 +1153,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'is_new_machine': '台: 新台導入(導入後7日以内)',
                 'is_moved_machine': '台: 配置変更(移動後7日以内)',
                 'shop_7days_avg_diff': '店舗: 週間還元/回収モード(直近7日差枚)',
+                'prev_shop_daily_avg_diff': '店舗: 前日の平均差枚(日次ノルマ反動)',
                 'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
                 'machine_avg_diff': '機種: 当日平均差枚', 'machine_high_rate': '機種: 当日高設定率',
                 'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
@@ -1124,6 +1163,9 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'event_x_end_digit_avg_diff': '複合: イベント×末尾の平均差枚',
                 'cons_minus_total_diff': '台: 連続マイナス期間の合計吸い込み(枚)',
                 'machine_no_30days_avg_diff': '台番号: その場所の強さ(直近30日差枚)',
+                'is_beginning_of_month': '予測日: 月初(1-7日)', 'is_end_of_month': '予測日: 月末(25日-)',
+                'is_pension_day': '予測日: 年金支給日(14-16日)',
+                'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
                 'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
                 'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)'
             }

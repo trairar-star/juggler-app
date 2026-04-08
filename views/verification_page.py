@@ -763,6 +763,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if prob_analysis_df.empty:
             st.warning(f"指定された期間（{selected_period}）のデータがありません。")
         else:
+            # 予測営業区分の付与
+            if '対象日付' in prob_analysis_df.columns and '対象日付' in daily_avg_score_df.columns:
+                prob_analysis_df['対象日付_merge_key'] = pd.to_datetime(prob_analysis_df['対象日付']).dt.normalize()
+                prob_analysis_df = pd.merge(prob_analysis_df, daily_avg_score_df[['対象日付', '予測営業区分']], left_on='対象日付_merge_key', right_on='対象日付', how='left', suffixes=('', '_drop'))
+                prob_analysis_df = prob_analysis_df.drop(columns=['対象日付_merge_key', '対象日付_drop'], errors='ignore')
+                prob_analysis_df['予測営業区分'] = prob_analysis_df['予測営業区分'].fillna("⚖️ 通常営業予測 (10~19%)")
+            else:
+                prob_analysis_df['予測営業区分'] = "⚖️ 通常営業予測 (10~19%)"
+
             # --- 期待度スコアのヒストグラム ---
             st.markdown(f"**📊 期待度スコア (予測スコア) の分布と正解率 ({selected_period})**")
             
@@ -791,47 +800,63 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.markdown(f"**📝 過去のガチ予測ログベースの成績 ({selected_period})**")
             st.caption("過去にAIが予測結果を保存した時点でのスコアと、実際の結果を照合した『本物の実戦成績』です。")
             
-            rank_stats = prob_analysis_df.groupby('確率帯').agg(
-                台数=('台番号', 'count'),
-                高設定数=('valid_high', 'sum'),
-                有効稼働数=('valid_play', 'sum'),
-                勝数=('valid_win', 'sum'),
-                平均差枚=('差枚_actual', 'mean'),
-                合計差枚=('差枚_actual', 'sum'),
-                平均期待度=('prediction_score', 'mean')
-            ).reset_index()
-            rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['勝数'] / rank_stats['有効稼働数'] * 100, 0.0)
-            rank_stats['高設定率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['高設定数'] / rank_stats['有効稼働数'] * 100, 0.0)
-            rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
+            tabs_1 = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
             
-            rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
-            rank_stats['sort'] = rank_stats['確率帯'].map(rank_order).fillna(99)
-            rank_stats = rank_stats.sort_values('sort').drop('sort', axis=1)
-            
-            rank_stats['信頼度'] = rank_stats['台数'].apply(get_confidence_indicator)
-            st.dataframe(
-                rank_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
-                column_config={
-                    "確率帯": st.column_config.TextColumn("期待度"),
-                    "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
-                    "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
-                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
-                    "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                    "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
-                    "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
-                    "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
-                    "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
-                },
-                width="stretch",
-                hide_index=True
-            )
+            def render_rank_stats_top(target_df):
+                if target_df.empty:
+                    st.info("該当するデータがありません。")
+                    return
+                r_stats = target_df.groupby('確率帯').agg(
+                    台数=('台番号', 'count'),
+                    高設定数=('valid_high', 'sum'),
+                    有効稼働数=('valid_play', 'sum'),
+                    勝数=('valid_win', 'sum'),
+                    平均差枚=('差枚_actual', 'mean'),
+                    合計差枚=('差枚_actual', 'sum'),
+                    平均期待度=('prediction_score', 'mean')
+                ).reset_index()
+                r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
+                r_stats['高設定率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['高設定数'] / r_stats['有効稼働数'] * 100, 0.0)
+                r_stats['平均期待度'] = r_stats['平均期待度'] * 100
+                
+                rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                r_stats['sort'] = r_stats['確率帯'].map(rank_order).fillna(99)
+                r_stats = r_stats.sort_values('sort').drop('sort', axis=1)
+                
+                r_stats['信頼度'] = r_stats['台数'].apply(get_confidence_indicator)
+                st.dataframe(
+                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
+                    column_config={
+                        "確率帯": st.column_config.TextColumn("期待度"),
+                        "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                        "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                        "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                        "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                        "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                    },
+                    width="stretch",
+                    hide_index=True
+                )
+
+            with tabs_1[0]: render_rank_stats_top(prob_analysis_df)
+            with tabs_1[1]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🔥 還元日予測 (20%~)"])
+            with tabs_1[2]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['予測営業区分'] == "⚖️ 通常営業予測 (10~19%)"])
+            with tabs_1[3]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🥶 回収日予測 (~9%)"])
 
             # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
             total_eval_count = len(prob_analysis_df)
-            period_high_setting_rate = prob_analysis_df['valid_high'].sum() / prob_analysis_df['valid_play'].sum() if prob_analysis_df['valid_play'].sum() > 0 else 0
-            high_score_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.50]
+            
+            # 回収日を除外した「真っ当な営業日」のデータでAIの真の実力を測る
+            fair_play_df = prob_analysis_df[prob_analysis_df['予測営業区分'] != "🥶 回収日予測 (~9%)"]
+            if fair_play_df.empty: fair_play_df = prob_analysis_df # 全部回収日予測なら仕方なく全体を使う
+            
+            period_high_setting_rate = fair_play_df['valid_high'].sum() / fair_play_df['valid_play'].sum() if fair_play_df['valid_play'].sum() > 0 else 0
+            high_score_df = fair_play_df[fair_play_df['prediction_score'] >= 0.50]
             high_score_accuracy = high_score_df['valid_high'].sum() / high_score_df['valid_play'].sum() if high_score_df['valid_play'].sum() > 0 else 0
-            score_mean = prob_analysis_df['prediction_score'].mean()
+            score_mean = fair_play_df['prediction_score'].mean()
             
             avg_g_recent = prob_analysis_df['結果_累計ゲーム'].mean()
             
@@ -841,7 +866,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # 要因1: データ量
             diag_data = {"status": "🟢", "title": "データ蓄積量", "msg": "十分なデータが蓄積されています。"}
             if total_eval_count < 30:
-                diag_data = {"status": "🔴", "title": "データ蓄積量", "msg": f"検証台数が{total_eval_count}台と少なすぎます。たまたまのヒキによるブレが大きいため、まずはデータ取得を続けてください。"}
+                diag_data = {"status": "🔴", "title": "データ蓄積量", "msg": f"検証台数が{total_eval_count}台と少なすぎます。たまたまのヒキによるブレが大きいため、まだAIの実力は正しく測れません。AIのパラメータは変更せずに、まずはデータ収集を続けてください。"}
             elif low_rel_rate > 0.3:
                 diag_data = {"status": "🟡", "title": "データ蓄積量", "msg": f"各台の履歴データが浅い（新台・配置変更など）台が {low_rel_rate:.0%} 含まれています。AIがクセを把握しきるまであと数週間のデータ取得が必要です。"}
                 
@@ -853,10 +878,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 diag_kado = {"status": "🟡", "title": "稼働状況(客層)", "msg": f"推奨台の平均稼働が{int(avg_g_recent)}Gとやや低めです。採点基準は店舗に合わせて自動補正されていますが、高設定が十分に出玉を伸ばしきれていない可能性があります。"}
 
             # 要因3: AI設定 (過学習 / 未学習)
-            diag_ai = {"status": "🟢", "title": "AI設定(パラメータ)", "msg": "スコア分布と正解率のバランスが良く、現在の設定は良好です。"}
+            diag_ai = {"status": "🟢", "title": "AI設定(パラメータ)", "msg": "還元日・通常営業日におけるスコア分布と正解率のバランスが良く、現在の設定は良好です。"}
             if total_eval_count >= 30:
                 if len(high_score_df) >= 5 and high_score_accuracy < period_high_setting_rate:
-                    diag_ai = {"status": "🔴", "title": "AI設定(過学習)", "msg": "AIが高評価した台の勝率が、店全体の平均勝率を下回っています。ノイズ（たまたま出た低設定）を必勝法だと勘違いしている「過学習」の疑いがあります。「深さ制限(max_depth)」を下げるか、「最小データ数」を増やしてください。"}
+                    diag_ai = {"status": "🔴", "title": "AI設定(過学習)", "msg": "回収日のフェイクを除外した「真っ当な営業日」であっても、AIが高評価した台の勝率が店全体の平均を下回っています。ノイズを必勝法だと勘違いしている「過学習」の疑いがあります。「深さ制限(max_depth)」を下げるか、「最小データ数」を増やしてください。"}
                 elif score_mean > period_high_setting_rate + 0.15:
                     diag_ai = {"status": "🟡", "title": "AI設定(評価甘め)", "msg": "全体的にスコアが高く出すぎています。「葉の数(num_leaves)」を少し下げるか、「学習率」を下げてみてください。"}
                 elif score_mean < period_high_setting_rate - 0.15:
@@ -959,40 +984,51 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.markdown(f"**📝 過去のガチ予測ログベースの成績 ({selected_period})**")
             st.caption("過去にAIが予測結果を保存した時点でのスコアと、実際の結果を照合した『本物の実戦成績』です。")
             
-            rank_stats = prob_analysis_df.groupby('確率帯').agg(
-                台数=('台番号', 'count'),
-                高設定率=('is_high_setting', lambda x: x.mean() * 100),
-                有効稼働数=('valid_play', 'sum'),
-                勝数=('valid_win', 'sum'),
-                平均差枚=('差枚_actual', 'mean'),
-                合計差枚=('差枚_actual', 'sum'),
-                平均期待度=('prediction_score', 'mean')
-            ).reset_index()
-            rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, rank_stats['勝数'] / rank_stats['有効稼働数'] * 100, 0.0)
-            rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
+            tabs = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
             
-            # ソート順序固定
-            rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
-            rank_stats['sort'] = rank_stats['確率帯'].map(rank_order).fillna(99)
-            rank_stats = rank_stats.sort_values('sort').drop('sort', axis=1)
-            
-            rank_stats['信頼度'] = rank_stats['台数'].apply(get_confidence_indicator)
-            st.dataframe(
-                rank_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
-                column_config={
-                    "確率帯": st.column_config.TextColumn("期待度"),
-                    "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
-                    "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
-                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
-                    "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                    "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
-                    "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
-                    "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
-                    "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
-                },
-                width="stretch",
-                hide_index=True
-            )
+            def render_rank_stats(target_df):
+                if target_df.empty:
+                    st.info("該当するデータがありません。")
+                    return
+                r_stats = target_df.groupby('確率帯').agg(
+                    台数=('台番号', 'count'),
+                    高設定率=('is_high_setting', lambda x: x.mean() * 100),
+                    有効稼働数=('valid_play', 'sum'),
+                    勝数=('valid_win', 'sum'),
+                    平均差枚=('差枚_actual', 'mean'),
+                    合計差枚=('差枚_actual', 'sum'),
+                    平均期待度=('prediction_score', 'mean')
+                ).reset_index()
+                r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
+                r_stats['平均期待度'] = r_stats['平均期待度'] * 100
+                
+                # ソート順序固定
+                r_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                r_stats['sort'] = r_stats['確率帯'].map(r_order).fillna(99)
+                r_stats = r_stats.sort_values('sort').drop('sort', axis=1)
+                
+                r_stats['信頼度'] = r_stats['台数'].apply(get_confidence_indicator)
+                st.dataframe(
+                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
+                    column_config={
+                        "確率帯": st.column_config.TextColumn("期待度"),
+                        "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                        "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                        "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                        "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                        "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                    },
+                    width="stretch",
+                    hide_index=True
+                )
+
+            with tabs[0]: render_rank_stats(prob_analysis_df)
+            with tabs[1]: render_rank_stats(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🔥 還元日予測 (20%~)"])
+            with tabs[2]: render_rank_stats(prob_analysis_df[prob_analysis_df['予測営業区分'] == "⚖️ 通常営業予測 (10~19%)"])
+            with tabs[3]: render_rank_stats(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🥶 回収日予測 (~9%)"])
         
     # --- 4. AIの弱点分析 (騙された台の共通点) ---
     st.divider()
@@ -1334,7 +1370,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             preds = model.predict_proba(X_test)[:, 1]
                             test_eval = test_data.copy()
                             test_eval['pred_score'] = preds
-                            target_df = test_eval[test_eval['pred_score'] >= 0.70]
+                            
+                            # データ上の裏付けに基づく評価：生のシビアな確率に対応するため、単純に「上位15%の台」を評価対象とする
+                            threshold = test_eval['pred_score'].quantile(0.85)
+                            target_df = test_eval[test_eval['pred_score'] >= threshold]
                             if len(target_df) == 0: score = -1
                             else:
                                 precision = target_df['target'].mean()
@@ -1372,40 +1411,61 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                         ((pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) >= 750)))
                 sim_df['valid_win'] = sim_df['valid_play'] & (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) > 0)
                 sim_df['valid_high'] = sim_df['valid_play'] & (sim_df['target'] == 1)
-                sim_stats = sim_df.groupby('確率帯').agg(
-                    台数=('台番号', 'count'),
-                    高設定数=('valid_high', 'sum'),
-                    有効稼働数=('valid_play', 'sum'),
-                    勝数=('valid_win', 'sum'),
-                    平均差枚=('next_diff', 'mean'),
-                    合計差枚=('next_diff', 'sum'),
-                    平均期待度=('prediction_score', 'mean')
-                ).reset_index()
-                sim_stats['勝率'] = np.where(sim_stats['有効稼働数'] > 0, sim_stats['勝数'] / sim_stats['有効稼働数'] * 100, 0.0)
-                sim_stats['高設定率'] = np.where(sim_stats['有効稼働数'] > 0, sim_stats['高設定数'] / sim_stats['有効稼働数'] * 100, 0.0)
-                sim_stats['平均期待度'] = sim_stats['平均期待度'] * 100
                 
-                rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
-                sim_stats['sort'] = sim_stats['確率帯'].map(rank_order).fillna(99)
-                sim_stats = sim_stats.sort_values('sort').drop('sort', axis=1)
-                sim_stats['信頼度'] = sim_stats['台数'].apply(get_confidence_indicator)
+                # 予測営業区分の付与
+                if '対象日付' in sim_df.columns and '対象日付' in daily_avg_score_df.columns:
+                    sim_df['対象日付_merge_key'] = pd.to_datetime(sim_df['対象日付']).dt.normalize()
+                    sim_df = pd.merge(sim_df, daily_avg_score_df[['対象日付', '予測営業区分']], left_on='対象日付_merge_key', right_on='対象日付', how='left', suffixes=('', '_drop'))
+                    sim_df = sim_df.drop(columns=['対象日付_merge_key', '対象日付_drop'], errors='ignore')
+                    sim_df['予測営業区分'] = sim_df['予測営業区分'].fillna("⚖️ 通常営業予測 (10~19%)")
+                else:
+                    sim_df['予測営業区分'] = "⚖️ 通常営業予測 (10~19%)"
+                    
+                tabs_sim = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
                 
-                st.dataframe(
-                    sim_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
-                    column_config={
-                        "確率帯": st.column_config.TextColumn("期待度"),
-                        "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
-                        "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
-                        "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
-                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
-                        "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
-                        "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
-                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
-                    },
-                    width="stretch",
-                    hide_index=True
-                )
+                def render_sim_stats(target_df):
+                    if target_df.empty:
+                        st.info("該当するデータがありません。")
+                        return
+                    s_stats = target_df.groupby('確率帯').agg(
+                        台数=('台番号', 'count'),
+                        高設定数=('valid_high', 'sum'),
+                        有効稼働数=('valid_play', 'sum'),
+                        勝数=('valid_win', 'sum'),
+                        平均差枚=('next_diff', 'mean'),
+                        合計差枚=('next_diff', 'sum'),
+                        平均期待度=('prediction_score', 'mean')
+                    ).reset_index()
+                    s_stats['勝率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['勝数'] / s_stats['有効稼働数'] * 100, 0.0)
+                    s_stats['高設定率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['高設定数'] / s_stats['有効稼働数'] * 100, 0.0)
+                    s_stats['平均期待度'] = s_stats['平均期待度'] * 100
+                    
+                    rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                    s_stats['sort'] = s_stats['確率帯'].map(rank_order).fillna(99)
+                    s_stats = s_stats.sort_values('sort').drop('sort', axis=1)
+                    s_stats['信頼度'] = s_stats['台数'].apply(get_confidence_indicator)
+                    
+                    st.dataframe(
+                        s_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
+                        column_config={
+                            "確率帯": st.column_config.TextColumn("期待度"),
+                            "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                            "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                            "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                            "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                            "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                            "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                        },
+                        width="stretch",
+                        hide_index=True
+                    )
+
+                with tabs_sim[0]: render_sim_stats(sim_df)
+                with tabs_sim[1]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🔥 還元日予測 (20%~)"])
+                with tabs_sim[2]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "⚖️ 通常営業予測 (10~19%)"])
+                with tabs_sim[3]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🥶 回収日予測 (~9%)"])
                 
                 with st.expander("🔍 シミュレーション詳細データを確認", expanded=False):
                     st.caption("シミュレーションで各確率帯に分類された台の具体的な日付と結果を確認できます。")

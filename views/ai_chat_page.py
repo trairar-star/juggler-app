@@ -32,7 +32,7 @@ def save_chat_history(messages):
     except Exception:
         pass
 
-def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importance=None):
+def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importance=None, shop_hyperparams=None):
     st.header("👩‍💼 ホール案内スタッフ（AI）")
     st.caption("受付スタッフ風のAIに、アプリの最新データをもとにした立ち回りの相談や店舗の傾向についてチャットで質問できます。")
 
@@ -308,15 +308,65 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                 imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
                 if not imp_shop.empty:
                     feature_map = {
-                        'neighbor_avg_diff': '並び・塊の傾向 (両隣の差枚を重視)', 'island_avg_diff': '島・列ごとの強さ',
-                        'machine_no_30days_avg_diff': '場所・特定の台番号の強さ (定位置)', 'cons_minus_total_diff': '連続マイナス台の上げリセット(お詫び)',
-                        'event_x_machine_avg_diff': 'イベント時の特定機種の強さ', 'event_x_end_digit_avg_diff': 'イベント時の特定末尾の強さ',
-                        'prev_unlucky_gap': '前日の不発台の据え置き', 'prev_bonus_balance': '前日のREG先行台(BB欠損)の据え置き・反発',
-                        'target_weekday': '曜日ごとの出し方の違い', 'target_date_end_digit': '日付末尾(特定日)の強さ', 'is_corner': '角台の優遇'
+                        '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
+                        '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
+                        'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚',
+                        'mean_7days_diff': '台: 直近7日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
+                        '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
+                        'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
+                        'neighbor_avg_diff': '配置: 両隣の平均差枚 (並び・塊)',
+                        'event_avg_diff': 'イベント: 平均差枚',
+                        'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
+                        'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',
+                        'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
+                        'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
+                        'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
+                        'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
+                        'is_new_machine': '台: 新台導入(導入後7日以内)',
+                        'is_moved_machine': '台: 配置変更(移動後7日以内)',
+                        'shop_7days_avg_diff': '店舗: 週間還元/回収モード(直近7日差枚)',
+                        'prev_shop_daily_avg_diff': '店舗: 前日の平均差枚(日次ノルマ反動)',
+                        'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
+                        'machine_avg_diff': '機種: 当日平均差枚', 'machine_high_rate': '機種: 当日高設定率',
+                        'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
+                        'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
+                        'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)',
+                        'event_x_machine_avg_diff': '複合: イベント×機種の平均差枚',
+                        'event_x_end_digit_avg_diff': '複合: イベント×末尾の平均差枚',
+                        'cons_minus_total_diff': '台: 連続マイナス期間の合計吸い込み(枚)',
+                        'machine_no_30days_avg_diff': '台番号: その場所の強さ(直近30日差枚)',
+                        'is_beginning_of_month': '予測日: 月初(1-7日)', 'is_end_of_month': '予測日: 月末(25日-)',
+                        'is_pension_day': '予測日: 年金支給日(14-16日)',
+                        'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
+                        'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
+                        'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)'
                     }
-                    top_feats = [feature_map[f] for f in imp_shop['feature'].tolist() if f in feature_map][:4]
-                    if top_feats:
-                        context_data += f"\n【{selected_shop} の設定投入のクセ (AI分析による重要項目)】\n・" + "\n・".join(top_feats) + "\n"
+                    context_data += f"\n【{selected_shop} の設定投入のクセ (AIが重視している特徴量上位10件)】\n"
+                    context_data += "※ 相関がプラスなら「その値が大きいほど高設定になりやすい」、マイナスなら「値が小さいほど高設定になりやすい」ことを示します。\n"
+                    count = 0
+                    for _, row in imp_shop.iterrows():
+                        f_key = row['feature']
+                        if f_key in feature_map:
+                            f_name = feature_map[f_key]
+                            importance = row.get('importance', 0)
+                            correlation = row.get('correlation', 0)
+                            corr_str = f"プラス相関 (+{correlation:.2f})" if correlation >= 0 else f"マイナス相関 ({correlation:.2f})"
+                            context_data += f"・{f_name} : 重要度 {importance:.0f} / {corr_str}\n"
+                            count += 1
+                            if count >= 10: break
+
+            # --- 2.5. 現在のAIハイパーパラメータ設定 ---
+            if shop_hyperparams:
+                current_hp = shop_hyperparams.get(selected_shop, shop_hyperparams.get("デフォルト", {}))
+                context_data += f"\n【{selected_shop} の現在のAIモデル設定 (パラメータ)】\n"
+                context_data += f"・学習期間: 直近 {current_hp.get('train_months', 3)} ヶ月\n"
+                context_data += f"・学習回数 (n_estimators): {current_hp.get('n_estimators', 300)}\n"
+                context_data += f"・学習率 (learning_rate): {current_hp.get('learning_rate', 0.03)}\n"
+                context_data += f"・葉の数 (num_leaves): {current_hp.get('num_leaves', 15)}\n"
+                context_data += f"・深さ制限 (max_depth): {current_hp.get('max_depth', 4)}\n"
+                context_data += f"・最小データ数 (min_child_samples): {current_hp.get('min_child_samples', 50)}\n"
+                context_data += f"・L1正則化 (reg_alpha): {current_hp.get('reg_alpha', 0.0)}\n"
+                context_data += f"・L2正則化 (reg_lambda): {current_hp.get('reg_lambda', 0.0)}\n"
 
             # --- 3. 最近甘く使われている機種 ---
             if not df_predict.empty and 'machine_30days_avg_diff' in df_predict.columns and '機種名' in df_predict.columns:
@@ -452,6 +502,23 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             merged_acc = merged_acc[merged_acc['予測対象日_merge'] > cutoff_date].copy()
                             merged_acc['prediction_score'] = pd.to_numeric(merged_acc['prediction_score'], errors='coerce')
                             
+                            # 店舗の平均期待度を取得して結合
+                            df_daily_scores = backend.load_daily_shop_scores()
+                            if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
+                                df_daily_scores['予測対象日_merge'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce')
+                                daily_scores_shop = df_daily_scores[df_daily_scores['店名'] == selected_shop].copy()
+                                merged_acc = pd.merge(merged_acc, daily_scores_shop[['予測対象日_merge', '店舗平均期待度']], on='予測対象日_merge', how='left')
+                            else:
+                                merged_acc['店舗平均期待度'] = np.nan
+                                
+                            def classify_day(score):
+                                if pd.isna(score): return "通常営業"
+                                if score >= 0.20: return "還元日"
+                                elif score < 0.10: return "回収日"
+                                else: return "通常営業"
+                                
+                            merged_acc['営業予測'] = merged_acc['店舗平均期待度'].apply(classify_day)
+                            
                             merged_acc['daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
                             top_k = max(3, min(10, int(df_raw_temp['台番号'].nunique() * 0.10)))
                             
@@ -469,13 +536,31 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                                 win_rate = (win_count / valid_count * 100) if valid_count > 0 else 0
                                 
                                 context_data += f"\n【{selected_shop} のAI予測実績 (直近1ヶ月)】\n"
-                                context_data += f"AI推奨台の勝率 (差枚プラス割合): {win_rate:.1f}% (有効稼働 {int(valid_count)}台中 {int(win_count)}台)\n"
-                                if win_rate >= 50:
-                                    context_data += "AI自己評価: 予測が店舗の傾向とよく噛み合っており、非常に信頼できる状態です。\n"
-                                elif win_rate >= 35:
-                                    context_data += "AI自己評価: 予測は標準的な精度です。店癖などの他要素も加味して狙い台を絞るのがおすすめです。\n"
+                                context_data += f"・全体: 勝率 {win_rate:.1f}% (有効稼働 {int(valid_count)}台中 {int(win_count)}台)\n"
+                                
+                                for day_type in ["還元日", "通常営業", "回収日"]:
+                                    type_df = high_expect_df[high_expect_df['営業予測'] == day_type]
+                                    t_val = type_df['valid_play'].sum()
+                                    t_win = type_df['valid_win'].sum()
+                                    if t_val > 0:
+                                        context_data += f"・{day_type}: 勝率 {(t_win/t_val*100):.1f}% (有効稼働 {int(t_val)}台中 {int(t_win)}台)\n"
+                                
+                                if valid_count < 30:
+                                    context_data += "AI自己評価: まだ直近1ヶ月の検証台数（有効稼働）が少なく、たまたまのヒキでブレている可能性が高い状態です。設定は変更せずにもう少し様子を見てください。\n"
                                 else:
-                                    context_data += "AI自己評価: 予測がフェイク設定等に騙されやすく、精度が低迷しています。稼働を控えるか、強イベント時のみに絞るなどの警戒が必要です。\n"
+                                    hot_df = high_expect_df[high_expect_df['営業予測'] == '還元日']
+                                    hot_val = hot_df['valid_play'].sum()
+                                    hot_win = hot_df['valid_win'].sum()
+                                    hot_rate = (hot_win / hot_val * 100) if hot_val > 0 else win_rate
+                                    
+                                    if hot_rate >= 50:
+                                        context_data += "AI自己評価: 還元日の勝率は良好で、AIは店の傾向を正しく読めています。回収日のフェイクに騙されて全体勝率が下がっているだけなので、還元日のみに絞って稼働すれば勝てます！設定の変更は不要です。\n"
+                                    elif win_rate >= 50:
+                                        context_data += "AI自己評価: 予測が店舗の傾向とよく噛み合っており、非常に信頼できる状態です。\n"
+                                    elif win_rate >= 35:
+                                        context_data += "AI自己評価: 予測は標準的な精度です。店癖などの他要素も加味して狙い台を絞るのがおすすめです。\n"
+                                    else:
+                                        context_data += "AI自己評価: 還元日でも勝率が低迷しており、予測がフェイク設定等に騙されています。学習期間を短くするなど設定のチューニングをおすすめします。\n"
                 except Exception:
                     pass
 
@@ -709,6 +794,10 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [スケジュール提案]: 「1週間のスケジュール」「今後の予定」などを聞かれた場合、提供されている「向こう1週間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして1週間の立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
 - [ユーザー自身の成績]: 提供されている「あなたの機種別 通算ボーナス成績」に基づき、ユーザーのヒキや各機種の相性について回答してください。「BIGは引けていますがREG確率が低いですね」などの客観的な評価を行い、立ち回りの改善に繋がるアドバイスをしてください。
+- [AIの設定調整の相談]: お客様から「AIの精度を上げたい」「設定をどう調整すればいいか」といった相談があった場合、提供されている「AI予測実績 (直近1ヶ月)」の勝率と検証台数、および「現在のAIモデル設定」をもとにアドバイスしてください。
+  1. 検証台数（有効稼働数）が30台未満と少ない場合は「まだデータが少ないため、たまたまのヒキでブレている可能性が高いです。パラメータは変更せずにもう少し（30台以上貯まるまで）様子を見ることをおすすめします」と案内してください。
+  2. 検証台数が十分な場合で、全体の勝率が低くても「還元日の勝率」が高ければ、「AIは正しく傾向を読めています。回収日のフェイクに騙されて全体勝率が落ちているだけなので、設定は変えずに還元日のみを狙えば勝てますよ」とアドバイスしてください。
+  3. 還元日の勝率も低い場合は、AIが過去のまぐれ吹きを必勝法と勘違いしている「過学習」の可能性を疑い、「深さ制限(max_depth)を下げる」「最小データ数(min_child_samples)を増やす」などの具体的なパラメータ変更を提案してください。また「特徴量上位10件」から、AIがどのデータを重視して予測を立てているか（店癖）も解説し、その店癖が現状とズレていそうなら「学習期間を直近1〜3ヶ月に短縮する」などのアドバイスを行ってください。
 
 現在日時: {now_str}
 ※提供されているデータは【{target_date_str}】の予測・イベント情報、および向こう1週間のスケジュール検討用データです。

@@ -16,7 +16,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v3.0.0" 
+APP_VERSION = "v3.6.0" 
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -138,11 +138,20 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
         
     exp_r = g * p_r
     
-    # BIGの評価基準確率をG数で決定
-    if g >= 7000:
-        target_p_b = p_b
-    elif g >= 5000:
-        target_p_b = p_b_6
+    act_p_r = act_r / g if g > 0 else 0
+    p_b_5 = p_b
+    p_r_3 = 1 / 300.0
+    if matched_spec and "設定3" in specs[matched_spec] and "REG" in specs[matched_spec]["設定3"]:
+        p_r_3 = 1.0 / specs[matched_spec]["設定3"]["REG"]
+
+    # BIGの評価基準確率を決定（BIGの上振れ評価の厳格化）
+    if g >= 5000:
+        if act_p_r >= p_r_3:
+            # REGが設定3以上のスコアをキープしている時は、設定5のBIG確率で評価
+            target_p_b = p_b_5
+        else:
+            # REGが悪い時は、設定6以上のBIG確率でのみ評価
+            target_p_b = p_b_6
     else:
         target_p_b = None
         
@@ -1441,6 +1450,13 @@ def _generate_features(df, df_events, df_island, target_date):
         
     df['target_weekday'] = df['next_date'].dt.dayofweek
     df['target_date_end_digit'] = df['next_date'].dt.day % 10
+        
+    # 月初(還元されやすい)と月末(回収されやすい)のフラグ
+    if 'next_date' in df.columns:
+        df['is_beginning_of_month'] = (df['next_date'].dt.day <= 7).astype(int)
+        df['is_end_of_month'] = (df['next_date'].dt.day >= 25).astype(int)
+        # 年金支給日(15日近辺)フラグの追加：高齢者が多いためジャグラーが回収されやすい
+        df['is_pension_day'] = (df['next_date'].dt.day.between(14, 16)).astype(int)
 
     if df_events is not None and not df_events.empty and shop_col:
         valid_events = df_events.copy()
@@ -1468,52 +1484,47 @@ def _generate_features(df, df_events, df_island, target_date):
             cond_ss = (valid_events['イベントランク'] == 'SS (周年)') | (valid_events['イベント名'].astype(str).str.contains('周年|リニューアル|グランド'))
             valid_events = valid_events[~(cond_exclude & ~cond_ss)].copy()
 
+        def calc_single_score(row):
+            rank = str(row.get('イベントランク', ''))
+            t_mac = str(row.get('対象機種', '指定なし'))
+            my_mac = str(row.get('機種名', ''))
+            e_type = str(row.get('イベント種別', '全体')).replace('スロット/全体', '全体')
+            
+            rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
+            score = rank_map.get(rank, 0)
+            
+            is_super_event = (rank == 'SS (周年)') or ('周年' in str(row.get('イベント名', ''))) or ('リニューアル' in str(row.get('イベント名', ''))) or ('グランド' in str(row.get('イベント名', '')))
+            if is_super_event and score < 6:
+                score = max(score, 5) # 特大イベントは最低でもSランク相当のパワーを保証
+
+            # パチンコ専用イベントの処理
+            if e_type == 'パチンコ専用':
+                if is_super_event:
+                    return 3 # スロットへの波及効果として中間スコア(Bランク相当)を与える
+                else:
+                    return -score if score > 0 else -1 # ランクが高いほどマイナス(回収)スコアを大きくする
+                    
+            # 対象外(無効)だが「周年」で例外的に残ったデータの処理
+            if e_type == '対象外(無効)':
+                if is_super_event:
+                    return 3
+                else:
+                    return 0
+
+            # 特定機種が指定されている場合、関係ない機種はイベントの恩恵（スコア）をマイナス化
+            if score > 0 and t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
+                if t_mac == 'ジャグラー以外 (パチスロ他機種)':
+                    if is_super_event: score = 3
+                    else: score = -score # ランクが高いほどマイナススコアを大きくする
+                elif my_mac not in t_mac and t_mac not in my_mac:
+                    if is_super_event: score = 3 # 特大イベントなら対象外機種でもおこぼれ(ベースアップ)としてスコアを残す
+                    else: score = -score # イベント対象機種やパチンコへの還元のシワ寄せで回収されるとみなしてマイナス評価
+            return score
+
         unique_combinations = df[['店名', 'next_date', '機種名']].drop_duplicates()
         merged_ev = pd.merge(unique_combinations, valid_events, left_on=['店名', 'next_date'], right_on=['店名', 'イベント日付'], how='inner')
         
         if not merged_ev.empty:
-            def calc_single_score(row):
-                rank = str(row.get('イベントランク', ''))
-                t_mac = str(row.get('対象機種', '指定なし'))
-                my_mac = str(row.get('機種名', ''))
-                e_type = str(row.get('イベント種別', '全体')).replace('スロット/全体', '全体')
-                
-                rank_map = {'SS (周年)': 6, 'S': 5, 'A': 4, 'B': 3, 'C': 2}
-                score = rank_map.get(rank, 0)
-                
-                is_super_event = (rank == 'SS (周年)') or ('周年' in str(row.get('イベント名', ''))) or ('リニューアル' in str(row.get('イベント名', ''))) or ('グランド' in str(row.get('イベント名', '')))
-                if is_super_event and score < 6:
-                    score = max(score, 5) # 特大イベントは最低でもSランク相当のパワーを保証
-
-                # パチンコ専用イベントの処理
-                if e_type == 'パチンコ専用':
-                    if is_super_event:
-                        return 3 # スロットへの波及効果として中間スコア(Bランク相当)を与える
-                    else:
-                        return -score if score > 0 else -1 # ランクが高いほどマイナス(回収)スコアを大きくする
-                        
-                # 対象外(無効)だが「周年」で例外的に残ったデータの処理
-                if e_type == '対象外(無効)':
-                    if is_super_event:
-                        return 3
-                    else:
-                        return 0
-
-                # 特定機種が指定されている場合、関係ない機種はイベントの恩恵（スコア）をマイナス化
-                if score > 0 and t_mac not in ['指定なし', 'スロット全体', 'ジャグラー全体', '全体', 'nan', 'None']:
-                    if t_mac == 'ジャグラー以外 (パチスロ他機種)':
-                        if is_super_event:
-                            score = 3
-                        else:
-                            score = -score # ランクが高いほどマイナススコアを大きくする
-                    elif my_mac not in t_mac and t_mac not in my_mac:
-                        # 対象外の機種（他のジャグラー含む）に対する処理
-                        if is_super_event:
-                            score = 3 # 特大イベントなら対象外機種でもおこぼれ(ベースアップ)としてスコアを残す
-                        else:
-                            score = -score # イベント対象機種やパチンコへの還元のシワ寄せで回収されるとみなしてマイナス評価
-                return score
-                
             merged_ev['single_score'] = merged_ev.apply(calc_single_score, axis=1)
             
             # 同日・同店舗の複数イベントのスコアと名前を合算・結合する
@@ -1533,6 +1544,20 @@ def _generate_features(df, df_events, df_island, target_date):
             df['event_rank_score'] = 0
             df['イベントランク'] = ''
             df['event_code'] = 0
+
+        # --- 予測日に対する「前日（今日の対象日付）」がイベントだったかのスコア（特日翌日の扱い学習用） ---
+        unique_combinations_today = df[['店名', '対象日付', '機種名']].drop_duplicates()
+        merged_ev_today = pd.merge(unique_combinations_today, valid_events, left_on=['店名', '対象日付'], right_on=['店名', 'イベント日付'], how='inner')
+        
+        if not merged_ev_today.empty:
+            merged_ev_today['single_score'] = merged_ev_today.apply(calc_single_score, axis=1)
+            ev_summary_today = merged_ev_today.groupby(['店名', '対象日付', '機種名']).agg(
+                prev_event_rank_score=('single_score', 'sum')
+            ).reset_index()
+            df = pd.merge(df, ev_summary_today, on=['店名', '対象日付', '機種名'], how='left')
+            df['prev_event_rank_score'] = df['prev_event_rank_score'].fillna(0)
+        else:
+            df['prev_event_rank_score'] = 0
 
     # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更
     df = df.sort_values('対象日付').reset_index(drop=True)
@@ -1596,7 +1621,17 @@ def _generate_features(df, df_events, df_island, target_date):
         shop_daily_avg = df.groupby([shop_col, '対象日付'])['差枚'].mean().reset_index(name='shop_daily_avg_diff')
         shop_daily_avg = shop_daily_avg.sort_values([shop_col, '対象日付'])
         shop_daily_avg['shop_7days_avg_diff'] = shop_daily_avg.groupby(shop_col)['shop_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
-        df = pd.merge(df, shop_daily_avg[[shop_col, '対象日付', 'shop_7days_avg_diff']], on=[shop_col, '対象日付'], how='left')
+        
+        # --- 前日の店舗平均差枚 (日次ノルマのショート/オーバーによる緊急回収の確認用) ---
+        shop_daily_avg['prev_shop_daily_avg_diff'] = shop_daily_avg.groupby(shop_col)['shop_daily_avg_diff'].shift(1).fillna(0)
+        df = pd.merge(df, shop_daily_avg[[shop_col, '対象日付', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff']], on=[shop_col, '対象日付'], how='left')
+
+        # --- 月間ノルマ進捗指標 (その月の前日までの店舗累計差枚) ---
+        shop_daily_total = df.groupby([shop_col, '対象日付'])['差枚'].sum().reset_index(name='shop_daily_total_diff')
+        shop_daily_total['年月'] = shop_daily_total['対象日付'].dt.to_period('M')
+        shop_daily_total = shop_daily_total.sort_values([shop_col, '対象日付'])
+        shop_daily_total['shop_monthly_cumulative_diff'] = shop_daily_total.groupby([shop_col, '年月'])['shop_daily_total_diff'].transform(lambda x: x.shift(1).cumsum()).fillna(0)
+        df = pd.merge(df, shop_daily_total[[shop_col, '対象日付', 'shop_monthly_cumulative_diff']], on=[shop_col, '対象日付'], how='left')
 
     if shop_col and '機種名' in df.columns:
         # --- ②機種ごとの扱い指標 (過去30日間のその機種の平均差枚) ---
@@ -1710,8 +1745,8 @@ def _generate_features(df, df_events, df_island, target_date):
         df['is_new_machine'] = 0
         df['is_moved_machine'] = 0
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff']:
+    features = ['累計 কমলা', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -1760,8 +1795,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         objective='binary', random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
         reg_alpha=r_alpha, reg_lambda=r_lambda,
-        subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-        class_weight='balanced'
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
     )
     model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
     reg_model = lgb.LGBMRegressor(
@@ -1835,8 +1869,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-                    class_weight='balanced'
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 shop_reg = lgb.LGBMRegressor(
                     random_state=42, verbose=-1, 
@@ -1885,8 +1918,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-                    class_weight='balanced'
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
@@ -1915,8 +1947,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-                    class_weight='balanced'
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
@@ -2327,6 +2358,74 @@ def _postprocess_predictions(predict_df, train_df):
     if not train_df.empty:
         train_df = train_df.apply(apply_hopeless_penalty, axis=1)
 
+    # --- 回収日の「完全ベタピン店」判定の事前計算 ---
+    shop_col_for_betapin = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
+    betapin_shops = set()
+    if shop_col_for_betapin and not train_df.empty:
+        temp_train = train_df.copy()
+        temp_train['temp_shop_avg'] = temp_train.groupby([shop_col_for_betapin, 'next_date'])['prediction_score'].transform('mean')
+        cold_days = temp_train[temp_train['temp_shop_avg'] < 0.10]
+        if not cold_days.empty:
+            cold_stats = cold_days.groupby(shop_col_for_betapin).agg(
+                高設定率=('target', 'mean'),
+                サンプル数=('target', 'count')
+            ).reset_index()
+            # 回収日のサンプルが100台以上あり、実績高設定率が1.5%未満の店舗を「回収日は完全ベタピン」と認定
+            betapin_shops = set(cold_stats[(cold_stats['サンプル数'] >= 100) & (cold_stats['高設定率'] < 0.015)][shop_col_for_betapin])
+
+    # --- 店舗全体の空気感（回収/還元）による期待度の連動補正 ---
+    def apply_shop_mood_correction(df_target):
+        shop_col = '店名' if '店名' in df_target.columns else ('店舗名' if '店舗名' in df_target.columns else None)
+        if df_target.empty or not shop_col:
+            return df_target
+            
+        # 予測日ごとに店舗全体の平均期待度を計算
+        df_target['temp_shop_avg'] = df_target.groupby([shop_col, 'next_date'])['prediction_score'].transform('mean')
+        
+        def _correct(row):
+            score = row['prediction_score']
+            s_avg = row.get('temp_shop_avg', 0.15)
+            s_name = row.get(shop_col)
+            reasons = []
+            
+            if s_avg < 0.10:
+                is_betapin = s_name in betapin_shops
+                if is_betapin:
+                    # ベタピン店の場合、例外なくスコアを極限まで下げる（80%割引）
+                    score *= 0.20
+                    if score >= 0.20:
+                        reasons.append(f"【⚠️絶対回収】過去のデータから、この店舗は回収日(全体期待度{s_avg*100:.1f}%)に高設定をほぼ100%使わない「完全ベタピン」の傾向が確認されています。AIの推奨条件に合致してもフェイクのため絶対に打つべきではありません。")
+                else:
+                    # 通常の回収日ペナルティ
+                    if score >= 0.70:
+                        penalty_factor = 0.90 + (s_avg / 0.10) * 0.10
+                        score *= penalty_factor
+                        reasons.append(f"【💎一点突破】店舗全体は回収傾向(平均期待度{s_avg*100:.1f}%)ですが、この台には強烈な根拠があり、数少ない高設定（当たり台）の候補として強く推奨します。")
+                    else:
+                        penalty_factor = 0.80 + (s_avg / 0.10) * 0.20
+                        score *= penalty_factor
+                        if score >= 0.50: 
+                            reasons.append(f"【🚨フェイク警戒】店舗全体が回収傾向(平均期待度{s_avg*100:.1f}%)です。普段なら強い根拠がある台ですが、今日はフェイク（罠）として使われるリスクが高いため慎重に判断してください。")
+            elif s_avg >= 0.20:
+                # 平均が0.20以上(還元日)の場合、ベースの高さを加味して全体を少し底上げ
+                bonus = min(0.10, (s_avg - 0.20))
+                score = score + (1.0 - score) * bonus
+                
+            row['prediction_score'] = score
+            if reasons:
+                existing_reason = str(row.get('根拠', ''))
+                new_reason = " ".join(reasons)
+                row['根拠'] = (existing_reason + " " + new_reason).strip() if existing_reason and existing_reason != '-' else new_reason
+                
+            return row
+            
+        res_df = df_target.apply(_correct, axis=1)
+        res_df = res_df.drop(columns=['temp_shop_avg'])
+        return res_df
+
+    predict_df = apply_shop_mood_correction(predict_df)
+    train_df = apply_shop_mood_correction(train_df)
+
     # --- 予測スコアから「前日の自己評価スコア(past_prediction_score)」を作成 ---
     # 最終的な予測スコアを使って「前日も推奨していたか」を判定する
     all_df = pd.concat([train_df, predict_df], ignore_index=True)
@@ -2484,6 +2583,10 @@ def _postprocess_predictions(predict_df, train_df):
                 reasons.append(f"【⚠️回収警戒】本日は複合イベント「{evt_name}」ですが、対象外機種であるため回収に回される危険性が高いです。")
             elif evt_score > 0:
                 reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です(複合スコア: {evt_score})。")
+
+        prev_evt_score = row.get('prev_event_rank_score', 0)
+        if evt_score <= 0 and prev_evt_score > 0 and score >= 0.60:
+            reasons.append("【特日翌日】前日は特日でしたが、AIは本日の「据え置き」または「入れ直し」を有力視しています。")
 
         w_avg = row.get('weekday_avg_diff', 0)
         if w_avg > 150:
