@@ -741,11 +741,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     st.subheader("📈 確率帯別 精度分析")
     if 'prediction_score' in merged_df.columns:
         def get_prob_band(score):
-            if score >= 0.85: return '85%以上'
-            elif score >= 0.70: return '70%〜84%'
-            elif score >= 0.50: return '50%〜69%'
-            elif score >= 0.30: return '30%〜49%'
-            else: return '30%未満'
+            if score >= 0.50: return '50%以上'
+            elif score >= 0.40: return '40%〜49%'
+            elif score >= 0.30: return '30%〜39%'
+            elif score >= 0.20: return '20%〜29%'
+            elif score >= 0.15: return '15%〜19%'
+            elif score >= 0.10: return '10%〜14%'
+            else: return '10%未満'
             
         merged_df['確率帯'] = merged_df['prediction_score'].apply(get_prob_band)
         
@@ -819,7 +821,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 r_stats['高設定率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['高設定数'] / r_stats['有効稼働数'] * 100, 0.0)
                 r_stats['平均期待度'] = r_stats['平均期待度'] * 100
                 
-                rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                 r_stats['sort'] = r_stats['確率帯'].map(rank_order).fillna(99)
                 r_stats = r_stats.sort_values('sort').drop('sort', axis=1)
                 
@@ -918,6 +920,93 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 except Exception:
                     pass
 
+            st.divider()
+            with st.expander("🚀 全店舗一括 自動チューニング", expanded=False):
+                st.info("💡 登録されているすべての店舗に対して、自動チューニングを順番に実行します。AIの根本的な計算ロジック（純粋確率化など）がアップデートされた際などに、全店舗の設定を一気に最適化し直すのに便利です。店舗数によっては完了まで数分かかる場合があります。")
+                if st.button("⚠️ 全店舗を一括でチューニングする", type="primary"):
+                    all_shops = df_verify[shop_col].dropna().unique().tolist()
+                    if not all_shops:
+                        st.warning("チューニング対象の店舗がありません。")
+                    else:
+                        import lightgbm as lgb
+                        base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                        actual_features = [f for f in base_features if f in df_verify.columns]
+                        cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+                        
+                        param_candidates = [
+                            {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                            {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                            {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.0},
+                            {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 12, 'max_depth': 3, 'min_child_samples': 80, 'reg_alpha': 0.1, 'reg_lambda': 1.0},
+                            {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                            {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                            {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100, 'reg_alpha': 2.0, 'reg_lambda': 0.0},
+                            {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
+                            {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                            {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                            {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
+                            {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
+                        ]
+                        
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        for shop_idx, shop_name in enumerate(all_shops):
+                            status_text.text(f"[{shop_idx+1}/{len(all_shops)}] {shop_name} の最適なパラメータを探索中...")
+                            shop_df = df_verify[df_verify[shop_col] == shop_name].copy()
+                            if len(shop_df) < 150:
+                                continue
+                            
+                            shop_df = shop_df.sort_values('対象日付')
+                            split_idx = int(len(shop_df) * 0.8)
+                            train_data = shop_df.iloc[:split_idx]
+                            test_data = shop_df.iloc[split_idx:]
+                            
+                            X_train, y_train = train_data[actual_features], train_data['target']
+                            X_test, y_test = test_data[actual_features], test_data['target']
+                            
+                            max_date = train_data['対象日付'].max()
+                            days_diff = (max_date - train_data['対象日付']).dt.days
+                            sample_weights = 0.995 ** days_diff
+                            
+                            best_score = -9999
+                            best_params = param_candidates[0]
+                            
+                            for params in param_candidates:
+                                try:
+                                    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                                    model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                                    preds = model.predict_proba(X_test)[:, 1]
+                                    test_eval = test_data.copy()
+                                    test_eval['pred_score'] = preds
+                                    
+                                    threshold = test_eval['pred_score'].quantile(0.85)
+                                    target_df = test_eval[test_eval['pred_score'] >= threshold]
+                                    if len(target_df) == 0: score = -1
+                                    else:
+                                        precision = target_df['target'].mean()
+                                        avg_diff = target_df['next_diff'].mean()
+                                        coverage = len(target_df) / len(test_eval)
+                                        score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                                    if score > best_score:
+                                        best_score = score
+                                        best_params = params
+                                except Exception: pass
+                                
+                            current_hp = st.session_state["shop_hyperparams"].get(shop_name, st.session_state["shop_hyperparams"].get("デフォルト", {}))
+                            st.session_state["shop_hyperparams"][shop_name] = {
+                                'train_months': current_hp.get('train_months', 3), 'n_estimators': best_params['n_estimators'], 'learning_rate': best_params['learning_rate'],
+                                'num_leaves': best_params['num_leaves'], 'max_depth': best_params['max_depth'], 'min_child_samples': best_params['min_child_samples'],
+                                'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0)
+                            }
+                            progress_bar.progress((shop_idx + 1) / len(all_shops))
+                            
+                        backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+                        status_text.text("✅ 全店舗のチューニングが完了しました！")
+                        st.toast("✅ 全店舗のAIパラメータを最適化しました！")
+                        st.cache_data.clear(); st.rerun()
+
+            st.divider()
             with st.expander("🤖 総合原因分析 (AIの自己診断レポート)", expanded=True):
                 st.markdown("精度検証の結果から、予測がうまくいっているか、あるいは**何が原因で精度が落ちているか**を総合的に診断します。")
                 
@@ -980,55 +1069,6 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     final_action_msg = "店舗の状況、データ量、AIの設定、すべてが完璧に噛み合っています。**今のAI設定のまま、自信を持って日々の立ち回りに活用してください！**"
                     st.success(f"**{final_action_title}**\n\n{final_action_msg}")
                     
-                       
-            st.markdown(f"**📝 過去のガチ予測ログベースの成績 ({selected_period})**")
-            st.caption("過去にAIが予測結果を保存した時点でのスコアと、実際の結果を照合した『本物の実戦成績』です。")
-            
-            tabs = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
-            
-            def render_rank_stats(target_df):
-                if target_df.empty:
-                    st.info("該当するデータがありません。")
-                    return
-                r_stats = target_df.groupby('確率帯').agg(
-                    台数=('台番号', 'count'),
-                    高設定率=('is_high_setting', lambda x: x.mean() * 100),
-                    有効稼働数=('valid_play', 'sum'),
-                    勝数=('valid_win', 'sum'),
-                    平均差枚=('差枚_actual', 'mean'),
-                    合計差枚=('差枚_actual', 'sum'),
-                    平均期待度=('prediction_score', 'mean')
-                ).reset_index()
-                r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
-                r_stats['平均期待度'] = r_stats['平均期待度'] * 100
-                
-                # ソート順序固定
-                r_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
-                r_stats['sort'] = r_stats['確率帯'].map(r_order).fillna(99)
-                r_stats = r_stats.sort_values('sort').drop('sort', axis=1)
-                
-                r_stats['信頼度'] = r_stats['台数'].apply(get_confidence_indicator)
-                st.dataframe(
-                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
-                    column_config={
-                        "確率帯": st.column_config.TextColumn("期待度"),
-                        "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
-                        "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
-                        "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
-                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
-                        "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
-                        "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
-                        "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
-                    },
-                    width="stretch",
-                    hide_index=True
-                )
-
-            with tabs[0]: render_rank_stats(prob_analysis_df)
-            with tabs[1]: render_rank_stats(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🔥 還元日予測 (20%~)"])
-            with tabs[2]: render_rank_stats(prob_analysis_df[prob_analysis_df['予測営業区分'] == "⚖️ 通常営業予測 (10~19%)"])
-            with tabs[3]: render_rank_stats(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🥶 回収日予測 (~9%)"])
         
     # --- 4. AIの弱点分析 (騙された台の共通点) ---
     st.divider()
@@ -1282,11 +1322,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_data['valid_high'] = test_data['valid_play'] & (test_data['target'] == 1)
                             
                             def get_prob_band(score):
-                                if score >= 0.85: return '85%以上'
-                                elif score >= 0.70: return '70%〜84%'
-                                elif score >= 0.50: return '50%〜69%'
-                                elif score >= 0.30: return '30%〜49%'
-                                else: return '30%未満'
+                                if score >= 0.50: return '50%以上'
+                                elif score >= 0.40: return '40%〜49%'
+                                elif score >= 0.30: return '30%〜39%'
+                                elif score >= 0.20: return '20%〜29%'
+                                elif score >= 0.15: return '15%〜19%'
+                                elif score >= 0.10: return '10%〜14%'
+                                else: return '10%未満'
                             
                             test_data['確率帯'] = test_data['pred_score'].apply(get_prob_band)
                             test_stats = test_data.groupby('確率帯').agg(
@@ -1299,7 +1341,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_stats['高設定率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['高設定数'] / test_stats['有効稼働数'] * 100, 0.0)
                             test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
                             
-                            rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                            rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                             test_stats['sort'] = test_stats['確率帯'].map(rank_order).fillna(99)
                             test_stats = test_stats.sort_values('sort').drop('sort', axis=1)
                             
@@ -1401,11 +1443,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             sim_df = df_verify[df_verify[shop_col] == selected_shop].copy() if not df_verify.empty and shop_col in df_verify.columns else pd.DataFrame()
             if not sim_df.empty and 'prediction_score' in sim_df.columns and 'target' in sim_df.columns and 'next_diff' in sim_df.columns:
                 def get_prob_band(score):
-                    if score >= 0.85: return '85%以上'
-                    elif score >= 0.70: return '70%〜84%'
-                    elif score >= 0.50: return '50%〜69%'
-                    elif score >= 0.30: return '30%〜49%'
-                    else: return '30%未満'
+                    if score >= 0.50: return '50%以上'
+                    elif score >= 0.40: return '40%〜49%'
+                    elif score >= 0.30: return '30%〜39%'
+                    elif score >= 0.20: return '20%〜29%'
+                    elif score >= 0.15: return '15%〜19%'
+                    elif score >= 0.10: return '10%〜14%'
+                    else: return '10%未満'
                 sim_df['確率帯'] = sim_df['prediction_score'].apply(get_prob_band)
                 sim_df['valid_play'] = (pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
                                        ((pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
@@ -1441,7 +1485,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     s_stats['高設定率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['高設定数'] / s_stats['有効稼働数'] * 100, 0.0)
                     s_stats['平均期待度'] = s_stats['平均期待度'] * 100
                     
-                    rank_order = {'85%以上': 1, '70%〜84%': 2, '50%〜69%': 3, '30%〜49%': 4, '30%未満': 5}
+                    rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                     s_stats['sort'] = s_stats['確率帯'].map(rank_order).fillna(99)
                     s_stats = s_stats.sort_values('sort').drop('sort', axis=1)
                     s_stats['信頼度'] = s_stats['台数'].apply(get_confidence_indicator)
@@ -1470,7 +1514,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 
                 with st.expander("🔍 シミュレーション詳細データを確認", expanded=False):
                     st.caption("シミュレーションで各確率帯に分類された台の具体的な日付と結果を確認できます。")
-                    band_options_sim = ['すべて', '85%以上', '70%〜84%', '50%〜69%', '30%〜49%', '30%未満']
+                    band_options_sim = ['すべて', '50%以上', '40%〜49%', '30%〜39%', '20%〜29%', '15%〜19%', '10%〜14%', '10%未満']
                     selected_band_sim = st.selectbox("表示する確率帯を選択", band_options_sim, index=0, key="sim_band_select")
                     
                     sim_display_df = sim_df.copy()
