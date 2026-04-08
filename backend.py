@@ -16,7 +16,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v3.6.0" 
+APP_VERSION = "v3.8.0" 
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -1795,7 +1795,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         objective='binary', random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
         reg_alpha=r_alpha, reg_lambda=r_lambda,
-        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+        scale_pos_weight=4.0
     )
     model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
     reg_model = lgb.LGBMRegressor(
@@ -1869,7 +1870,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                    scale_pos_weight=4.0
                 )
                 shop_reg = lgb.LGBMRegressor(
                     random_state=42, verbose=-1, 
@@ -1918,7 +1920,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                    scale_pos_weight=4.0
                 )
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
@@ -1947,7 +1950,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+                    scale_pos_weight=4.0
                 )
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
@@ -2317,10 +2321,6 @@ def _postprocess_predictions(predict_df, train_df):
         diff = row.get('差枚', 0)
         win_rate_7d = row.get('win_rate_7days', 0)
         
-        # 1. メリハリ補正 (50%未満のスコアをさらに押し下げる)
-        if score < 0.50:
-            score = score * ((score + 0.1) / 0.60)
-            
         penalty_factor = 1.0
         reasons = []
 
@@ -2381,14 +2381,19 @@ def _postprocess_predictions(predict_df, train_df):
             
         # 予測日ごとに店舗全体の平均期待度を計算
         df_target['temp_shop_avg'] = df_target.groupby([shop_col, 'next_date'])['prediction_score'].transform('mean')
+        if '予測差枚数' in df_target.columns:
+            df_target['temp_shop_diff'] = df_target.groupby([shop_col, 'next_date'])['予測差枚数'].transform('mean')
+        else:
+            df_target['temp_shop_diff'] = np.nan
         
         def _correct(row):
             score = row['prediction_score']
             s_avg = row.get('temp_shop_avg', 0.15)
+            s_diff = row.get('temp_shop_diff', 0)
             s_name = row.get(shop_col)
             reasons = []
             
-            if s_avg < 0.10:
+            if s_avg < 0.10 and (pd.isna(s_diff) or s_diff < 0):
                 is_betapin = s_name in betapin_shops
                 if is_betapin:
                     # ベタピン店の場合、例外なくスコアを極限まで下げる（80%割引）
@@ -2406,9 +2411,9 @@ def _postprocess_predictions(predict_df, train_df):
                         score *= penalty_factor
                         if score >= 0.50: 
                             reasons.append(f"【🚨フェイク警戒】店舗全体が回収傾向(平均期待度{s_avg*100:.1f}%)です。普段なら強い根拠がある台ですが、今日はフェイク（罠）として使われるリスクが高いため慎重に判断してください。")
-            elif s_avg >= 0.20:
+            elif s_avg >= 0.20 or (pd.notna(s_diff) and s_diff >= 100):
                 # 平均が0.20以上(還元日)の場合、ベースの高さを加味して全体を少し底上げ
-                bonus = min(0.10, (s_avg - 0.20))
+                bonus = min(0.10, max(0, s_avg - 0.20))
                 score = score + (1.0 - score) * bonus
                 
             row['prediction_score'] = score
@@ -2420,7 +2425,7 @@ def _postprocess_predictions(predict_df, train_df):
             return row
             
         res_df = df_target.apply(_correct, axis=1)
-        res_df = res_df.drop(columns=['temp_shop_avg'])
+        res_df = res_df.drop(columns=['temp_shop_avg', 'temp_shop_diff'])
         return res_df
 
     predict_df = apply_shop_mood_correction(predict_df)

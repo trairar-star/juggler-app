@@ -21,26 +21,36 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     # --- 1. 明日の店舗期待度ランキング ---
     st.subheader(f"🔮 【{target_date.strftime('%Y-%m-%d')}】のAI店舗推奨度")
     if not df_predict.empty and shop_col in df_predict.columns and 'prediction_score' in df_predict.columns:
-        shop_pred_stats = df_predict.groupby(shop_col).agg(
-            平均期待度=('prediction_score', 'mean'),
-            高期待台数=('prediction_score', lambda x: (x >= 0.65).sum()),
-            全台数=('台番号', 'nunique')
-        ).reset_index().sort_values('平均期待度', ascending=False)
+        agg_dict = {
+            '平均期待度': ('prediction_score', 'mean'),
+            '高期待台数': ('prediction_score', lambda x: (x >= 0.65).sum()),
+            '全台数': ('台番号', 'nunique')
+        }
+        if '予測差枚数' in df_predict.columns:
+            agg_dict['予測平均差枚'] = ('予測差枚数', 'mean')
+            
+        shop_pred_stats = df_predict.groupby(shop_col).agg(**agg_dict).reset_index().sort_values('平均期待度', ascending=False)
         
-        def get_eval_badge(score):
+        def get_eval_badge(row):
+            score = row['平均期待度']
+            diff = row.get('予測平均差枚', np.nan)
             if pd.isna(score): return "⚖️ 通常営業"
-            elif score >= 0.20: return "🔥 還元予測"
-            elif score < 0.10: return "🥶 回収警戒"
+            elif score >= 0.20 or (pd.notna(diff) and diff >= 100): return "🔥 還元予測"
+            elif score < 0.10 and (pd.isna(diff) or diff < 0): return "🥶 回収警戒"
             else: return "⚖️ 通常営業"
             
-        shop_pred_stats['営業予測'] = shop_pred_stats['平均期待度'].apply(get_eval_badge)
+        shop_pred_stats['営業予測'] = shop_pred_stats.apply(get_eval_badge, axis=1)
+        
+        if '予測平均差枚' not in shop_pred_stats.columns:
+            shop_pred_stats['予測平均差枚'] = np.nan
         
         if not shop_pred_stats.empty:
             st.dataframe(
-                shop_pred_stats[[shop_col, '営業予測', '平均期待度', '高期待台数', '全台数']],
+                shop_pred_stats[[shop_col, '営業予測', '予測平均差枚', '平均期待度', '高期待台数', '全台数']],
                 column_config={
                     shop_col: st.column_config.TextColumn("店舗名"),
                     "営業予測": st.column_config.TextColumn("AI営業予測"),
+                    "予測平均差枚": st.column_config.NumberColumn("予測平均差枚", format="%+d枚"),
                     "平均期待度": st.column_config.ProgressColumn("店舗全体の平均期待度", format="%.2f", min_value=0, max_value=1.0),
                     "高期待台数": st.column_config.NumberColumn("推奨台(65%以上)", format="%d台"),
                     "全台数": st.column_config.NumberColumn("集計台数", format="%d台")
@@ -140,3 +150,75 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         width="stretch",
         height=400
     )
+
+    # --- 新規追加: 回収日の一点突破（優良店）ランキング ---
+    st.divider()
+    st.subheader("💎 【優良店発掘】回収日の「一点突破」投入状況 (直近90日)")
+    st.caption("過去90日間で、AIが「回収日（店舗全体期待度10%未満）」と判断した厳しい営業日において、実際に高設定（設定5基準）がどれくらい投入されていたかを店舗ごとに比較します。回収日でもしっかり見せ台を用意してくれる優良店と、一切設定を使わない極悪店を見極めることができます。")
+
+    df_scores = backend.load_daily_shop_scores()
+    if not df_scores.empty and '予測対象日' in df_scores.columns:
+        df_scores['対象日付'] = pd.to_datetime(df_scores['予測対象日'], errors='coerce').dt.normalize()
+        score_shop_col = '店名' if '店名' in df_scores.columns else ('店舗名' if '店舗名' in df_scores.columns else None)
+        
+        if score_shop_col:
+            df_raw_eval = df_raw.copy()
+            df_raw_eval['対象日付'] = pd.to_datetime(df_raw_eval['対象日付'], errors='coerce').dt.normalize()
+            
+            max_d = df_raw_eval['対象日付'].max()
+            if pd.notna(max_d):
+                df_raw_eval = df_raw_eval[df_raw_eval['対象日付'] >= (max_d - pd.Timedelta(days=90))]
+                
+                # ヒートマップ用に使った高設定判定ロジック(is_high)を流用
+                df_raw_eval['is_high'] = df_raw_eval.apply(is_high, axis=1)
+                
+                daily_stats = df_raw_eval.groupby([shop_col, '対象日付']).agg(
+                    総台数=('台番号', 'count'),
+                    高設定台数=('is_high', 'sum'),
+                    平均差枚=('差枚', 'mean')
+                ).reset_index()
+                
+                merged_daily = pd.merge(
+                    daily_stats,
+                    df_scores[[score_shop_col, '対象日付', '店舗平均期待度']],
+                    left_on=[shop_col, '対象日付'],
+                    right_on=[score_shop_col, '対象日付'],
+                    how='inner'
+                )
+                
+                cold_days = merged_daily[merged_daily['店舗平均期待度'] < 0.10].copy()
+                
+                if not cold_days.empty:
+                    cold_summary = cold_days.groupby(shop_col).agg(
+                        回収日数=('対象日付', 'count'),
+                        総台数=('総台数', 'sum'),
+                        高設定台数=('高設定台数', 'sum'),
+                        回収日平均差枚=('平均差枚', 'mean')
+                    ).reset_index()
+                    
+                    cold_summary['回収日高設定率'] = (cold_summary['高設定台数'] / cold_summary['総台数']) * 100
+                    cold_summary['1日平均高設定台数'] = cold_summary['高設定台数'] / cold_summary['回収日数']
+                    
+                    def get_betapin_badge(rate):
+                        if rate >= 3.0: return "💎 優良 (見せ台あり)"
+                        elif rate >= 1.5: return "🟡 普通 (マグレ混じり)"
+                        else: return "⚠️ 完全ベタピン"
+                        
+                    cold_summary['回収日評価'] = cold_summary['回収日高設定率'].apply(get_betapin_badge)
+                    cold_summary = cold_summary.sort_values('回収日高設定率', ascending=False)
+                    
+                    st.dataframe(
+                        cold_summary[[shop_col, '回収日評価', '回収日数', '回収日平均差枚', '1日平均高設定台数', '回収日高設定率']],
+                        column_config={
+                            shop_col: st.column_config.TextColumn("店舗名"),
+                            "回収日評価": st.column_config.TextColumn("店舗評価", help="回収日における高設定率が3%以上なら優良店、1.5%未満は完全ベタピン店と判定します。"),
+                            "回収日数": st.column_config.NumberColumn("ド回収日 発生数", format="%d日"),
+                            "回収日平均差枚": st.column_config.NumberColumn("回収日 平均差枚", format="%+d 枚"),
+                            "1日平均高設定台数": st.column_config.NumberColumn("1日あたり高設定", format="%.1f 台", help="回収日1日あたり、平均して何台の高設定(設定5基準)が投入されていたか"),
+                            "回収日高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=10.0)
+                        },
+                        width="stretch",
+                        hide_index=True
+                    )
+                else:
+                    st.info("過去90日間にAIが「回収日（期待度10%未満）」と判定した営業日がありません。")

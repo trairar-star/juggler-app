@@ -1268,7 +1268,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         }
                         
                         try:
-                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8, scale_pos_weight=4.0)
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8, scale_pos_weight=4.0)
                             model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
                             
                             preds = model.predict_proba(X_test)[:, 1]

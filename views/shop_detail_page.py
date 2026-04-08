@@ -597,6 +597,12 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     全台数=('台番号', 'nunique')
                 ).reset_index()
                 
+                if '予測差枚数' in df.columns:
+                    diff_stats = df.groupby(shop_col).agg(予測平均差枚=('予測差枚数', 'mean')).reset_index()
+                    shop_stats = pd.merge(shop_stats, diff_stats, on=shop_col, how='left')
+                else:
+                    shop_stats['予測平均差枚'] = np.nan
+
                 # --- 収集日数の計算 ---
                 shop_days_map = {}
                 if not df_raw.empty and shop_col in df_raw.columns and '対象日付' in df_raw.columns:
@@ -728,17 +734,26 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 shop_stats['ソート用スコア'] = shop_stats.apply(calc_sort_score, axis=1)
                 
                 # 営業予測バッジの追加
-                shop_stats['営業予測'] = shop_stats['平均スコア'].apply(lambda x: "⚖️ 通常" if pd.isna(x) else ("🔥 還元" if x >= 0.20 else ("🥶 回収" if x < 0.10 else "⚖️ 通常")))
+                def get_shop_eval_badge(row):
+                    score = row['平均スコア']
+                    diff = row.get('予測平均差枚', np.nan)
+                    if pd.isna(score): return "⚖️ 通常"
+                    if score >= 0.20 or (pd.notna(diff) and diff >= 100): return "🔥 還元"
+                    elif score < 0.10 and (pd.isna(diff) or diff < 0): return "🥶 回収"
+                    else: return "⚖️ 通常"
+                    
+                shop_stats['営業予測'] = shop_stats.apply(get_shop_eval_badge, axis=1)
                 
                 # ソート用スコア（ペナルティ適用後）が高い順にソート
                 shop_stats = shop_stats.sort_values('ソート用スコア', ascending=False)
                 
                 st.caption(f"※{eval_period}の**ガチ予測（保存ログ）に対する正答率と勝率**です。この数値が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い等）と判断し、ランキング順位を下げるペナルティを適用しています。（※サンプル5台以上で適用）")
                 st.dataframe(
-                    shop_stats[[shop_col, '営業予測', '平均スコア', '推奨台数', '全台数', '収集日数', 'AI正答率', 'AI推奨台勝率']],
+                    shop_stats[[shop_col, '営業予測', '予測平均差枚', '平均スコア', '推奨台数', '全台数', '収集日数', 'AI正答率', 'AI推奨台勝率']],
                     column_config={
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
                         "営業予測": st.column_config.TextColumn("営業予測", width="small", help="AIの店舗全体期待度に基づく明日の予測"),
+                        "予測平均差枚": st.column_config.NumberColumn("予測差枚", width="small", format="%+d枚", help="AIが予測する店舗全体の平均差枚"),
                         "平均スコア": st.column_config.ProgressColumn("期待度", width="small", min_value=0, max_value=1.0, format="%.2f", help="明日の店舗全体の平均的な設定5以上確率"),
                         "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が65%以上の激アツ台数"),
                         "全台数": st.column_config.NumberColumn("全台", width="small", format="%d台"),

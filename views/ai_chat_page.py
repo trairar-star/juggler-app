@@ -594,7 +594,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         shop_summary = pd.merge(shop_summary, shop_hot_g, on=shop_col, how='left')
                 
                 for _, r in shop_summary.iterrows():
-                    eval_str = "🔥還元予測" if r['平均期待度'] >= 0.20 else ("🥶回収警戒" if r['平均期待度'] < 0.10 else "⚖️通常営業")
+                    eval_str = "🔥還元予測" if r['平均期待度'] >= 0.20 or r.get('予測差枚数', 0) >= 100 else ("🥶回収警戒" if r['平均期待度'] < 0.10 and r.get('予測差枚数', 0) < 0 else "⚖️通常営業")
                     avg_g_str = f" / 過去還元日の平均稼働: {int(r['還元日平均稼働'])}G" if '還元日平均稼働' in shop_summary.columns and pd.notna(r['還元日平均稼働']) else ""
                     context_data += f"・{r[shop_col]}: 予測店舗平均 {int(r['予測差枚数']):+d}枚 / AI全体期待度 {r['平均期待度']*100:.1f}% ({eval_str}){avg_g_str}\n"
                     
