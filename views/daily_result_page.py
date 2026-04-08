@@ -127,7 +127,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     # --- 期待外れ台のフラグ計算 (ハイライト用) ---
     def check_bad_pred(row):
         score = row.get('prediction_score', 0)
-        if pd.isna(score) or score < 0.65: return False
+        if pd.isna(score) or score < 0.30: return False
         
         g = row.get('総回転', 0)
         b = row.get('BIG', 0)

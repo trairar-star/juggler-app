@@ -23,7 +23,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     if not df_predict.empty and shop_col in df_predict.columns and 'prediction_score' in df_predict.columns:
         agg_dict = {
             '平均期待度': ('prediction_score', 'mean'),
-            '高期待台数': ('prediction_score', lambda x: (x >= 0.65).sum()),
+            '高期待台数': ('prediction_score', lambda x: (x >= 0.30).sum()),
             '全台数': ('台番号', 'nunique')
         }
         if '予測差枚数' in df_predict.columns:
@@ -52,7 +52,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                     "営業予測": st.column_config.TextColumn("AI営業予測"),
                     "予測平均差枚": st.column_config.NumberColumn("予測平均差枚", format="%+d枚"),
                     "平均期待度": st.column_config.ProgressColumn("店舗全体の平均期待度", format="%.2f", min_value=0, max_value=1.0),
-                    "高期待台数": st.column_config.NumberColumn("推奨台(65%以上)", format="%d台"),
+                    "高期待台数": st.column_config.NumberColumn("推奨台(30%以上)", format="%d台"),
                     "全台数": st.column_config.NumberColumn("集計台数", format="%d台")
                 },
                 width="stretch",

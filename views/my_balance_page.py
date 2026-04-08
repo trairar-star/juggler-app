@@ -351,12 +351,12 @@ def render_my_balance_page(df_raw):
     def classify_pred_score(pct):
         if pd.isna(pct):
             return "不明 (ログなし)"
-        elif pct >= 70:
-            return "🔥 70%以上 (激アツ)"
-        elif pct >= 30:
-            return "⚖️ 30%〜69% (通常)"
+        elif pct >= 40:
+            return "🔥 40%以上 (激アツ)"
+        elif pct >= 20:
+            return "⚖️ 20%〜39% (通常)"
         else:
-            return "🥶 30%未満 (危険)"
+            return "🥶 20%未満 (危険)"
 
     df_balance['期待度区分'] = df_balance['期待度_pct'].apply(classify_pred_score)
     
@@ -368,7 +368,7 @@ def render_my_balance_page(df_raw):
         平均期待度=('期待度_pct', 'mean')
     ).reset_index()
     
-    order_map = {"🔥 70%以上 (激アツ)": 1, "⚖️ 30%〜69% (通常)": 2, "🥶 30%未満 (危険)": 3, "不明 (ログなし)": 4}
+    order_map = {"🔥 40%以上 (激アツ)": 1, "⚖️ 20%〜39% (通常)": 2, "🥶 20%未満 (危険)": 3, "不明 (ログなし)": 4}
     pred_rank['sort'] = pred_rank['期待度区分'].map(order_map)
     pred_rank = pred_rank.sort_values('sort').drop(columns=['sort'])
     pred_rank['時給'] = np.where(pred_rank['稼働時間'] > 0, pred_rank['総収支'] / pred_rank['稼働時間'], 0)
