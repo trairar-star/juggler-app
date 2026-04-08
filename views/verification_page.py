@@ -1213,7 +1213,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     st.divider()
     st.subheader("📝 全履歴データ (バックテスト結果)")
     
-    band_options = ['すべて', '85%以上', '70%〜84%', '50%〜69%', '30%〜49%', '30%未満']
+    band_options = ['すべて', '50%以上', '40%〜49%', '30%〜39%', '20%〜29%', '15%〜19%', '10%〜14%', '10%未満']
     selected_band = st.selectbox("表示する期待度（確率帯）を選択", band_options, index=0)
     
     history_display_df = display_df.copy()
