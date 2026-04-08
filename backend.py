@@ -16,7 +16,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v3.8.0" 
+APP_VERSION = "v4.0.0" 
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -1795,8 +1795,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         objective='binary', random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
         reg_alpha=r_alpha, reg_lambda=r_lambda,
-        subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-        scale_pos_weight=4.0
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
     )
     model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
     reg_model = lgb.LGBMRegressor(
@@ -1870,8 +1869,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-                    scale_pos_weight=4.0
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 shop_reg = lgb.LGBMRegressor(
                     random_state=42, verbose=-1, 
@@ -1920,8 +1918,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-                    scale_pos_weight=4.0
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
@@ -1950,8 +1947,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
-                    scale_pos_weight=4.0
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
                 )
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
@@ -2165,37 +2161,6 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     # スコアの再計算
     score = row.get('prediction_score', 0)
 
-    # 実績に基づく加点ボーナス（AIの基本予測との「二重評価」の過剰加点を防ぐため、実績差分の半分をボーナスとして加算）
-    actual_bonus = 0.0
-    for tid in matched_hot_ids:
-        diff_pct = t_info['trend_diffs'].get(tid, 0)
-        if diff_pct > 0:
-            actual_bonus += (diff_pct / 200.0)
-            
-    fixed_bonus = 0.0
-    if "BB突出" in fixed_hot: fixed_bonus += 0.05
-    if "超REG突出" in fixed_hot: fixed_bonus += 0.15
-
-    total_bonus = min(0.40, actual_bonus + fixed_bonus) # 上限も60%から40%に引き下げ
-    if total_bonus > 0:
-        score = score + (1.0 - score) * total_bonus
-
-    # 実績に基づく減点ペナルティ（こちらも半減）
-    actual_penalty = 0.0
-    for tid in matched_cold_ids:
-        diff_pct = t_info['trend_diffs'].get(tid, 0)
-        if diff_pct < 0:
-            actual_penalty += abs(diff_pct / 200.0)
-            
-    fixed_penalty_val = 0.0
-    if "中間設定濃厚" in fixed_cold: fixed_penalty_val += 0.15
-
-    total_penalty = min(0.40, actual_penalty + fixed_penalty_val)
-    if total_penalty > 0:
-        score = score * (1.0 - total_penalty)
-
-    row['prediction_score'] = score
-    
     # 根拠の追記
     reason = str(row.get('根拠', ''))
     add_reasons = []
@@ -2362,61 +2327,40 @@ def _postprocess_predictions(predict_df, train_df):
     shop_col_for_betapin = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     betapin_shops = set()
     if shop_col_for_betapin and not train_df.empty:
-        temp_train = train_df.copy()
-        temp_train['temp_shop_avg'] = temp_train.groupby([shop_col_for_betapin, 'next_date'])['prediction_score'].transform('mean')
-        cold_days = temp_train[temp_train['temp_shop_avg'] < 0.10]
+        cold_days = train_df[train_df.groupby([shop_col_for_betapin, 'next_date'])['prediction_score'].transform('mean') < 0.10]
         if not cold_days.empty:
             cold_stats = cold_days.groupby(shop_col_for_betapin).agg(
-                高設定率=('target', 'mean'),
-                サンプル数=('target', 'count')
+                高設定率=('target', 'mean'), サンプル数=('target', 'count')
             ).reset_index()
-            # 回収日のサンプルが100台以上あり、実績高設定率が1.5%未満の店舗を「回収日は完全ベタピン」と認定
             betapin_shops = set(cold_stats[(cold_stats['サンプル数'] >= 100) & (cold_stats['高設定率'] < 0.015)][shop_col_for_betapin])
 
-    # --- 店舗全体の空気感（回収/還元）による期待度の連動補正 ---
+    # --- 店舗全体の空気感による最終補正とメッセージ付与 ---
     def apply_shop_mood_correction(df_target):
         shop_col = '店名' if '店名' in df_target.columns else ('店舗名' if '店舗名' in df_target.columns else None)
-        if df_target.empty or not shop_col:
-            return df_target
+        if df_target.empty or not shop_col: return df_target
             
-        # 予測日ごとに店舗全体の平均期待度を計算
-        df_target['temp_shop_avg'] = df_target.groupby([shop_col, 'next_date'])['prediction_score'].transform('mean')
         if '予測差枚数' in df_target.columns:
             df_target['temp_shop_diff'] = df_target.groupby([shop_col, 'next_date'])['予測差枚数'].transform('mean')
         else:
             df_target['temp_shop_diff'] = np.nan
         
         def _correct(row):
-            score = row['prediction_score']
-            s_avg = row.get('temp_shop_avg', 0.15)
+            score = row.get('prediction_score', 0)
+            s_raw_avg = row.get('temp_shop_avg', 0.15)
             s_diff = row.get('temp_shop_diff', 0)
             s_name = row.get(shop_col)
             reasons = []
             
-            if s_avg < 0.10 and (pd.isna(s_diff) or s_diff < 0):
+            if s_raw_avg < 0.10 and (pd.isna(s_diff) or s_diff < 0):
                 is_betapin = s_name in betapin_shops
                 if is_betapin:
-                    # ベタピン店の場合、例外なくスコアを極限まで下げる（80%割引）
-                    score *= 0.20
-                    if score >= 0.20:
-                        reasons.append(f"【⚠️絶対回収】過去のデータから、この店舗は回収日(全体期待度{s_avg*100:.1f}%)に高設定をほぼ100%使わない「完全ベタピン」の傾向が確認されています。AIの推奨条件に合致してもフェイクのため絶対に打つべきではありません。")
+                    reasons.append(f"【⚠️絶対回収】過去のデータから、この店舗は回収日に高設定をほぼ100%使わない「完全ベタピン」の傾向が確認されています。")
                 else:
-                    # 通常の回収日ペナルティ
-                    if score >= 0.70:
-                        penalty_factor = 0.90 + (s_avg / 0.10) * 0.10
-                        score *= penalty_factor
-                        reasons.append(f"【💎一点突破】店舗全体は回収傾向(平均期待度{s_avg*100:.1f}%)ですが、この台には強烈な根拠があり、数少ない高設定（当たり台）の候補として強く推奨します。")
+                    if score >= 0.30:
+                        reasons.append(f"【💎一点突破】店舗全体は回収傾向ですが、AIはこの台に確かな高設定の根拠(見せ台)があると確信して強く推奨しています。")
                     else:
-                        penalty_factor = 0.80 + (s_avg / 0.10) * 0.20
-                        score *= penalty_factor
-                        if score >= 0.50: 
-                            reasons.append(f"【🚨フェイク警戒】店舗全体が回収傾向(平均期待度{s_avg*100:.1f}%)です。普段なら強い根拠がある台ですが、今日はフェイク（罠）として使われるリスクが高いため慎重に判断してください。")
-            elif s_avg >= 0.20 or (pd.notna(s_diff) and s_diff >= 100):
-                # 平均が0.20以上(還元日)の場合、ベースの高さを加味して全体を少し底上げ
-                bonus = min(0.10, max(0, s_avg - 0.20))
-                score = score + (1.0 - score) * bonus
-                
-            row['prediction_score'] = score
+                        reasons.append("【🚨フェイク警戒】店舗全体が回収傾向です。普段なら強い根拠がある台ですが、今日はフェイク（罠）として使われるリスクが高いため慎重に判断してください。")
+
             if reasons:
                 existing_reason = str(row.get('根拠', ''))
                 new_reason = " ".join(reasons)
@@ -2425,7 +2369,7 @@ def _postprocess_predictions(predict_df, train_df):
             return row
             
         res_df = df_target.apply(_correct, axis=1)
-        res_df = res_df.drop(columns=['temp_shop_avg', 'temp_shop_diff'])
+        res_df = res_df.drop(columns=['temp_shop_avg', 'temp_shop_diff'], errors='ignore')
         return res_df
 
     predict_df = apply_shop_mood_correction(predict_df)
@@ -2454,14 +2398,14 @@ def _postprocess_predictions(predict_df, train_df):
     def get_reason(row):
         comments, reasons = [], []
         score = row.get('prediction_score', 0)
-        if score > 0.60: comments.append("【激アツ】AIの自信度が非常に高いです。")
+        if score > 0.50: comments.append("【激アツ】AIの自信度が非常に高い(生確率で50%超え)です。")
         
         past_score = row.get('past_prediction_score', 0)
         diff = row.get('差枚', 0)
         
-        if past_score >= 0.50:
+        if past_score >= 0.30:
             if diff <= -500:
-                reasons.append(f"【AIリベンジ狙い】前日もAIが強く推奨(期待度{past_score*100:.0f}%)していましたが不発でした。高設定据え置きのリベンジが期待できます。")
+                reasons.append(f"【AIリベンジ狙い】前日もAIが推奨(期待度{past_score*100:.0f}%)していましたが不発でした。高設定据え置きのリベンジが期待できます。")
             elif diff > 0:
                 reasons.append(f"【AI推奨継続】前日もAIが推奨(期待度{past_score*100:.0f}%)しており、好調のまま今日も強い根拠を維持しています。")
         
