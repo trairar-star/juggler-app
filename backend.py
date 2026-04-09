@@ -2348,6 +2348,7 @@ def _postprocess_predictions(predict_df, train_df):
         
         if reasons:
             existing_reason = str(row.get('根拠', ''))
+            if existing_reason == 'nan': existing_reason = ''
             new_reason = " ".join(reasons)
             if existing_reason and existing_reason != '-':
                 row['根拠'] = (existing_reason + " " + new_reason).strip()
@@ -2404,6 +2405,7 @@ def _postprocess_predictions(predict_df, train_df):
 
             if reasons:
                 existing_reason = str(row.get('根拠', ''))
+                if existing_reason == 'nan': existing_reason = ''
                 new_reason = " ".join(reasons)
                 row['根拠'] = (existing_reason + " " + new_reason).strip() if existing_reason and existing_reason != '-' else new_reason
                 
@@ -2605,6 +2607,7 @@ def _postprocess_predictions(predict_df, train_df):
         if i_avg > 400: reasons.append(f"所属する島全体が好調(平均+{int(i_avg)}枚)で、塊対象の可能性があります。")
         
         shop_reason = str(row.get('根拠', '')).strip()
+        if shop_reason == 'nan': shop_reason = ''
         has_strong_reason = bool(reasons) or (shop_reason and shop_reason != '-')
         
         if reasons: 
