@@ -1462,7 +1462,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             
         if 'backtest_result' in st.session_state:
             st.success("✅ 直近1ヶ月のカンニングなしテスト結果")
-            st.caption("現在設定されているパラメータで過去データのみを学習し、直近1ヶ月の結果を予測した「本物の実力」です。この表の30%以上の期待度帯の勝率が高くなる設定を探してください。")
+            st.caption("現在設定されているパラメータで過去データのみを学習し、直近1ヶ月の結果を予測した「本物の実力」です。この表の上位の期待度帯（20%以上など）の勝率が高くなる設定を探してください。")
             st.dataframe(
                 st.session_state['backtest_result'][['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
                 column_config={
@@ -1688,5 +1688,373 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         backend.load_prediction_log.clear()
                         st.cache_data.clear()
                         st.rerun()
+def _render_ai_setting_tab(df_verify, tab_setting, selected_shop, shop_col):
+    with tab_setting:
+        st.subheader(f"⚙️ 【{selected_shop}】専用 AIモデル設定")
+        st.caption("AIのパラメータを手動で調整するか、「自動チューニング」を試してください。各項目の意味が分からない場合は、まずは「自動チューニング」の実行をおすすめします。")
+        
+        if "shop_hyperparams" not in st.session_state:
+            st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0}}
+            
+        default_hp = st.session_state["shop_hyperparams"]["デフォルト"]
+        current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
+        
+        with st.form(f"hp_form_{selected_shop}"):
+            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1, help="AIが学習に使う過去データの期間です。店の傾向が頻繁に変わるなら短く（1〜3ヶ月）、安定しているなら長く（6ヶ月以上）設定するのが有効です。")
+            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、やりすぎると過学習（過去の偶然を必勝法と勘違いする）のリスクが増えます。学習率とセットで調整し、上げすぎると逆に期待度が下がる場合は過学習を疑ってください。")
+            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01, help="1回の学習でどれだけ賢くなるかの度合い。小さいほど慎重に学習し、過学習しにくくなりますが、多くの学習回数が必要になります。基本的には0.01〜0.05の範囲が推奨されます。")
+            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1, help="モデルが作成できる分岐（葉）の最大数。大きいほど複雑な条件分岐を作れますが、過学習しやすくなります。深さ制限とセットで調整し、上げすぎると逆に期待度が下がる場合は過学習を疑ってください。")
+            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1, help="条件分岐の深さ。-1は無制限。深いほど複雑な条件の組み合わせ（例:『AかつBかつC』）を学習できますが、過学習しやすくなります。通常は3〜7程度が適切です。")
+            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10, help="1つの分岐（葉）を作るために必要な最小サンプル数。大きいほど、より多くのデータに当てはまる一般的なルールを作るようになり、過学習を抑制します。過学習気味ならこの値を大きくします。")
+            hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくすると、AIが「予測に不要」と判断した特徴量（例: この店では関係ない『角台』など）を完全に無視しやすくなります。特徴量が多い時に有効です。")
+            hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくすると、AIが特定の特徴量だけに極端に依存することを防ぎ、よりバランスの取れた予測をするようになります。")
+            
+            cols = st.columns(4)
+            submitted = cols[0].form_submit_button("保存して再分析", type="primary")
+            test_btn = cols[1].form_submit_button("🧪 カンニングなしテスト", help="現在スライダーで設定している値を使って、直近1ヶ月の結果を『カンニングなし』で予測するテストを実行します。")
+            auto_tune_btn = cols[2].form_submit_button("✨ 自動チューニング", help=f"AIが【{selected_shop}】の過去データから最適なパラメータの組み合わせを自動で探索し、設定します。どの設定が良いか分からない場合にまずお試しください。")
+            reset_btn = cols[3].form_submit_button("リセット")
+            
+        if submitted:
+            st.session_state["shop_hyperparams"][selected_shop] = {
+                'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
+                'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples,
+                'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda
+            }
+            backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+            st.cache_data.clear(); st.rerun()
+            
+        if reset_btn:
+            if selected_shop in st.session_state["shop_hyperparams"]:
+                del st.session_state["shop_hyperparams"][selected_shop]
+                backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+                st.cache_data.clear(); st.rerun()
+                
+        if test_btn:
+            with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
+                import lightgbm as lgb
+                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                actual_features = [f for f in base_features if f in df_verify.columns]
+                cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+                
+                shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
+                
+                if len(shop_df) < 50:
+                    st.error("データが少なすぎてテストを実行できません。")
+                else:
+                    shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
+                    max_date = shop_df['対象日付'].max()
+                    cutoff_date = max_date - pd.Timedelta(days=30)
+                    
+                    train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
+                    test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+                    
+                    if len(train_data) < 30 or len(test_data) < 10:
+                        st.error("直近1ヶ月またはそれ以前のデータが不足しているため、テストを実行できません。")
+                    else:
+                        X_train, y_train = train_data[actual_features], train_data['target']
+                        X_test, y_test = test_data[actual_features], test_data['target']
+                        
+                        days_diff = (train_data['対象日付'].max() - train_data['対象日付']).dt.days
+                        sample_weights = 0.995 ** days_diff
+                        
+                        params = {
+                            'n_estimators': hp_n_estimators,
+                            'learning_rate': hp_learning_rate,
+                            'num_leaves': hp_num_leaves,
+                            'max_depth': hp_max_depth,
+                            'min_child_samples': hp_min_child_samples,
+                            'reg_alpha': hp_reg_alpha,
+                            'reg_lambda': hp_reg_lambda
+                        }
+                        
+                        try:
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                            model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                            
+                            preds = model.predict_proba(X_test)[:, 1]
+                            test_data['pred_score'] = preds
+                            
+                            test_data['valid_play'] = (pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                                                   ((pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                                                    ((pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) >= 750)))
+                            test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
+                            test_data['valid_high'] = test_data['valid_play'] & (test_data['target'] == 1)
+                            
+                            def get_prob_band(score):
+                                if score >= 0.50: return '50%以上'
+                                elif score >= 0.40: return '40%〜49%'
+                                elif score >= 0.30: return '30%〜39%'
+                                elif score >= 0.20: return '20%〜29%'
+                                elif score >= 0.15: return '15%〜19%'
+                                elif score >= 0.10: return '10%〜14%'
+                                else: return '10%未満'
+                            
+                            test_data['確率帯'] = test_data['pred_score'].apply(get_prob_band)
+                            test_stats = test_data.groupby('確率帯').agg(
+                                台数=('台番号', 'count'),
+                                高設定数=('valid_high', 'sum'),
+                                有効稼働数=('valid_play', 'sum'),
+                                勝数=('valid_win', 'sum'),
+                                平均差枚=('next_diff', 'mean'),
+                                合計差枚=('next_diff', 'sum'),
+                                平均期待度=('pred_score', 'mean')
+                            ).reset_index()
+                            test_stats['高設定率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['高設定数'] / test_stats['有効稼働数'] * 100, 0.0)
+                            test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
+                            test_stats['平均期待度'] = test_stats['平均期待度'] * 100
+                            
+                            rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
+                            test_stats['sort'] = test_stats['確率帯'].map(rank_order).fillna(99)
+                            test_stats = test_stats.sort_values('sort').drop('sort', axis=1)
+                            test_stats['信頼度'] = test_stats['台数'].apply(get_confidence_indicator)
+                            
+                            st.session_state['backtest_result'] = test_stats
+                        except Exception as e:
+                            st.error(f"テスト実行中にエラーが発生しました: {e}")
+                            
+        if 'backtest_result' in st.session_state:
+            st.success("✅ 直近1ヶ月のカンニングなしテスト結果")
+            st.caption("現在設定されているパラメータで過去データのみを学習し、直近1ヶ月の結果を予測した「本物の実力」です。この表の上位の期待度帯（20%以上など）の勝率が高くなる設定を探してください。")
+            st.dataframe(
+                st.session_state['backtest_result'][['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
+                column_config={
+                    "確率帯": st.column_config.TextColumn("期待度"),
+                    "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                    "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                    "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                    "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                    "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                    "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                    "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+                
+        if auto_tune_btn:
+            with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
+                import lightgbm as lgb
+                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                actual_features = [f for f in base_features if f in df_verify.columns]
+                cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+                
+                shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
+                
+                if len(shop_df) < 150:
+                    st.error("データが少なすぎて自動チューニングを実行できません。150件以上のデータが必要です。")
+                else:
+                    shop_df = shop_df.sort_values('対象日付')
+                    split_idx = int(len(shop_df) * 0.8)
+                    train_data = shop_df.iloc[:split_idx]
+                    test_data = shop_df.iloc[split_idx:]
+                    
+                    X_train, y_train = train_data[actual_features], train_data['target']
+                    X_test, y_test = test_data[actual_features], test_data['target']
+                    
+                    max_date = train_data['対象日付'].max()
+                    days_diff = (max_date - train_data['対象日付']).dt.days
+                    sample_weights = 0.995 ** days_diff
+                    
+                    param_candidates = [
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 0.5, 'reg_lambda': 0.5}, # 少し断捨離
+                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.0}, # L1強め
+                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 12, 'max_depth': 3, 'min_child_samples': 80, 'reg_alpha': 0.1, 'reg_lambda': 1.0}, # L2強め
+                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100, 'reg_alpha': 2.0, 'reg_lambda': 0.0}, # 断捨離マックス
+                        {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
+                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
+                        {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
+                    ]
+                    
+                    best_score = -9999
+                    best_params = param_candidates[0]
+                    progress_bar = st.progress(0)
+                    
+                    for i, params in enumerate(param_candidates):
+                        try:
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                            model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                            preds = model.predict_proba(X_test)[:, 1]
+                            test_eval = test_data.copy()
+                            test_eval['pred_score'] = preds
+                            
+                            # データ上の裏付けに基づく評価：生のシビアな確率に対応するため、単純に「上位15%の台」を評価対象とする
+                            threshold = test_eval['pred_score'].quantile(0.85)
+                            target_df = test_eval[test_eval['pred_score'] >= threshold]
+                            if len(target_df) == 0: score = -1
+                            else:
+                                precision = target_df['target'].mean()
+                                avg_diff = target_df['next_diff'].mean()
+                                coverage = len(target_df) / len(test_eval)
+                                score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                            if score > best_score:
+                                best_score = score
+                                best_params = params
+                        except Exception: pass
+                        progress_bar.progress((i + 1) / len(param_candidates))
+                    
+                    st.session_state["shop_hyperparams"][selected_shop] = {
+                        'train_months': hp_train_months, 'n_estimators': best_params['n_estimators'], 'learning_rate': best_params['learning_rate'],
+                        'num_leaves': best_params['num_leaves'], 'max_depth': best_params['max_depth'], 'min_child_samples': best_params['min_child_samples'],
+                        'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0)
+                    }
+                    backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+                    st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")
+                    st.cache_data.clear(); st.rerun()
+
+        with st.expander("🔧 AIパラメータ調整用のシミュレーション結果 (答え合わせ)", expanded=True):
+            st.info("💡 **この表の役割について**\nこの表はAIが「答えを知っている状態」でのテスト結果であり、未来の勝率を表すものではありません。**「AIのパラメータ設定を変更した直後」**や**「AIが過学習（過去のまぐれを丸暗記）していないかの確認」**を行うための開発・メンテナンス用ツールです。")
+            sim_df = df_verify[df_verify[shop_col] == selected_shop].copy() if not df_verify.empty and shop_col in df_verify.columns else pd.DataFrame()
+            if not sim_df.empty and 'prediction_score' in sim_df.columns and 'target' in sim_df.columns and 'next_diff' in sim_df.columns:
+                def get_prob_band(score):
+                    if score >= 0.50: return '50%以上'
+                    elif score >= 0.40: return '40%〜49%'
+                    elif score >= 0.30: return '30%〜39%'
+                    elif score >= 0.20: return '20%〜29%'
+                    elif score >= 0.15: return '15%〜19%'
+                    elif score >= 0.10: return '10%〜14%'
+                    else: return '10%未満'
+                sim_df['確率帯'] = sim_df['prediction_score'].apply(get_prob_band)
+                sim_df['valid_play'] = (pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                                       ((pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                                        ((pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) >= 750)))
+                sim_df['valid_win'] = sim_df['valid_play'] & (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) > 0)
+                sim_df['valid_high'] = sim_df['valid_play'] & (sim_df['target'] == 1)
+                
+                # 予測営業区分の付与
+                if '対象日付' in sim_df.columns:
+                    daily_avg_score_df_sim = sim_df.groupby('対象日付')['prediction_score'].mean().reset_index()
+                    daily_avg_score_df_sim = daily_avg_score_df_sim.rename(columns={'prediction_score': '店舗平均期待度'})
+                    
+                    def classify_day_eval_sim(score):
+                        if pd.isna(score): return "⚖️ 通常営業予測 (10~19%)"
+                        if score >= 0.20: return "🔥 還元日予測 (20%~)"
+                        elif score < 0.10: return "🥶 回収日予測 (~9%)"
+                        else: return "⚖️ 通常営業予測 (10~19%)"
+                        
+                    daily_avg_score_df_sim['予測営業区分'] = daily_avg_score_df_sim['店舗平均期待度'].apply(classify_day_eval_sim)
+                    
+                    sim_df['対象日付_merge_key'] = pd.to_datetime(sim_df['対象日付']).dt.normalize()
+                    daily_avg_score_df_sim['対象日付_merge_key'] = pd.to_datetime(daily_avg_score_df_sim['対象日付']).dt.normalize()
+                    
+                    sim_df = pd.merge(sim_df, daily_avg_score_df_sim[['対象日付_merge_key', '予測営業区分']], on='対象日付_merge_key', how='left')
+                    sim_df = sim_df.drop(columns=['対象日付_merge_key'], errors='ignore')
+                    sim_df['予測営業区分'] = sim_df['予測営業区分'].fillna("⚖️ 通常営業予測 (10~19%)")
+                else:
+                    sim_df['予測営業区分'] = "⚖️ 通常営業予測 (10~19%)"
+                    
+                tabs_sim = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
+                
+                def render_sim_stats(target_df):
+                    if target_df.empty:
+                        st.info("該当するデータがありません。")
+                        return
+                    s_stats = target_df.groupby('確率帯').agg(
+                        台数=('台番号', 'count'),
+                        高設定数=('valid_high', 'sum'),
+                        有効稼働数=('valid_play', 'sum'),
+                        勝数=('valid_win', 'sum'),
+                        平均差枚=('next_diff', 'mean'),
+                        合計差枚=('next_diff', 'sum'),
+                        平均期待度=('prediction_score', 'mean')
+                    ).reset_index()
+                    s_stats['勝率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['勝数'] / s_stats['有効稼働数'] * 100, 0.0)
+                    s_stats['高設定率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['高設定数'] / s_stats['有効稼働数'] * 100, 0.0)
+                    s_stats['平均期待度'] = s_stats['平均期待度'] * 100
+                    
+                    rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
+                    s_stats['sort'] = s_stats['確率帯'].map(rank_order).fillna(99)
+                    s_stats = s_stats.sort_values('sort').drop('sort', axis=1)
+                    s_stats['信頼度'] = s_stats['台数'].apply(get_confidence_indicator)
+                    
+                    st.dataframe(
+                        s_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
+                        column_config={
+                            "確率帯": st.column_config.TextColumn("期待度"),
+                            "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                            "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
+                            "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                            "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                            "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                            "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
+                            "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                            "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
+                        },
+                        width="stretch",
+                        hide_index=True
+                    )
+
+                with tabs_sim[0]: render_sim_stats(sim_df)
+                with tabs_sim[1]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🔥 還元日予測 (20%~)"])
+                with tabs_sim[2]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "⚖️ 通常営業予測 (10~19%)"])
+                with tabs_sim[3]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🥶 回収日予測 (~9%)"])
+                
+                with st.expander("🔍 シミュレーション詳細データを確認", expanded=False):
+                    st.caption("シミュレーションで各確率帯に分類された台の具体的な日付と結果を確認できます。")
+                    band_options_sim = ['すべて', '50%以上', '40%〜49%', '30%〜39%', '20%〜29%', '15%〜19%', '10%〜14%', '10%未満']
+                    selected_band_sim = st.selectbox("表示する確率帯を選択", band_options_sim, index=0, key="sim_band_select")
+                    
+                    sim_display_df = sim_df.copy()
+                    if selected_band_sim != 'すべて':
+                        sim_display_df = sim_display_df[sim_display_df['確率帯'] == selected_band_sim]
+                        
+                    if sim_display_df.empty:
+                        st.info("該当するデータがありません。")
+                    else:
+                        sim_display_df['予想設定5以上確率'] = (sim_display_df['prediction_score'] * 100).astype(int)
+                        if 'next_date' in sim_display_df.columns:
+                            sim_display_df['予測対象日'] = pd.to_datetime(sim_display_df['next_date'])
+                        else:
+                            sim_display_df['予測対象日'] = pd.to_datetime(sim_display_df['対象日付']) + pd.Timedelta(days=1)
+                        
+                        sim_display_df['高設定挙動'] = sim_display_df['target'].apply(lambda x: '🌟' if x == 1 else '')
+                        sim_display_df = sim_display_df.sort_values('予測対象日', ascending=False)
+                        
+                        display_cols_sim = ['予測対象日', '対象日付', '台番号', '機種名', '予想設定5以上確率', '高設定挙動', 'next_diff', 'next_累計ゲーム', 'next_BIG', 'next_REG']
+                        if '根拠' in sim_display_df.columns:
+                            display_cols_sim.append('根拠')
+                        
+                        st.dataframe(
+                            sim_display_df[display_cols_sim],
+                            column_config={
+                                "予測対象日": st.column_config.DateColumn("予測日", format="MM/DD"),
+                                "対象日付": st.column_config.DateColumn("稼働日(前日)", format="MM/DD", help="予測のベースとなった過去の稼働日"),
+                                "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
+                                "高設定挙動": st.column_config.TextColumn("挙動", help="設定5以上基準を満たしたか"),
+                                "next_diff": st.column_config.NumberColumn("結果差枚", format="%+d"),
+                                "next_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
+                                "next_BIG": st.column_config.NumberColumn("BIG", format="%d"),
+                                "next_REG": st.column_config.NumberColumn("REG", format="%d"),
+                                "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
+                            },
+                            hide_index=True,
+                            width="stretch"
+                        )
+            else:
+                st.info("シミュレーション用のデータがありません。")
+
+        st.divider()
+        with st.expander("🗑️ 古い予測ログの整理 (リセット)", expanded=False):
+            st.warning("⚠️ プログラムの計算式変更などで基準が変わってしまい、過去の予測スコアが参考にならなくなった場合は、ここで古いログを削除してリセットできます。")
+            
+            del_months = st.selectbox("削除対象", ["すべてのログをリセット(全削除)", "1ヶ月より前のログを削除", "3ヶ月より前のログを削除"], index=0)
+            
+            if st.button("🗑️ 選択したログを削除する", type="primary"):
+                months = 3 if "3ヶ月" in del_months else (1 if "1ヶ月" in del_months else 0)
+                with st.spinner("古いログを削除しています..."):
+                    deleted_count = backend.delete_old_prediction_logs(months=months)
+                    if deleted_count > 0:
+                        st.success(f"{deleted_count}件の古い予測ログを削除しました！\n\n（※サイドバーの「データ更新」を押すと画面に反映されます）")
+                        backend.load_prediction_log.clear()
+                        st.cache_data.clear()
+                        st.rerun()
+                    elif deleted_count == 0:
+                        st.info("削除対象の古いログはありませんでした。")
                     elif deleted_count == 0:
                         st.info("削除対象の古いログはありませんでした。")

@@ -48,11 +48,6 @@ def render_my_balance_page(df_raw):
                     if input_machine == "その他 (手入力)":
                         input_machine = st.text_input("機種名を入力")
                 
-                c1, c2, c3 = st.columns(3)
-                with c1: input_invest = st.number_input("投資金額 (円)", min_value=0, step=1000)
-                with c2: input_recovery = st.number_input("回収金額 (円)", min_value=0, step=1000)
-                with c3: input_hours = st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, value=0.0, help="0.5時間=30分として記録します。")
-                
                 # --- 追加: ボーナス入力 ---
                 st.markdown("**🎰 データ入力 (任意)**")
                 st.caption("打ち始めと終了時のデータを入力すると、自分が回した分のボーナス確率が自動計算され、AIチャットでの相性相談に利用されます。")
@@ -66,6 +61,12 @@ def render_my_balance_page(df_raw):
                 with e_c2: end_b = st.number_input("終了時 BIG回数", min_value=0, step=1)
                 with e_c3: end_r = st.number_input("終了時 REG回数", min_value=0, step=1)
     
+                st.markdown("---")
+                c1, c2, c3 = st.columns(3)
+                with c1: input_invest = st.number_input("投資金額 (円)", min_value=0, step=1000)
+                with c2: input_recovery = st.number_input("回収金額 (円)", min_value=0, step=1000)
+                with c3: input_hours = st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, value=0.0, help="0.5時間=30分として記録します。")
+
                 st.metric("収支", f"{(input_recovery - input_invest):+d} 円")
                 
                 input_memo = st.text_area("メモ", value=f"【{wd_str}曜】", placeholder="設定示唆、挙動など", height=80)
@@ -91,6 +92,14 @@ def render_my_balance_page(df_raw):
             if df_balance.empty or '登録日時' not in df_balance.columns:
                 st.info("編集できる収支データがまだありません。")
             else:
+                # 選択肢を「日付」および「登録日時」の降順（最新の入力が一番上）にする
+                edit_choices_df = df_balance.copy()
+                if '日付' in edit_choices_df.columns:
+                    edit_choices_df = edit_choices_df.sort_values(['日付', '登録日時'], ascending=[False, False])
+                else:
+                    edit_choices_df = edit_choices_df.sort_values('登録日時', ascending=False)
+                target_uids = edit_choices_df['登録日時'].unique()
+
                 def format_balance_label(uid):
                     row = df_balance[df_balance['登録日時'] == uid].iloc[0]
                     d_str = row['日付'].strftime('%Y-%m-%d') if pd.notna(row['日付']) else "不明"
@@ -135,7 +144,7 @@ def render_my_balance_page(df_raw):
         
                 target_uid = st.selectbox(
                     "編集・削除するデータを選択", 
-                    df_balance['登録日時'].unique(), 
+                    target_uids, 
                     format_func=format_balance_label, 
                     key="edit_balance_target",
                     on_change=on_edit_target_change
@@ -151,12 +160,9 @@ def render_my_balance_page(df_raw):
                         with e_col1:
                             st.date_input("稼働日", key="eb_date")
                             st.text_input("店舗名", key="eb_shop")
-                            st.text_input("台番号", key="eb_num")
                         with e_col2:
                             st.text_input("機種名", key="eb_mac")
-                            st.number_input("投資金額 (円)", min_value=0, step=1000, key="eb_inv")
-                            st.number_input("回収金額 (円)", min_value=0, step=1000, key="eb_rec")
-                        st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, key="eb_hours")
+                            st.text_input("台番号", key="eb_num")
         
                         st.markdown("**🎰 データ入力 (任意)**")
                         s_c1, s_c2, s_c3 = st.columns(3)
@@ -169,6 +175,12 @@ def render_my_balance_page(df_raw):
                         with e_c2: st.number_input("終了時 BIG回数", min_value=0, step=1, key="eb_eb")
                         with e_c3: st.number_input("終了時 REG回数", min_value=0, step=1, key="eb_er")
         
+                        st.markdown("---")
+                        i_c1, i_c2, i_c3 = st.columns(3)
+                        with i_c1: st.number_input("投資金額 (円)", min_value=0, step=1000, key="eb_inv")
+                        with i_c2: st.number_input("回収金額 (円)", min_value=0, step=1000, key="eb_rec")
+                        with i_c3: st.number_input("稼働時間 (h)", min_value=0.0, step=0.5, key="eb_hours")
+
                         st.text_area("メモ", height=80, key="eb_memo")
                         if st.form_submit_button("更新を保存", type="primary"):
                             if not st.session_state.eb_shop or not st.session_state.eb_mac:
@@ -308,13 +320,19 @@ def render_my_balance_page(df_raw):
             return int(m_old.group(1)) if kind == 'G' else int(m_old.group(2)) if kind == 'B' else int(m_old.group(3))
         return 0
         
-    total_my_g = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'G')).sum()
-    total_my_b = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'B')).sum()
-    total_my_r = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'R')).sum()
+    df_balance['自力G'] = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'G'))
+    df_balance['自力B'] = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'B'))
+    df_balance['自力R'] = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'R'))
+    
+    total_my_g = df_balance['自力G'].sum()
+    total_my_b = df_balance['自力B'].sum()
+    total_my_r = df_balance['自力R'].sum()
     my_total_prob = f"1/{total_my_g / (total_my_b + total_my_r):.1f}" if (total_my_b + total_my_r) > 0 and total_my_g > 0 else "-"
+    my_bb_prob = f"1/{total_my_g / total_my_b:.1f}" if total_my_b > 0 and total_my_g > 0 else "-"
+    my_reg_prob = f"1/{total_my_g / total_my_r:.1f}" if total_my_r > 0 and total_my_g > 0 else "-"
 
     st.subheader("📊 通算成績")
-    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+    k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("総収支", f"{total_balance:+d} 円", delta_color="normal")
     k2.metric("回収率", f"{(total_recovery/total_invest*100):.1f} %" if total_invest > 0 else "-")
     k3.metric("勝率", f"{win_rate:.1%}")
@@ -322,16 +340,35 @@ def render_my_balance_page(df_raw):
     k5.metric("時給", f"{int(hourly_wage):,} 円/h" if total_hours > 0 else "-")
     
     avg_pred_score = df_balance['prediction_score'].mean() if 'prediction_score' in df_balance.columns else np.nan
-    k6.metric("平均打台期待度", f"{avg_pred_score*100:.1f}%" if pd.notna(avg_pred_score) else "-")
-    k7.metric("通算 自力合算", my_total_prob)
+    st.caption("稼働データ (メモ欄からの自動集計)")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("総ゲーム数", f"{total_my_g:,} G")
+    m2.metric("BB確率", my_bb_prob)
+    m3.metric("REG確率", my_reg_prob)
+    m4.metric("合算確率", my_total_prob)
+    m5.metric("平均打台期待度", f"{avg_pred_score*100:.1f}%" if pd.notna(avg_pred_score) else "-")
 
     # --- 月別収支グラフ ---
-    st.subheader("🗓️ 月別収支")
+    st.subheader("🗓️ 月別成績")
     df_balance['年月'] = df_balance['日付'].dt.strftime('%Y-%m')
-    monthly_stats = df_balance.groupby('年月')['収支'].sum().reset_index()
-    monthly_stats['累積収支'] = monthly_stats['収支'].cumsum()
     
-    base_m = alt.Chart(monthly_stats).encode(x=alt.X('年月', title='年月'))
+    monthly_stats = df_balance.groupby('年月').agg(
+        総収支=('収支', 'sum'),
+        稼働数=('収支', 'count'),
+        勝率=('収支', lambda x: (x > 0).mean() * 100),
+        稼働時間=('稼働時間', 'sum'),
+        自力G=('自力G', 'sum'),
+        自力B=('自力B', 'sum'),
+        自力R=('自力R', 'sum')
+    ).reset_index()
+    monthly_stats['累積収支'] = monthly_stats['総収支'].cumsum()
+    monthly_stats['時給'] = np.where(monthly_stats['稼働時間'] > 0, monthly_stats['総収支'] / monthly_stats['稼働時間'], 0)
+    monthly_stats['合算確率'] = monthly_stats.apply(lambda r: f"1/{r['自力G']/(r['自力B']+r['自力R']):.1f}" if (r['自力B']+r['自力R'])>0 and r['自力G']>0 else "-", axis=1)
+    monthly_stats['BB確率'] = monthly_stats.apply(lambda r: f"1/{r['自力G']/r['自力B']:.1f}" if r['自力B']>0 and r['自力G']>0 else "-", axis=1)
+    monthly_stats['REG確率'] = monthly_stats.apply(lambda r: f"1/{r['自力G']/r['自力R']:.1f}" if r['自力R']>0 and r['自力G']>0 else "-", axis=1)
+    
+    monthly_stats_chart = monthly_stats.rename(columns={'総収支': '収支'})
+    base_m = alt.Chart(monthly_stats_chart).encode(x=alt.X('年月', title='年月'))
     bar_m = base_m.mark_bar(opacity=0.7).encode(
         y=alt.Y('収支', title='収支 (円)'),
         color=alt.condition(alt.datum.収支 > 0, alt.value("#ef5350"), alt.value("#42a5f5")),
@@ -342,6 +379,23 @@ def render_my_balance_page(df_raw):
         tooltip=['年月', alt.Tooltip('累積収支', format='+d')]
     )
     st.altair_chart(alt.layer(bar_m, line_m).resolve_scale(y='independent').interactive(), use_container_width=True)
+    
+    st.dataframe(
+        monthly_stats.sort_values('年月', ascending=False)[['年月', '総収支', '時給', '勝率', '稼働数', '自力G', 'BB確率', 'REG確率', '合算確率']],
+        column_config={
+            "年月": st.column_config.TextColumn("年月"),
+            "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
+            "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
+            "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
+            "稼働数": st.column_config.NumberColumn("回数"),
+            "自力G": st.column_config.NumberColumn("総G数", format="%d G"),
+            "BB確率": st.column_config.TextColumn("BB確率"),
+            "REG確率": st.column_config.TextColumn("REG確率"),
+            "合算確率": st.column_config.TextColumn("合算確率"),
+        },
+        width="stretch",
+        hide_index=True
+    )
 
     # --- AI期待度別の成績比較 ---
     st.divider()

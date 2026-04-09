@@ -504,7 +504,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     with st.expander("🎉 イベント傾向", expanded=False):
         # --- 4. イベントランク別の設定投入傾向 ---
         st.markdown("### 🎉 イベントランク別の設定投入傾向")
-        st.caption(f"指定した回転数（{min_g}G）以上回っている台のうち、「REG確率が1/300より良い台（高設定挙動）」の割合をイベントの強さごとに比較します。")
+        st.caption(f"指定した回転数（{min_g}G）以上回っている台のうち、「設定5以上の基準を満たした台（高設定挙動）」の割合をイベントの強さごとに比較します。")
         
         if df_events is not None and not df_events.empty and shop_col in reg_df.columns:
             event_df = reg_df.copy()

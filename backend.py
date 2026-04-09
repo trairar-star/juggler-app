@@ -888,7 +888,7 @@ def delete_shop_event(shop_name, event_date, event_name):
                     if pd.to_datetime(r_date).strftime('%Y-%m-%d') == target_date_str: is_date_match = True
                 except: pass
             if row[idx_shop] == shop_name and row[idx_name] == event_name and is_date_match:
-                worksheet.delete_row(i)
+                worksheet.delete_rows(i)
                 return True
         return False
     except Exception as e:
@@ -993,7 +993,7 @@ def delete_island_master(target_timestamp):
         worksheet = sh.worksheet('island_master')
         cell = worksheet.find(str(target_timestamp), in_column=1)
         if cell:
-            worksheet.delete_row(cell.row)
+            worksheet.delete_rows(cell.row)
             return True
         return False
     except Exception:
@@ -1143,7 +1143,7 @@ def delete_my_balance(target_timestamp):
         
         cell = worksheet.find(str(target_timestamp), in_column=1)
         if cell:
-            worksheet.delete_row(cell.row)
+            worksheet.delete_rows(cell.row)
             return True
         return False
     except Exception as e:

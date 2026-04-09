@@ -4,6 +4,7 @@ import numpy as np
 import json
 import os
 import backend
+import time
 
 try:
     import google.generativeai as genai
@@ -33,7 +34,21 @@ def save_chat_history(messages):
         pass
 
 def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importance=None, shop_hyperparams=None):
-    st.header("👩‍💼 ホール案内スタッフ（AI）")
+    # 会話履歴の初期化 (ファイルから復元)
+    if "gemini_messages" not in st.session_state:
+        st.session_state.gemini_messages = load_chat_history()
+
+    col_h1, col_h2 = st.columns([4, 1])
+    with col_h1:
+        st.header("👩‍💼 ホール案内スタッフ（AI）")
+    with col_h2:
+        if st.session_state.gemini_messages:
+            st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️ リセット", use_container_width=True, help="会話履歴を破棄します"):
+                st.session_state.gemini_messages = []
+                save_chat_history([])
+                st.rerun()
+
     st.caption("受付スタッフ風のAIに、アプリの最新データをもとにした立ち回りの相談や店舗の傾向についてチャットで質問できます。")
 
     # --- スマホ向けUI調整 (CSS) ---
@@ -41,11 +56,11 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         <style>
             /* チャットメッセージのフォントサイズと行間をスマホ向けに調整 */
             [data-testid="stChatMessage"] {
-                font-size: 0.85rem;
+                font-size: 0.75rem;
             }
             [data-testid="stChatMessage"] p {
-                margin-bottom: 0.4rem;
-                line-height: 1.5;
+                margin-bottom: 0.2rem;
+                line-height: 1.3;
             }
             /* チャット入力欄のフォントサイズ調整 */
             [data-testid="stChatInput"] textarea {
@@ -53,13 +68,35 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
             }
             /* AIの回答がリスト(箇条書き)の場合の余白調整 */
             [data-testid="stChatMessage"] ul, [data-testid="stChatMessage"] ol {
-                padding-left: 1.2rem;
-                margin-bottom: 0.4rem;
-            }
-            [data-testid="stChatMessage"] li {
+                padding-left: 1.0rem;
                 margin-bottom: 0.2rem;
             }
+            [data-testid="stChatMessage"] li {
+                margin-bottom: 0.1rem;
+            }
+            /* 下へスクロールするボタン */
+            .scroll-down-btn {
+                position: fixed;
+                bottom: 90px;
+                right: 20px;
+                background-color: rgba(66, 165, 245, 0.8);
+                color: white !important;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                text-align: center;
+                line-height: 40px;
+                font-size: 18px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+                text-decoration: none;
+                z-index: 9999;
+                transition: background-color 0.3s;
+            }
+            .scroll-down-btn:hover {
+                background-color: rgba(30, 136, 229, 1);
+            }
         </style>
+        <a href="#chat-bottom" class="scroll-down-btn" title="最新のメッセージへ">⬇️</a>
     """, unsafe_allow_html=True)
 
     # ライブラリのインストール確認
@@ -79,10 +116,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
     # APIキーの初期化
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     
-    # 会話履歴の初期化 (ファイルから復元)
-    if "gemini_messages" not in st.session_state:
-        st.session_state.gemini_messages = load_chat_history()
-
     # --- 連携する店舗の選択 ---
     shops = ["店舗を選択してください"]
     if not df_predict.empty and shop_col in df_predict.columns:
@@ -136,31 +169,12 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
     )
     target_model = model_options[selected_model_label]
 
-    # --- 会話履歴の操作ボタン ---
-    if st.session_state.gemini_messages:
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            chat_text = ""
-            for msg in st.session_state.gemini_messages:
-                role = "👤 あなた" if msg["role"] == "user" else "👩‍💼 AIコンシェルジュ"
-                chat_text += f"【{role}】\n{msg['content']}\n\n{'='*40}\n\n"
-            st.download_button(
-                label="💾 会話ログを保存 (テキスト)",
-                data=chat_text,
-                file_name=f"ai_chat_log_{pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        with col_c2:
-            if st.button("🗑️ 会話履歴を破棄 (リセット)", use_container_width=True):
-                st.session_state.gemini_messages = []
-                save_chat_history([])
-                st.rerun()
-
     # --- チャット履歴の表示 ---
     for msg in st.session_state.gemini_messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            
+    st.markdown('<div id="chat-bottom"></div>', unsafe_allow_html=True)
 
     # --- ユーザーからの入力 ---
     if prompt := st.chat_input("質問を入力してください (例: 明日の〇〇店の狙い目は？ / 今日の立ち回りアドバイスをお願い)"):
@@ -789,10 +803,11 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [イベント評価]: 「パチンコ専用」や「他機種」イベント時、システムは一旦「シワ寄せ回収リスク」としてマイナスのイベントスコアを与えます。しかし最終的な予測期待度は、そのスコアを踏まえて「過去その店舗が実際にどういう営業をしたか」をAIが学習して算出しています。アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
 - [シワ寄せの判断]: お客様が「他機種イベントの日の状況はどう？」と質問された場合、提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
-- [還元日/回収日の判断]: 「店舗全体のAI期待度」や「特定日/曜日の過去平均差枚」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（30%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
+- [還元日/回収日の判断]: 「店舗全体のAI期待度」や「特定日/曜日の過去平均差枚」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（20%〜30%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が30%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
 - [スケジュール提案]: 「1週間のスケジュール」「今後の予定」などを聞かれた場合、提供されている「向こう1週間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして1週間の立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
+- [やめ時・撤退判断]: お客様から稼働中の台について「やめどきか」「捨てるべきか」相談された場合、以下の基準で厳しくジャッジしてください。1) 事前のAI期待度が低い場合や、総回転数が2000G以上でREG確率が設定4の目安（概ね1/300〜1/350以下）より大幅に悪い場合は「即撤退」を強く推奨してください。2) 回転数が1000G未満と少ない場合は「まだ確率が暴れる時期なので、もう少し様子を見るか、周りの台（並びや塊）の状況を見て判断」とアドバイスしてください。3) ピークから1000枚以上飲まれている場合は、合算確率が良くても「メダルがあるうちの利確・撤退」を視野に入れるよう提案してください。
 - [ユーザー自身の成績]: 提供されている「あなたの機種別 通算ボーナス成績」に基づき、ユーザーのヒキや各機種の相性について回答してください。「BIGは引けていますがREG確率が低いですね」などの客観的な評価を行い、立ち回りの改善に繋がるアドバイスをしてください。
 - [AIの設定調整の相談]: お客様から「AIの精度を上げたい」「設定をどう調整すればいいか」といった相談があった場合、提供されている「AI予測実績 (直近1ヶ月)」の勝率と検証台数、および「現在のAIモデル設定」をもとにアドバイスしてください。
   1. 検証台数（有効稼働数）が30台未満と少ない場合は「まだデータが少ないため、たまたまのヒキでブレている可能性が高いです。パラメータは変更せずにもう少し（30台以上貯まるまで）様子を見ることをおすすめします」と案内してください。
@@ -819,37 +834,49 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # --- Gemini APIの呼び出し ---
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
-                try:
-                    # 選択されたモデルで呼び出し
-                    model = genai.GenerativeModel(
-                        model_name=target_model,
-                        system_instruction=system_instruction
-                    )
-                    
-                    # stream=True でストリーミング生成を有効化
-                    response = model.generate_content(full_prompt, stream=True)
-                    
-                    # チャンクごとにテキストを取り出すジェネレータを作成
-                    def stream_data():
-                        for chunk in response:
-                            yield chunk.text
-                            
-                    # st.write_stream でパラパラと表示し、最終的な全文を full_response として受け取る
-                    full_response = st.write_stream(stream_data)
-                    
-                    # 履歴への追加
-                    st.session_state.gemini_messages.append({"role": "assistant", "content": full_response})
-                    save_chat_history(st.session_state.gemini_messages)
-                except Exception as e:
-                    error_msg = str(e)
-                    if "429" in error_msg or "Quota exceeded" in error_msg:
-                        st.error("⚠️ AIの利用制限（APIリクエスト上限）に達しました。")
-                        st.warning("無料枠の利用制限（1分あたりの回数、または1日あたりの上限）に引っかかっています。しばらく時間（約1分〜翌日）を置いてから再度お試しください。\n\n※継続して発生する場合は、Google AI StudioでAPIキーのプラン（課金設定）を確認してください。")
-                    elif "404" in error_msg and "not found" in error_msg:
-                        st.error(f"⚠️ 指定されたAIモデル（{target_model}）が見つかりません。")
-                        st.warning("現在お使いのAPIキーではこのモデル名にアクセスできない可能性があります。プルダウンから別のモデルを選択してお試しください。")
-                    else:
-                        st.error(f"APIリクエスト中にエラーが発生しました: {e}")
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        # 選択されたモデルで呼び出し
+                        model = genai.GenerativeModel(
+                            model_name=target_model,
+                            system_instruction=system_instruction
+                        )
+                        
+                        # stream=True でストリーミング生成を有効化
+                        response = model.generate_content(full_prompt, stream=True)
+                        
+                        # チャンクごとにテキストを取り出すジェネレータを作成
+                        def stream_data():
+                            for chunk in response:
+                                yield chunk.text
+                                
+                        # st.write_stream でパラパラと表示し、最終的な全文を full_response として受け取る
+                        full_response = st.write_stream(stream_data)
+                        
+                        # 履歴への追加
+                        st.session_state.gemini_messages.append({"role": "assistant", "content": full_response})
+                        save_chat_history(st.session_state.gemini_messages)
+                        break # 成功したらループを抜ける
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "503" in error_msg or "Service Unavailable" in error_msg or "Overloaded" in error_msg:
+                            if attempt < max_retries - 1:
+                                wait_time = 2 ** attempt
+                                st.toast(f"⚠️ サーバーが混雑しています。{wait_time}秒後に自動で再試行します... ({attempt+1}/{max_retries})")
+                                time.sleep(wait_time)
+                                continue
+                                
+                        if "429" in error_msg or "Quota exceeded" in error_msg:
+                            st.error("⚠️ AIの利用制限（APIリクエスト上限）に達しました。")
+                            st.warning("無料枠の利用制限（1分あたりの回数、または1日あたりの上限）に引っかかっています。しばらく時間（約1分〜翌日）を置いてから再度お試しください。\n\n※継続して発生する場合は、Google AI StudioでAPIキーのプラン（課金設定）を確認してください。")
+                        elif "404" in error_msg and "not found" in error_msg:
+                            st.error(f"⚠️ 指定されたAIモデル（{target_model}）が見つかりません。")
+                            st.warning("現在お使いのAPIキーではこのモデル名にアクセスできない可能性があります。プルダウンから別のモデルを選択してお試しください。")
+                        else:
+                            st.error(f"APIリクエスト中にエラーが発生しました: {e}")
+                        break # 503以外のエラー、または最大リトライ回数到達で終了
                     
         # 履歴が長くなりすぎてAPIコストや制限に引っかかるのを防ぐ
         if len(st.session_state.gemini_messages) > 20:

@@ -77,7 +77,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     base_budget = 10000
     base_hamari = 250
     
-    if score >= 0.5:
+    if score >= 0.4:
         base_budget += 15000; base_hamari += 250
     elif score >= 0.3:
         base_budget += 10000; base_hamari += 150
@@ -446,14 +446,6 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             elif shop_7d_diff < -100:
                 advice_list.append(f"📉 **回収モード警戒**: 直近1週間の店舗全体がマイナス推移 (平均 **{int(shop_7d_diff)}枚**) しており、設定状況は厳しめです。強い根拠がない台は早めの見切りを推奨します。")
                 
-            # --- 5. AIの全体期待度による還元/回収予測 ---
-            if 'prediction_score' in df.columns:
-                avg_pred_score = df['prediction_score'].mean()
-                if avg_pred_score >= 0.20:
-                    advice_list.append(f"🔥 **本日のAI期待度 (激アツ)**: 店舗全体の平均期待度が **{avg_pred_score*100:.1f}%** と非常に高く、還元日(特定日など)の可能性が高いです。積極的に勝負できる日です！")
-                elif avg_pred_score < 0.10:
-                    advice_list.append(f"🥶 **本日のAI期待度 (回収警戒)**: 店舗全体の平均期待度が **{avg_pred_score*100:.1f}%** と低く、回収日の可能性が高いです。基本は勝負を避けるべきですが、**どうしても打つ場合は「期待度上位の激アツ台」のみに絞り、挙動が悪ければ即撤退してください。**")
-
             # イベント状況
             if 'イベント名' in df.columns:
                 event_names = df['イベント名'].dropna().unique()
@@ -776,10 +768,10 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             
             if not super_hot_df.empty:
                 html_str = f"""
-                <div style="background-color: rgba(244, 67, 54, 0.1); border-left: 5px solid #f44336; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                    <h4 style="color: #d32f2f; margin-top: 0; margin-bottom: 10px;">🚨 激アツ台 発見！ ({len(super_hot_df)}台)</h4>
-                    <p style="color: #b71c1c; margin-bottom: 10px; font-size: 0.9em;">期待度40%以上かつデータ信頼度が十分な、超・狙い目台です！最優先での確保をおすすめします。</p>
-                    <ul style="color: #b71c1c; margin-bottom: 0;">
+                <div style="background-color: rgba(244, 67, 54, 0.1); border-left: 5px solid #f44336; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px;">
+                    <h4 style="color: #d32f2f; margin-top: 0; margin-bottom: 5px; font-size: 1.0rem;">🚨 激アツ台 発見！ ({len(super_hot_df)}台)</h4>
+                    <p style="color: #b71c1c; margin-bottom: 5px; font-size: 0.85em;">期待度40%以上かつデータ信頼度が十分な、超・狙い目台です！最優先での確保をおすすめします。</p>
+                    <ul style="color: #b71c1c; margin-bottom: 0; font-size: 0.85em;">
                 """
                 for _, r in super_hot_df.iterrows():
                     s_name = r.get(shop_col, '')

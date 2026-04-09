@@ -109,11 +109,11 @@ def render_realtime_judgement_page(df_pred_log):
                         st.info(f"💡 **AI推奨根拠 (店癖など)**: {reason}")
                 else:
                     st.warning("店舗と台番号を選択してください。リストにない場合はAI推奨台外（または手入力）になります。")
-                    prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f", key="rt_prior_high_prob")
+                    prior_high_prob = st.slider("手動で事前期待度(設定5以上の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f", key="rt_prior_high_prob")
                     selected_machine = st.selectbox("機種を選択", machine_list, index=default_machine_idx, key="rt_selected_machine")
             else:
                 st.warning("本日のAI予測ログが見つかりません。手動で設定してください。")
-                prior_high_prob = st.slider("手動で事前期待度(設定4,5,6の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f", key="rt_prior_high_prob")
+                prior_high_prob = st.slider("手動で事前期待度(設定5以上の確率)を設定", 0.0, 1.0, 0.1, 0.05, format="%.2f", key="rt_prior_high_prob")
                 selected_machine = st.selectbox("機種を選択", machine_list, index=default_machine_idx, key="rt_selected_machine")
         else:
             selected_machine = st.selectbox("機種を選択", machine_list, index=default_machine_idx, key="rt_selected_machine")
