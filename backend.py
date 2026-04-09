@@ -19,6 +19,34 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 APP_VERSION = "v4.0.0" 
 
 # ---------------------------------------------------------
+# 共通判定ロジック
+# ---------------------------------------------------------
+def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
+    """
+    平均差枚と設置台数から、店舗の営業状態（還元/通常/回収）を判定する共通関数。
+    is_prediction=True の場合は「予測」のテキストを付加する。
+    """
+    import math
+    if pd.isna(avg_diff) or pd.isna(machine_count) or machine_count <= 0:
+        return "⚖️ 通常営業予測" if is_prediction else "⚖️ 通常営業"
+        
+    # スロット1台あたりの1日の差枚標準偏差を約1500枚と仮定し、店舗平均のブレを計算
+    std_dev = 1500.0 / math.sqrt(machine_count)
+    
+    # 分散を考慮した閾値（最低でも±50枚は必要とする）
+    hot_threshold = max(50.0, std_dev * 0.5)
+    cold_threshold = min(-50.0, -std_dev * 0.5)
+    
+    suffix = "予測" if is_prediction else ""
+    
+    if avg_diff >= hot_threshold:
+        return f"🔥 還元日{suffix}"
+    elif avg_diff <= cold_threshold:
+        return f"🥶 回収日{suffix}"
+    else:
+        return f"⚖️ 通常営業{suffix}"
+
+# ---------------------------------------------------------
 # 機種スペック情報
 # ---------------------------------------------------------
 MACHINE_SPECS = {
@@ -507,6 +535,10 @@ def load_daily_shop_scores():
         df = pd.DataFrame(worksheet.get_all_records())
         if '店舗平均期待度' in df.columns:
             df['店舗平均期待度'] = pd.to_numeric(df['店舗平均期待度'], errors='coerce')
+        if '予測平均差枚' in df.columns:
+            df['予測平均差枚'] = pd.to_numeric(df['予測平均差枚'], errors='coerce')
+        if '店舗台数' in df.columns:
+            df['店舗台数'] = pd.to_numeric(df['店舗台数'], errors='coerce')
         return df
     except: return pd.DataFrame()
 
@@ -529,10 +561,10 @@ def save_prediction_log(df):
                     score_ws = sh.worksheet(score_sheet_name)
                     existing_score_data = score_ws.get_all_values()
                 except gspread.exceptions.WorksheetNotFound: 
-                    score_ws = sh.add_worksheet(title=score_sheet_name, rows="1000", cols="4")
+                    score_ws = sh.add_worksheet(title=score_sheet_name, rows="1000", cols="6")
                     existing_score_data = []
 
-                SCORE_HEADER = ['実行日時', '予測対象日', '店名', '店舗平均期待度']
+                SCORE_HEADER = ['実行日時', '予測対象日', '店名', '店舗平均期待度', '予測平均差枚', '店舗台数']
                 if existing_score_data and len(existing_score_data) > 1:
                     df_score_existing = pd.DataFrame(existing_score_data[1:], columns=existing_score_data[0])
                     for c in SCORE_HEADER:
@@ -548,8 +580,15 @@ def save_prediction_log(df):
                 else:
                     temp_df['予測対象日'] = temp_df['対象日付'] + pd.Timedelta(days=1)
                     
-                df_score_new = temp_df.groupby([shop_col_for_score, '予測対象日'])['prediction_score'].mean().reset_index()
-                df_score_new = df_score_new.rename(columns={shop_col_for_score: '店名', 'prediction_score': '店舗平均期待度'})
+                if '予測差枚数' not in temp_df.columns:
+                    temp_df['予測差枚数'] = np.nan
+                    
+                df_score_new = temp_df.groupby([shop_col_for_score, '予測対象日']).agg(
+                    店舗平均期待度=('prediction_score', 'mean'),
+                    予測平均差枚=('予測差枚数', 'mean'),
+                    店舗台数=('台番号', 'nunique')
+                ).reset_index()
+                df_score_new = df_score_new.rename(columns={shop_col_for_score: '店名'})
                 df_score_new['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
                 df_score_new['予測対象日'] = pd.to_datetime(df_score_new['予測対象日']).dt.strftime('%Y-%m-%d')
                 df_score_new = df_score_new[SCORE_HEADER]
@@ -2327,12 +2366,14 @@ def _postprocess_predictions(predict_df, train_df):
     shop_col_for_betapin = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     betapin_shops = set()
     if shop_col_for_betapin and not train_df.empty:
-        cold_days = train_df[train_df.groupby([shop_col_for_betapin, 'next_date'])['prediction_score'].transform('mean') < 0.10]
-        if not cold_days.empty:
-            cold_stats = cold_days.groupby(shop_col_for_betapin).agg(
-                高設定率=('target', 'mean'), サンプル数=('target', 'count')
-            ).reset_index()
-            betapin_shops = set(cold_stats[(cold_stats['サンプル数'] >= 100) & (cold_stats['高設定率'] < 0.015)][shop_col_for_betapin])
+        if '予測差枚数' in train_df.columns:
+            shop_daily = train_df.groupby([shop_col_for_betapin, 'next_date']).agg(予測差枚数=('予測差枚数', 'mean'), 台数=('台番号', 'nunique')).reset_index()
+            shop_daily['営業予測'] = shop_daily.apply(lambda r: classify_shop_eval(r['予測差枚数'], r['台数'], is_prediction=True), axis=1)
+            cold_days_dates = shop_daily[shop_daily['営業予測'] == "🥶 回収日予測"]
+            cold_days = pd.merge(train_df, cold_days_dates[[shop_col_for_betapin, 'next_date']], on=[shop_col_for_betapin, 'next_date'])
+            if not cold_days.empty:
+                cold_stats = cold_days.groupby(shop_col_for_betapin).agg(高設定率=('target', 'mean'), サンプル数=('target', 'count')).reset_index()
+                betapin_shops = set(cold_stats[(cold_stats['サンプル数'] >= 100) & (cold_stats['高設定率'] < 0.015)][shop_col_for_betapin])
 
     # --- 店舗全体の空気感による最終補正とメッセージ付与 ---
     def apply_shop_mood_correction(df_target):

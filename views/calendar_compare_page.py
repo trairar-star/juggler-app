@@ -32,12 +32,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         shop_pred_stats = df_predict.groupby(shop_col).agg(**agg_dict).reset_index().sort_values('平均期待度', ascending=False)
         
         def get_eval_badge(row):
-            score = row['平均期待度']
-            diff = row.get('予測平均差枚', np.nan)
-            if pd.isna(score): return "⚖️ 通常営業"
-            elif score >= 0.20 or (pd.notna(diff) and diff >= 100): return "🔥 還元予測"
-            elif score < 0.10 and (pd.isna(diff) or diff < 0): return "🥶 回収警戒"
-            else: return "⚖️ 通常営業"
+            return backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 50), is_prediction=True)
             
         shop_pred_stats['営業予測'] = shop_pred_stats.apply(get_eval_badge, axis=1)
         
@@ -154,7 +149,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     # --- 新規追加: 回収日の一点突破（優良店）ランキング ---
     st.divider()
     st.subheader("💎 【優良店発掘】回収日の「一点突破」投入状況 (直近90日)")
-    st.caption("過去90日間で、AIが「回収日（店舗全体期待度10%未満）」と判断した厳しい営業日において、実際に高設定（設定5基準）がどれくらい投入されていたかを店舗ごとに比較します。回収日でもしっかり見せ台を用意してくれる優良店と、一切設定を使わない極悪店を見極めることができます。")
+    st.caption("過去90日間で、AIが「回収日」と予測した厳しい営業日において、実際に高設定（設定5基準）がどれくらい投入されていたかを店舗ごとに比較します。回収日でもしっかり見せ台を用意してくれる優良店と、一切設定を使わない極悪店を見極めることができます。")
 
     df_scores = backend.load_daily_shop_scores()
     if not df_scores.empty and '予測対象日' in df_scores.columns:
@@ -221,4 +216,4 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                         hide_index=True
                     )
                 else:
-                    st.info("過去90日間にAIが「回収日（期待度10%未満）」と判定した営業日がありません。")
+                    st.info("過去90日間にAIが「回収日」と判定した営業日がありません。")

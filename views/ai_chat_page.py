@@ -410,31 +410,29 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                 if not shop_pred.empty:
                     # スプレッドシートから正確な店舗全体の平均期待度を取得
                     df_daily_scores = backend.load_daily_shop_scores()
-                    avg_pred_score = None
+                    avg_pred_diff = None
+                    shop_machine_count = shop_pred['台番号'].nunique()
                     if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
                         try:
                             target_dt_str = pd.to_datetime(target_date_str).strftime('%Y-%m-%d')
                             temp_scores = df_daily_scores.copy()
                             temp_scores['予測対象日_str'] = pd.to_datetime(temp_scores['予測対象日'], errors='coerce').dt.strftime('%Y-%m-%d')
                             shop_daily = temp_scores[(temp_scores['店名'] == selected_shop) & (temp_scores['予測対象日_str'] == target_dt_str)]
-                            if not shop_daily.empty and '店舗平均期待度' in shop_daily.columns:
-                                avg_pred_score = shop_daily['店舗平均期待度'].dropna().iloc[0]
+                            if not shop_daily.empty and '予測平均差枚' in shop_daily.columns:
+                                avg_pred_diff = shop_daily['予測平均差枚'].dropna().iloc[0]
+                                if '店舗台数' in shop_daily.columns and pd.notna(shop_daily['店舗台数'].iloc[0]):
+                                    shop_machine_count = shop_daily['店舗台数'].dropna().iloc[0]
                         except Exception: pass
                             
-                    if avg_pred_score is None or pd.isna(avg_pred_score):
-                        avg_pred_score = shop_pred['prediction_score'].mean()
+                    if avg_pred_diff is None or pd.isna(avg_pred_diff):
+                        avg_pred_diff = shop_pred['予測差枚数'].mean() if '予測差枚数' in shop_pred.columns else np.nan
 
                     context_data += f"\n【{selected_shop} の {target_date_str} の店舗全体AI期待度 (還元日/回収日の目安)】\n"
-                    if pd.notna(avg_pred_score):
-                        context_data += f"店舗全体の平均期待度: {avg_pred_score*100:.1f}%\n"
-                        if avg_pred_score >= 0.20:
-                            context_data += "AI評価: 全体的にベースが高く、還元日(特定日など)の可能性が高いです。積極的に勝負できる日です。\n"
-                        elif avg_pred_score >= 0.10:
-                            context_data += "AI評価: 通常営業レベルの平均的な配分です。狙い台をしっかり絞る必要があります。\n"
-                        else:
-                            context_data += "AI評価: 店舗全体がかなり弱く、回収日の可能性が高いです。強い根拠がない限りは無理な勝負を避けるべきです。\n"
+                    if pd.notna(avg_pred_diff):
+                        eval_str = backend.classify_shop_eval(avg_pred_diff, shop_machine_count, is_prediction=True)
+                        context_data += f"予測平均差枚: {int(avg_pred_diff):+d}枚 / AI評価: {eval_str}\n"
                     else:
-                        context_data += "店舗全体の平均期待度: 不明\n"
+                        context_data += "AI店舗評価: 不明\n"
 
                     context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (全台の期待度ランキング)】\n"
                     cols = ['台番号', '機種名', 'prediction_score', '根拠']
@@ -608,7 +606,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         shop_summary = pd.merge(shop_summary, shop_hot_g, on=shop_col, how='left')
                 
                 for _, r in shop_summary.iterrows():
-                    eval_str = "🔥還元予測" if r['平均期待度'] >= 0.20 or r.get('予測差枚数', 0) >= 100 else ("🥶回収警戒" if r['平均期待度'] < 0.10 and r.get('予測差枚数', 0) < 0 else "⚖️通常営業")
+                    eval_str = backend.classify_shop_eval(r.get('予測差枚数'), df_predict[df_predict[shop_col]==r[shop_col]]['台番号'].nunique(), is_prediction=True)
                     avg_g_str = f" / 過去還元日の平均稼働: {int(r['還元日平均稼働'])}G" if '還元日平均稼働' in shop_summary.columns and pd.notna(r['還元日平均稼働']) else ""
                     context_data += f"・{r[shop_col]}: 予測店舗平均 {int(r['予測差枚数']):+d}枚 / AI全体期待度 {r['平均期待度']*100:.1f}% ({eval_str}){avg_g_str}\n"
                     
@@ -803,7 +801,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [イベント評価]: 「パチンコ専用」や「他機種」イベント時、システムは一旦「シワ寄せ回収リスク」としてマイナスのイベントスコアを与えます。しかし最終的な予測期待度は、そのスコアを踏まえて「過去その店舗が実際にどういう営業をしたか」をAIが学習して算出しています。アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
 - [シワ寄せの判断]: お客様が「他機種イベントの日の状況はどう？」と質問された場合、提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
-- [還元日/回収日の判断]: 「店舗全体のAI期待度」や「特定日/曜日の過去平均差枚」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（20%〜30%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
+- [還元日/回収日の判断]: 「店舗全体のAI評価（還元日予測など）」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（20%〜30%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が30%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
 - [スケジュール提案]: 「1週間のスケジュール」「今後の予定」などを聞かれた場合、提供されている「向こう1週間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして1週間の立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。

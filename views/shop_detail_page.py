@@ -561,7 +561,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         全台数=('台番号', 'count')
                     ).reset_index().sort_values('平均期待度', ascending=False)
                     
-                    isl_stats['営業予測'] = isl_stats['平均期待度'].apply(lambda x: "🔥 還元島" if x >= 0.20 else ("🥶 回収島" if x < 0.10 else "⚖️ 通常"))
+                    isl_stats['営業予測'] = isl_stats.apply(
+                        lambda row: backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 20), is_prediction=False).replace('営業', '島').replace('日', '島'), axis=1
+                    )
                     isl_stats['平均期待度'] = isl_stats['平均期待度'] * 100
                     
                     st.dataframe(
@@ -727,12 +729,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 
                 # 営業予測バッジの追加
                 def get_shop_eval_badge(row):
-                    score = row['平均スコア']
-                    diff = row.get('予測平均差枚', np.nan)
-                    if pd.isna(score): return "⚖️ 通常"
-                    if score >= 0.20 or (pd.notna(diff) and diff >= 100): return "🔥 還元"
-                    elif score < 0.10 and (pd.isna(diff) or diff < 0): return "🥶 回収"
-                    else: return "⚖️ 通常"
+                    return backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 50), is_prediction=True).replace('営業', '').replace('日', '')
                     
                 shop_stats['営業予測'] = shop_stats.apply(get_shop_eval_badge, axis=1)
                 
