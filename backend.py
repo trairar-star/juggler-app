@@ -1252,7 +1252,7 @@ def save_shop_ai_settings(shop_hyperparams):
         return False
 
 # --- 内部関数: 特徴量作成 ---
-def _generate_features(df, df_events, df_island, target_date):
+def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     if target_date is not None:
         target_ts = pd.to_datetime(target_date)
         df = df[df['対象日付'] < target_ts].copy()
@@ -1260,6 +1260,8 @@ def _generate_features(df, df_events, df_island, target_date):
     if df.empty: return df, []
 
     # 店舗名のカラムを「店名」に統一し、以降の処理をシンプルにする
+    # 現在のソート順を保持（mergeによる順序崩れ防止）
+    df['original_order'] = np.arange(len(df))
     if '店舗名' in df.columns and '店名' not in df.columns:
         df = df.rename(columns={'店舗名': '店名'})
 
@@ -1622,6 +1624,7 @@ def _generate_features(df, df_events, df_island, target_date):
     group_levels = list(range(len(group_keys))) # インデックス操作用
     
     df['mean_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+    df['std_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).std().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_14days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=14, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_30days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=30, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
 
@@ -1640,9 +1643,6 @@ def _generate_features(df, df_events, df_island, target_date):
     
     # 一時的に作成した不要な列を削除
     df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win', 'shifted_diff_ev_mac', 'shifted_diff_ev_end', 'prev_推定ぶどう確率_adj'], errors='ignore')
-
-    # 現在のソート順を保持（mergeによる順序崩れ防止）
-    df['original_order'] = np.arange(len(df))
 
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
@@ -1671,6 +1671,21 @@ def _generate_features(df, df_events, df_island, target_date):
         shop_daily_total = shop_daily_total.sort_values([shop_col, '対象日付'])
         shop_daily_total['shop_monthly_cumulative_diff'] = shop_daily_total.groupby([shop_col, '年月'])['shop_daily_total_diff'].transform(lambda x: x.shift(1).cumsum()).fillna(0)
         df = pd.merge(df, shop_daily_total[[shop_col, '対象日付', 'shop_monthly_cumulative_diff']], on=[shop_col, '対象日付'], how='left')
+
+        # --- 過去のAI予測（店舗全体の予測平均差枚）を読み込み、直近1週間の移動平均を特徴量に ---
+        if df_daily_scores is not None and not df_daily_scores.empty:
+            scores_to_merge = df_daily_scores[['店名', '予測対象日', '予測平均差枚']].copy()
+            scores_to_merge = scores_to_merge.rename(columns={'予測対象日': '対象日付', '予測平均差枚': 'prev_day_shop_predicted_avg_diff'})
+            scores_to_merge['対象日付'] = pd.to_datetime(scores_to_merge['対象日付'], errors='coerce')
+            
+            df = pd.merge(df, scores_to_merge, on=['店名', '対象日付'], how='left')
+            
+            df = df.sort_values([shop_col, '対象日付'])
+            df['shop_pred_diff_7d_avg'] = df.groupby(shop_col)['prev_day_shop_predicted_avg_diff'].transform(lambda x: x.shift(1).rolling(window=7, min_periods=1).mean()).fillna(0)
+            df = df.sort_values('original_order').reset_index(drop=True)
+        else:
+            df['shop_pred_diff_7d_avg'] = 0
+
 
     if shop_col and '機種名' in df.columns:
         # --- ②機種ごとの扱い指標 (過去30日間のその機種の平均差枚) ---
@@ -1713,6 +1728,15 @@ def _generate_features(df, df_events, df_island, target_date):
     df['連続マイナス日数'] = df.groupby(group_keys + ['temp_reset_group'])['is_not_released'].cumsum()
     df['cons_minus_total_diff'] = df.groupby(group_keys + ['temp_reset_group'])['差枚'].cumsum()
     df = df.drop(columns=['temp_reset_group', 'is_released', 'is_not_released'])
+
+    # --- 据え置き（高設定継続）検知用の特徴量 ---
+    # 差枚が0以下の日は「実質マイナス・通常」としてカウントをリセット
+    df['is_minus_or_zero'] = (df['差枚'] <= 0).astype(int)
+    df['plus_reset_group'] = df.groupby(group_keys)['is_minus_or_zero'].cumsum()
+    
+    df['is_plus'] = (df['差枚'] > 0).astype(int)
+    df['連続プラス日数'] = df.groupby(group_keys + ['plus_reset_group'])['is_plus'].cumsum()
+    df = df.drop(columns=['is_minus_or_zero', 'plus_reset_group', 'is_plus'])
 
     # --- 連続低稼働日数のカウント（テコ入れ狙い） ---
     UTILIZATION_THRESHOLD = 1500
@@ -1784,8 +1808,8 @@ def _generate_features(df, df_events, df_island, target_date):
         df['is_new_machine'] = 0
         df['is_moved_machine'] = 0
 
-    features = ['累計 কমলা', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff']:
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'std_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -2641,11 +2665,14 @@ def _postprocess_predictions(predict_df, train_df):
 def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, target_date=None):
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
+    # 過去の店舗別予測スコアを読み込む
+    _df_daily_scores = load_daily_shop_scores()
+
     if shop_hyperparams is None:
         shop_hyperparams = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50}}
 
     # 1. 特徴量エンジニアリング
-    df, features = _generate_features(df, _df_events, _df_island, target_date)
+    df, features = _generate_features(df, _df_events, _df_island, _df_daily_scores, target_date)
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     train_df = df.dropna(subset=['next_diff']).copy()
