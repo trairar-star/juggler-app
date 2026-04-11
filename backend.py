@@ -2674,6 +2674,7 @@ def _postprocess_predictions(predict_df, train_df):
             predict_df['店舗期待度'] = shop_mean.apply(get_rating)
         
     if not train_df.empty:
+        train_df['根拠'] = train_df.apply(get_reason, axis=1)
         train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
 
     return predict_df, train_df
