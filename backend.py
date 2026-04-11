@@ -1478,14 +1478,11 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     spec_tot = df['機種名'].map(tot_map)
     spec_reg3 = df['機種名'].map(reg3_map)
     
-    # 🎯【精度向上】ターゲットを厳格化: 4000G以上 + 差枚プラス条件を追加し、低設定の誤爆(ノイズ)をAIに学習させない
+    # 🎯【精度向上】ターゲットを超厳格化: 5000G以上 + 差枚+500枚以上 + REG確率設定5以上のみを正解とする
     df['target'] = (
-        (df['next_累計ゲーム'] >= 4000) & 
-        (df['next_diff'] > 0) & 
-        (
-            (df['next_reg_prob'] >= spec_reg) | 
-            ((df['next_total_prob'] >= spec_tot) & (df['next_reg_prob'] >= spec_reg3))
-        )
+        (df['next_累計ゲーム'] >= 5000) & 
+        (df['next_diff'] >= 500) & 
+        (df['next_reg_prob'] >= spec_reg)
     ).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
@@ -1863,7 +1860,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     if '対象日付' in train_df_common.columns:
         max_date = train_df_common['対象日付'].max()
         days_diff = (max_date - train_df_common['対象日付']).dt.days
-        sample_weights = 0.995 ** days_diff
+        sample_weights = 0.985 ** days_diff # 0.995から0.985に変更し、より直近の傾向を強く重視する
 
     n_est = default_hp.get('n_estimators', 300)
     lr = default_hp.get('learning_rate', 0.03)
@@ -1949,7 +1946,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 if '対象日付' in shop_train.columns:
                     s_max_date = shop_train['対象日付'].max()
                     s_days_diff = (s_max_date - shop_train['対象日付']).dt.days
-                    sw_shop = 0.995 ** s_days_diff
+                    sw_shop = 0.985 ** s_days_diff # 店舗個別モデルも同様に直近重視へ
                 
                 shop_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
