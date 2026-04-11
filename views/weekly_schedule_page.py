@@ -4,15 +4,15 @@ import datetime
 import backend
 
 def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
-    st.header("📅 週間スケジュール予測")
-    st.caption("指定した日から向こう7日間の各店舗の営業予測（平均差枚・期待度）をシミュレーションし、稼働予定を立てやすくします。")
+    st.header("📅 3日間スケジュール予測")
+    st.caption("指定した日から向こう3日間の各店舗の営業予測（平均差枚・期待度）をシミュレーションし、稼働予定を立てやすくします。")
     
     # ユーザーが自由に開始日を選べるようにする
     start_date = st.date_input("シミュレーション開始日", value=pd.Timestamp.now(tz='Asia/Tokyo').date())
     
-    st.info("💡 **使い方:**\n「シミュレーション開始」ボタンを押すと、AIが指定日から7日間の予測を順次実行します。曜日ごとの店癖やイベント情報を考慮して、どの日にどの店舗に行くべきかのスケジュール作成に役立ててください。\n※ 予測には少し時間がかかります（1分〜数分程度）。")
+    st.info("💡 **使い方:**\n「シミュレーション開始」ボタンを押すと、AIが指定日から3日間の予測を順次実行します。曜日ごとの店癖やイベント情報を考慮して、どの日にどの店舗に行くべきかのスケジュール作成に役立ててください。\n※ 予測には少し時間がかかります（数十秒〜1分程度）。")
     
-    if st.button("🚀 7日間の一括予測シミュレーションを開始", type="primary"):
+    if st.button("🚀 3日間の一括予測シミュレーションを開始", type="primary"):
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -23,9 +23,9 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
             st.error("店舗データが見つかりません。")
             return
             
-        for i in range(7):
+        for i in range(3):
             target_date = start_date + datetime.timedelta(days=i)
-            status_text.text(f"⏳ {target_date.strftime('%Y-%m-%d')} の予測を実行中... ({i+1}/7)")
+            status_text.text(f"⏳ {target_date.strftime('%Y-%m-%d')} の予測を実行中... ({i+1}/3)")
             
             # 推論実行（既存の run_analysis を再利用）
             df_pred, _, _ = backend.run_analysis(
@@ -62,7 +62,7 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
                     
                 results.append(shop_daily)
                 
-            progress_bar.progress((i + 1) / 7)
+            progress_bar.progress((i + 1) / 3)
             
         status_text.text("✅ すべての予測が完了しました！")
         
@@ -78,7 +78,7 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
             
             # カラム（日付）を正しい順序に並び替え
             cols_order = []
-            for i in range(7):
+            for i in range(3):
                 d = start_date + datetime.timedelta(days=i)
                 cols_order.append(d.strftime('%m/%d') + "(" + ["月", "火", "水", "木", "金", "土", "日"][d.weekday()] + ")")
             

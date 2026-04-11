@@ -618,13 +618,15 @@ def save_prediction_log(df):
         if shop_col:
             df_list = []
             for shop_name, group in save_df_initial.groupby(shop_col):
-                df_list.append(group.sort_values('prediction_score', ascending=False).head(max(3, int(len(group) * 0.10))))
+                valid_group = group[group['prediction_score'] >= 0.10]
+                df_list.append(valid_group.sort_values('prediction_score', ascending=False).head(max(3, int(len(group) * 0.10))))
             if df_list:
                 save_df_initial = pd.concat(df_list, ignore_index=True)
             else:
                 save_df_initial = pd.DataFrame(columns=save_df_initial.columns)
         else:
-            save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
+            valid_group = save_df_initial[save_df_initial['prediction_score'] >= 0.10]
+            save_df_initial = valid_group.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
             
         if save_df_initial.empty:
             st.warning("保存する推奨台がありません。")
@@ -1439,9 +1441,14 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         
         is_good_base = cond_reg & cond_diff
         
-        val_high = df['prev_推定ぶどう確率_raw']
-        # 3000〜4000Gの場合はブレが大きいため、平均値(6.0)側に引っ張って「弱く反映」させる
-        val_mid = df['prev_推定ぶどう確率_raw'] * 0.5 + 6.0 * 0.5
+        # ノイズ対策: 細かい計算誤差をAIが「必勝の法則」と誤認しないよう、0.1刻み（5.7, 5.8等）に丸め、
+        # 極端な外れ値に引っ張られないように 5.5 〜 6.5 の範囲にクリップする
+        val_high = (df['prev_推定ぶどう確率_raw'] * 10).round() / 10.0
+        val_high = val_high.clip(5.5, 6.5)
+        
+        # 3000〜4000Gの場合はブレが大きいため、平均値(6.0)側に引っ張ってから丸める
+        val_mid = ((df['prev_推定ぶどう確率_raw'] * 0.5 + 6.0 * 0.5) * 10).round() / 10.0
+        val_mid = val_mid.clip(5.5, 6.5)
         
         # 条件を満たす「裏取り」の状況のみAIに数値を渡し、それ以外はNaN(無効化)してノイズを防ぐ
         df['prev_推定ぶどう確率'] = np.where(
@@ -1710,6 +1717,22 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['prev_bonus_balance'] = df['REG'] - df['BIG']
     df['prev_unlucky_gap'] = (df['REG'] * 200) - df['差枚']
 
+    # --- ノイズ対策: 低稼働データの確率系特徴量を無効化 ---
+    # 稼働が2000G未満の場合、確率やボーナスバランスのブレが偶然（ノイズ）である可能性が高いため0に丸める
+    low_kado_mask = df['累計ゲーム'] < 2000
+    if 'REG確率' in df.columns:
+        df.loc[low_kado_mask, 'REG確率'] = 0.0
+    if 'BIG確率' in df.columns:
+        df.loc[low_kado_mask, 'BIG確率'] = 0.0
+    if 'reg_ratio' in df.columns:
+        df.loc[low_kado_mask, 'reg_ratio'] = 0.0
+    df.loc[low_kado_mask, 'prev_bonus_balance'] = 0.0
+    df.loc[low_kado_mask, 'prev_unlucky_gap'] = 0.0
+    
+    if 'prev_累計ゲーム' in df.columns and 'prev_REG確率' in df.columns:
+        prev_low_kado_mask = df['prev_累計ゲーム'] < 2000
+        df.loc[prev_low_kado_mask, 'prev_REG確率'] = 0.0
+
     if 'island_id' in df.columns:
         df['island_avg_diff'] = df.groupby(['island_id', '対象日付'])['差枚'].transform('mean').fillna(0)
         df['island_high_rate'] = df.groupby(['island_id', '対象日付'])['is_win'].transform('mean').fillna(0)
@@ -1932,13 +1955,13 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 shop_reg = lgb.LGBMRegressor(
                     random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 
                 try:
@@ -1981,7 +2004,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 try:
                     wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
@@ -2010,7 +2033,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
-                    subsample=0.8, subsample_freq=1, colsample_bytree=0.8
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 try:
                     ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
