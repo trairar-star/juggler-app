@@ -353,7 +353,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         'is_pension_day': '予測日: 年金支給日(14-16日)',
                         'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
                         'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
-                        'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)'
+                        'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)',
+                        'predicted_diff': 'AI予測: 予測差枚数(スタッキング)'
                     }
                     context_data += f"\n【{selected_shop} の設定投入のクセ (AIが重視している特徴量上位10件)】\n"
                     context_data += "※ 相関がプラスなら「その値が大きいほど高設定になりやすい」、マイナスなら「値が小さいほど高設定になりやすい」ことを示します。\n"

@@ -1167,7 +1167,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'is_pension_day': '予測日: 年金支給日(14-16日)',
                 'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
                 'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
-                'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)'
+                'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)',
+                'predicted_diff': 'AI予測: 予測差枚数(ST)'
             }
     
             # 全店舗の重要度データを準備

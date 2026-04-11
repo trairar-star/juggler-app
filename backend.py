@@ -16,7 +16,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.1.0" 
+APP_VERSION = "v4.2.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -1874,13 +1874,6 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in features]
 
     # --- 全店舗共通モデルの学習と推論 ---
-    model = lgb.LGBMClassifier(
-        objective='binary', random_state=42, verbose=-1, 
-        n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
-        reg_alpha=r_alpha, reg_lambda=r_lambda,
-        subsample=0.8, subsample_freq=1, colsample_bytree=0.8
-    )
-    model.fit(X, y, sample_weight=sample_weights, categorical_feature=cat_features)
     reg_model = lgb.LGBMRegressor(
         random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
@@ -1889,13 +1882,30 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     )
     reg_model.fit(X, train_df_common['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
     
+    # 【スタッキング】回帰モデルの予測差枚数を特徴量に追加
+    X_stacked = X.copy()
+    X_stacked['predicted_diff'] = reg_model.predict(X)
+    stacked_features = features + ['predicted_diff']
+
+    model = lgb.LGBMClassifier(
+        objective='binary', random_state=42, verbose=-1, 
+        n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+        reg_alpha=r_alpha, reg_lambda=r_lambda,
+        subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
+    )
+    model.fit(X_stacked, y, sample_weight=sample_weights, categorical_feature=cat_features)
+    
     if not predict_df.empty:
-        predict_df['prediction_score'] = model.predict_proba(predict_df[features])[:, 1]
         predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
-        predict_df['ai_version'] = "v2.2(共通)"
+        X_pred_stacked = predict_df[features].copy()
+        X_pred_stacked['predicted_diff'] = predict_df['予測差枚数']
+        predict_df['prediction_score'] = model.predict_proba(X_pred_stacked)[:, 1]
+        predict_df['ai_version'] = "v2.3(共通+ST)"
     if not train_df.empty:
-        train_df['prediction_score'] = model.predict_proba(train_df[features])[:, 1]
         train_df['予測差枚数'] = reg_model.predict(train_df[features]).astype(int)
+        X_train_stacked = train_df[features].copy()
+        X_train_stacked['predicted_diff'] = train_df['予測差枚数']
+        train_df['prediction_score'] = model.predict_proba(X_train_stacked)[:, 1]
     
     # 相関計算用ヘルパー関数
     def get_correlations(df_sub, feature_list):
@@ -1908,12 +1918,12 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 corrs.append(0.0)
         return corrs
 
-    corrs_all = get_correlations(train_df_common, features)
+    corrs_all = get_correlations(train_df_common.assign(predicted_diff=X_stacked['predicted_diff']), stacked_features)
     feature_importances_list = []
     feature_importances_list.append(pd.DataFrame({
         'shop_name': '全店舗',
         'category': '全体',
-        'feature': features,
+        'feature': stacked_features,
         'importance': model.feature_importances_,
         'correlation': corrs_all
     }))
@@ -1997,6 +2007,12 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 y_wd = wd_train['target']
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index).all() else None
                 
+                wd_reg = lgb.LGBMRegressor(
+                    random_state=42, verbose=-1, 
+                    n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+                    reg_alpha=r_alpha, reg_lambda=r_lambda,
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
+                )
                 wd_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
@@ -2004,12 +2020,15 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 try:
-                    wd_model.fit(X_wd, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
-                    corrs_wd = get_correlations(wd_train, features)
+                    wd_reg.fit(X_wd, wd_train['next_diff'], sample_weight=sw_wd, categorical_feature=cat_features)
+                    X_wd_stacked = X_wd.copy()
+                    X_wd_stacked['predicted_diff'] = wd_reg.predict(X_wd)
+                    wd_model.fit(X_wd_stacked, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
+                    corrs_wd = get_correlations(wd_train.assign(predicted_diff=X_wd_stacked['predicted_diff']), stacked_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': weekdays_map.get(wd, f"曜日{wd}"),
                         'category': '曜日',
-                        'feature': features,
+                        'feature': stacked_features,
                         'importance': wd_model.feature_importances_,
                         'correlation': corrs_wd
                     }))
@@ -2026,6 +2045,12 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 y_ev = ev_train['target']
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index).all() else None
                 
+                ev_reg = lgb.LGBMRegressor(
+                    random_state=42, verbose=-1, 
+                    n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
+                    reg_alpha=r_alpha, reg_lambda=r_lambda,
+                    subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
+                )
                 ev_model = lgb.LGBMClassifier(
                     objective='binary', random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
@@ -2033,12 +2058,15 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 try:
-                    ev_model.fit(X_ev, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
-                    corrs_ev = get_correlations(ev_train, features)
+                    ev_reg.fit(X_ev, ev_train['next_diff'], sample_weight=sw_ev, categorical_feature=cat_features)
+                    X_ev_stacked = X_ev.copy()
+                    X_ev_stacked['predicted_diff'] = ev_reg.predict(X_ev)
+                    ev_model.fit(X_ev_stacked, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
+                    corrs_ev = get_correlations(ev_train.assign(predicted_diff=X_ev_stacked['predicted_diff']), stacked_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': ev_type,
                         'category': 'イベント',
-                        'feature': features,
+                        'feature': stacked_features,
                         'importance': ev_model.feature_importances_,
                         'correlation': corrs_ev
                     }))

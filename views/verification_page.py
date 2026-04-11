@@ -1363,11 +1363,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         }
                         
                         try:
-                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
-                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
-                            model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                            reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                            reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
                             
-                            preds = model.predict_proba(X_test)[:, 1]
+                            X_train_st = X_train.copy()
+                            X_train_st['predicted_diff'] = reg_model.predict(X_train)
+                            
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                            model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                            
+                            X_test_st = X_test.copy()
+                            X_test_st['predicted_diff'] = reg_model.predict(X_test)
+                            preds = model.predict_proba(X_test_st)[:, 1]
                             test_data['pred_score'] = preds
                             
                             test_data['valid_play'] = (pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
@@ -1473,9 +1480,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     
                     for i, params in enumerate(param_candidates):
                         try:
-                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                            model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
-                            preds = model.predict_proba(X_test)[:, 1]
+                            reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                            reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
+                            
+                            X_train_st = X_train.copy()
+                            X_train_st['predicted_diff'] = reg_model.predict(X_train)
+                            
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                            model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                            
+                            X_test_st = X_test.copy()
+                            X_test_st['predicted_diff'] = reg_model.predict(X_test)
+                            preds = model.predict_proba(X_test_st)[:, 1]
                             test_eval = test_data.copy()
                             test_eval['pred_score'] = preds
                             
