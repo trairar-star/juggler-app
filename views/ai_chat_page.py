@@ -248,6 +248,61 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             if rank_strs:
                                 context_data += f"  (イベントランク別実績: {', '.join(rank_strs)})\n"
             
+            # --- 1.8. 日替わり特定パターンの投入頻度（末尾・機種・並び・角台） ---
+            if not df_raw.empty and shop_col in df_raw.columns:
+                shop_raw_pat = df_raw[df_raw[shop_col] == selected_shop].copy()
+                if not shop_raw_pat.empty and '対象日付' in shop_raw_pat.columns and '差枚' in shop_raw_pat.columns:
+                    shop_daily_stats = shop_raw_pat.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
+                    total_days = len(shop_daily_stats)
+                    
+                    if total_days > 0:
+                        pattern_str = f"\n【{selected_shop} の日替わり特定パターンの投入頻度 (全{total_days}日中)】\n"
+                        
+                        # 1. 当たり末尾
+                        if '末尾番号' in shop_raw_pat.columns:
+                            end_daily = shop_raw_pat.groupby(['対象日付', '末尾番号']).agg(末尾平均=('差枚', 'mean'), 台数=('台番号', 'count')).reset_index()
+                            end_daily = end_daily[end_daily['台数'] >= 3]
+                            if not end_daily.empty:
+                                idx_max = end_daily.groupby('対象日付')['末尾平均'].idxmax()
+                                top_end = end_daily.loc[idx_max]
+                                merged_end = pd.merge(top_end, shop_daily_stats, on='対象日付')
+                                hit_end = ((merged_end['末尾平均'] >= 500) & ((merged_end['末尾平均'] - merged_end['店舗平均差枚']) >= 500)).sum()
+                                pattern_str += f"・日替わり当たり末尾 投入率: {(hit_end / total_days * 100):.1f}%\n"
+
+                        # 2. 全台系(当たり機種)
+                        if '機種名' in shop_raw_pat.columns:
+                            mac_daily = shop_raw_pat.groupby(['対象日付', '機種名']).agg(機種平均=('差枚', 'mean'), 台数=('台番号', 'count')).reset_index()
+                            mac_daily = mac_daily[mac_daily['台数'] >= 3]
+                            if not mac_daily.empty:
+                                idx_max = mac_daily.groupby('対象日付')['機種平均'].idxmax()
+                                top_mac = mac_daily.loc[idx_max]
+                                merged_mac = pd.merge(top_mac, shop_daily_stats, on='対象日付')
+                                hit_mac = ((merged_mac['機種平均'] >= 1000) & ((merged_mac['機種平均'] - merged_mac['店舗平均差枚']) >= 500)).sum()
+                                pattern_str += f"・全台系(当たり機種) 投入率: {(hit_mac / total_days * 100):.1f}%\n"
+
+                        # 3. 並び(塊)
+                        if '台番号' in shop_raw_pat.columns:
+                            n_df = shop_raw_pat[['対象日付', '台番号', '差枚']].copy()
+                            n_df['台番号'] = pd.to_numeric(n_df['台番号'], errors='coerce')
+                            n_df = n_df.dropna(subset=['台番号']).sort_values(['対象日付', '台番号'])
+                            hit_narabi = 0
+                            for _, group in n_df.groupby('対象日付'):
+                                group['is_hot'] = group['差枚'] >= 1000
+                                group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                                hot_blocks = group[group['is_hot']].groupby('block').size()
+                                if not hot_blocks.empty and hot_blocks.max() >= 3:
+                                    hit_narabi += 1
+                            pattern_str += f"・3台以上の並び(塊) 投入率: {(hit_narabi / total_days * 100):.1f}%\n"
+
+                        # 4. 角台優遇
+                        if 'is_corner' in shop_raw_pat.columns:
+                            corner_daily = shop_raw_pat[shop_raw_pat['is_corner'] == 1].groupby('対象日付').agg(角台平均=('差枚', 'mean')).reset_index()
+                            merged_corner = pd.merge(corner_daily, shop_daily_stats, on='対象日付')
+                            hit_corner = ((merged_corner['角台平均'] >= 500) & ((merged_corner['角台平均'] - merged_corner['店舗平均差枚']) >= 500)).sum()
+                            pattern_str += f"・角台の優遇 発生率: {(hit_corner / total_days * 100):.1f}%\n"
+                            
+                        context_data += pattern_str
+            
             if df_events is not None and not df_events.empty:
                 shop_events = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント日付'].dt.strftime('%Y-%m-%d') == target_date_str)]
                 if not shop_events.empty:
@@ -328,7 +383,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         'mean_7days_diff': '台: 直近7日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
                         '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
                         'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
-                        'neighbor_avg_diff': '配置: 両隣の平均差枚 (並び・塊)',
+                        'neighbor_avg_diff': '配置: 両隣の平均差枚 (※片側の大爆発に引かれるフェイク注意)',
+                        'left_diff': '配置: 左隣の差枚', 'right_diff': '配置: 右隣の差枚', 'neighbor_positive_count': '配置: 両隣のプラス台数 (塊検知)',
                         'event_avg_diff': 'イベント: 平均差枚',
                         'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
                         'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',
@@ -803,6 +859,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [シワ寄せの判断]: お客様が「他機種イベントの日の状況はどう？」と質問された場合、提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
 - [還元日/回収日の判断]: 「店舗全体のAI評価（還元日予測など）」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（20%〜30%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
+- [特定パターンの狙い目]: 提供されている「日替わり特定パターンの投入頻度」に基づき、末尾・機種・並び・角台の中で投入率が高い（目安として20〜30%以上）ものがあれば、「今日は〇〇を意識して立ち回るのが有効です」とアドバイスに組み込んでください。複数の傾向が強い場合は複合して狙う戦略（例：当たり機種の角台など）も提案してください。
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が30%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
 - [スケジュール提案]: 「今後の予定」などを聞かれた場合、提供されている「向こう3日間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。

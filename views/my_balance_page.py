@@ -458,12 +458,12 @@ def render_my_balance_page(df_raw):
         hide_index=True
     )
 
-    # --- 店舗別・機種別ランキング ---
+    # --- カテゴリ別 ランキング ---
     st.divider()
-    col_r1, col_r2 = st.columns(2)
+    st.subheader("🏆 カテゴリ別 成績ランキング")
+    tab_shop, tab_mac, tab_machine_no = st.tabs(["🏬 店舗別", "🎰 機種別", "🎯 店舗・台番号別"])
     
-    with col_r1:
-        st.subheader("🏬 店舗別 成績")
+    with tab_shop:
         shop_rank = df_balance.groupby('店名').agg(
             総収支=('収支', 'sum'),
             勝率=('収支', lambda x: (x > 0).mean() * 100),
@@ -487,8 +487,7 @@ def render_my_balance_page(df_raw):
             hide_index=True
         )
 
-    with col_r2:
-        st.subheader("🎰 機種別 成績")
+    with tab_mac:
         machine_rank = df_balance.groupby('機種名').agg(
             総収支=('収支', 'sum'),
             勝率=('収支', lambda x: (x > 0).mean() * 100),
@@ -502,6 +501,31 @@ def render_my_balance_page(df_raw):
             machine_rank[['機種名', '総収支', '時給', '勝率', '稼働数', '平均期待度']],
             column_config={
                 "機種名": st.column_config.TextColumn("機種"),
+                "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
+                "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
+                "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),
+                "稼働数": st.column_config.NumberColumn("回数"),
+                "平均期待度": st.column_config.NumberColumn("平均期待度", format="%.1f%%"),
+            },
+            width="stretch",
+            hide_index=True
+        )
+        
+    with tab_machine_no:
+        df_balance['店舗_台番号'] = df_balance['店名'] + " #" + df_balance['台番号'].astype(str)
+        machine_no_rank = df_balance.groupby('店舗_台番号').agg(
+            総収支=('収支', 'sum'),
+            勝率=('収支', lambda x: (x > 0).mean() * 100),
+            稼働数=('収支', 'count'),
+            稼働時間=('稼働時間', 'sum'),
+            平均期待度=('期待度_pct', 'mean')
+        ).sort_values('総収支', ascending=False).reset_index()
+        machine_no_rank['時給'] = np.where(machine_no_rank['稼働時間'] > 0, machine_no_rank['総収支'] / machine_no_rank['稼働時間'], 0)
+        
+        st.dataframe(
+            machine_no_rank[['店舗_台番号', '総収支', '時給', '勝率', '稼働数', '平均期待度']],
+            column_config={
+                "店舗_台番号": st.column_config.TextColumn("店舗・台番号"),
                 "総収支": st.column_config.NumberColumn("Total", format="%+d 円"),
                 "時給": st.column_config.NumberColumn("時給", format="%+d 円/h"),
                 "勝率": st.column_config.ProgressColumn("勝率", format="%.1f%%", min_value=0, max_value=100),

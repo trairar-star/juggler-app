@@ -173,6 +173,50 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
                 st.info(f"🔥 **還元傾向が強い日 (甘い日)**\n- **{int(best_digit['末尾'])}のつく日** (店舗全体平均 {int(best_digit['平均差枚']):+d}枚)\n- **{weekdays_map[int(best_wd['曜日'])]}曜日** (店舗全体平均 {int(best_wd['平均差枚']):+d}枚){ev_hot_str}")
                 st.warning(f"🥶 **回収傾向が強い日 (辛い日)**\n- **{int(worst_digit['末尾'])}のつく日** (店舗全体平均 {int(worst_digit['平均差枚']):+d}枚)\n- **{weekdays_map[int(worst_wd['曜日'])]}曜日** (店舗全体平均 {int(worst_wd['平均差枚']):+d}枚){ev_cold_str}")
 
+            st.divider()
+            st.markdown(f"**🔄 前日の営業結果（反動）による当日の傾向**")
+            st.caption("前日お店全体が「回収（お店の黒字）」だったか「還元（お店の赤字）」だったかによって、翌日の営業がどう変わるか（お詫び還元があるか、連続回収か）を分析します。")
+            
+            shop_daily_df = shop_daily_df.sort_values('対象日付')
+            shop_daily_df['前日_対象日付'] = shop_daily_df['対象日付'].shift(1)
+            shop_daily_df['前日_店舗平均差枚'] = shop_daily_df['店舗平均差枚'].shift(1)
+            
+            def classify_prev_diff(d):
+                if pd.isna(d): return np.nan
+                if d <= -150: return '1. 大回収 (-150枚以下)'
+                elif d < 0: return '2. チョイ回収 (-149〜-1枚)'
+                elif d < 150: return '3. チョイ還元 (+0〜+149枚)'
+                else: return '4. 大還元 (+150枚以上)'
+                
+            shop_daily_df['前日の営業'] = shop_daily_df['前日_店舗平均差枚'].apply(classify_prev_diff)
+            
+            rebound_stats = shop_daily_df.dropna(subset=['前日の営業']).groupby('前日の営業').agg(
+                当日平均差枚=('店舗平均差枚', 'mean'),
+                サンプル日数=('店舗平均差枚', 'count')
+            ).reset_index().sort_values('前日の営業')
+            
+            if not rebound_stats.empty:
+                col_r1, col_r2 = st.columns([1.2, 1])
+                with col_r1:
+                    chart_rebound = alt.Chart(rebound_stats).mark_bar().encode(
+                        x=alt.X('前日の営業', title='前日の営業結果'),
+                        y=alt.Y('当日平均差枚', title='当日の店舗平均差枚'),
+                        color=alt.condition(alt.datum.当日平均差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")),
+                        tooltip=['前日の営業', alt.Tooltip('当日平均差枚', format='+.0f'), 'サンプル日数']
+                    ).interactive()
+                    st.altair_chart(chart_rebound, width="stretch")
+                with col_r2:
+                    st.dataframe(
+                        rebound_stats,
+                        column_config={
+                            "前日の営業": st.column_config.TextColumn("前日の結果"),
+                            "当日平均差枚": st.column_config.NumberColumn("当日の平均差枚", format="%+d 枚"),
+                            "サンプル日数": st.column_config.NumberColumn("該当する日数", format="%d 日")
+                        },
+                        hide_index=True,
+                        width="stretch"
+                    )
+
         if top_trends_df is not None or worst_trends_df is not None:
             st.markdown(f"**🤖 AIが発見した {selected_shop} の店癖/警戒条件**")
             if top_trends_df is not None and not top_trends_df.empty:
@@ -340,6 +384,183 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         hide_index=True,
                         width="stretch"
                     )
+
+                st.divider()
+                st.markdown("**🎯 日替わり「当たり機種(全台系)」の投入頻度**")
+                st.caption("日によって全台系（当たり機種）が変わる店舗を見抜くための分析です。\n「その日一番出た機種(3台以上設置)」が店舗平均より+500枚以上上回り、かつ機種平均差枚が+1000枚以上の対象日を「全台系が存在した日」として集計します。")
+                
+                if '対象日付' in df_raw_shop.columns and '差枚' in df_raw_shop.columns:
+                    # 3台以上設置機種に限定
+                    mac_counts = df_raw_shop.groupby(['対象日付', '機種名'])['台番号'].count().reset_index()
+                    valid_mac_daily = mac_counts[mac_counts['台番号'] >= 3]
+                    
+                    if not valid_mac_daily.empty:
+                        # 日別・機種別の平均差枚
+                        daily_mac_stats = pd.merge(df_raw_shop, valid_mac_daily[['対象日付', '機種名']], on=['対象日付', '機種名'], how='inner')
+                        daily_mac_stats = daily_mac_stats.groupby(['対象日付', '機種名']).agg(
+                            機種平均差枚=('差枚', 'mean'),
+                            サンプル数=('台番号', 'count')
+                        ).reset_index()
+                        
+                        # 日別のトップ機種を取得
+                        idx_max = daily_mac_stats.groupby('対象日付')['機種平均差枚'].idxmax()
+                        daily_top_mac = daily_mac_stats.loc[idx_max].copy()
+                        daily_top_mac = daily_top_mac.rename(columns={'機種名': 'トップ機種', '機種平均差枚': 'トップ機種差枚'})
+                        
+                        # 日別の店舗平均差枚
+                        daily_shop_stats = df_raw_shop.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
+                        
+                        daily_merged = pd.merge(daily_top_mac[['対象日付', 'トップ機種', 'トップ機種差枚', 'サンプル数']], daily_shop_stats, on='対象日付')
+                        
+                        # 当たり機種判定： 機種平均が+1000枚以上 かつ 店舗平均を500枚以上上回る
+                        daily_merged['当たり機種あり'] = (daily_merged['トップ機種差枚'] >= 1000) & ((daily_merged['トップ機種差枚'] - daily_merged['店舗平均差枚']) >= 500)
+                        
+                        hit_days = daily_merged['当たり機種あり'].sum()
+                        total_days = len(daily_merged)
+                        hit_rate = (hit_days / total_days * 100) if total_days > 0 else 0
+                        
+                        st.metric("全台系(当たり機種) 投入率 (発生頻度)", f"{hit_rate:.1f}%", f"{hit_days}日 / 全{total_days}日")
+                        
+                        if hit_rate >= 20:
+                            st.success("✨ **全台系 多用店**: 2割以上の営業日で明確な「当たり機種（全台系）」が存在します。周りの台の挙動を見て、自分の台の機種全体が強ければ粘る価値が大いにあります！")
+                        elif hit_rate >= 10:
+                            st.info("💡 **全台系 散見**: 時折、特定の機種が全体的に強くなる日があります。特日などのイベント時に全台系を狙うのが有効かもしれません。")
+                        else:
+                            st.warning("⚠️ **全台系 傾向薄**: 機種単位での全台系（当たり機種）が用意されることは少ないようです。単品狙いや並び・末尾などを重視した立ち回りが良さそうです。")
+                        
+                        with st.expander("📅 直近の当たり機種履歴", expanded=False):
+                            recent_hits = daily_merged[daily_merged['当たり機種あり']].sort_values('対象日付', ascending=False).head(10)
+                            if not recent_hits.empty:
+                                recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
+                                st.dataframe(
+                                    recent_hits[['対象日付_str', 'トップ機種', 'サンプル数', 'トップ機種差枚', '店舗平均差枚']],
+                                    column_config={
+                                        "対象日付_str": st.column_config.TextColumn("対象日付"),
+                                        "トップ機種": st.column_config.TextColumn("一番出た機種"),
+                                        "サンプル数": st.column_config.NumberColumn("設置台数", format="%d台"),
+                                        "トップ機種差枚": st.column_config.NumberColumn("機種平均差枚", format="%+d 枚"),
+                                        "店舗平均差枚": st.column_config.NumberColumn("店舗全体の平均", format="%+d 枚")
+                                    },
+                                    hide_index=True,
+                                    width="stretch"
+                                )
+                            else:
+                                st.info("直近で明確な当たり機種が存在した日がありません。")
+                    else:
+                        st.info("集計に必要なデータ（各機種3台以上のサンプル）が不足しています。")
+
+        # --- 並び(塊)の投入頻度 ---
+        with st.expander(f"🤝 {selected_shop} の「並び(塊)」投入傾向", expanded=False):
+            st.caption("日によって3台以上の並び（塊）が用意される店舗を見抜くための分析です。\n差枚が+1000枚以上の台が、台番号順で3台以上連続して存在した日を「並びが存在した日」として集計します。")
+            
+            if '対象日付' in df_raw_shop.columns and '台番号' in df_raw_shop.columns and '差枚' in df_raw_shop.columns:
+                # 台番号を数値化してソート可能にする
+                temp_df = df_raw_shop[['対象日付', '台番号', '差枚']].copy()
+                temp_df['台番号'] = pd.to_numeric(temp_df['台番号'], errors='coerce')
+                temp_df = temp_df.dropna(subset=['台番号']).sort_values(['対象日付', '台番号'])
+                
+                daily_narabi_records = []
+                for date, group in temp_df.groupby('対象日付'):
+                    group = group.sort_values('台番号')
+                    group['is_hot'] = group['差枚'] >= 1000
+                    group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                    hot_blocks = group[group['is_hot']].groupby('block').size()
+                    max_consecutive = hot_blocks.max() if not hot_blocks.empty else 0
+                    
+                    daily_narabi_records.append({
+                        '対象日付': date,
+                        '最大並び台数': max_consecutive,
+                        '並びあり': max_consecutive >= 3
+                    })
+                    
+                if daily_narabi_records:
+                    narabi_df = pd.DataFrame(daily_narabi_records)
+                    hit_days = narabi_df['並びあり'].sum()
+                    total_days = len(narabi_df)
+                    hit_rate = (hit_days / total_days * 100) if total_days > 0 else 0
+                    
+                    st.metric("3台並び(塊) 投入率 (発生頻度)", f"{hit_rate:.1f}%", f"{hit_days}日 / 全{total_days}日")
+                    
+                    if hit_rate >= 30:
+                        st.success("✨ **並び 多用店**: 3割以上の営業日で明確な「3台以上の並び」が存在します。両隣の挙動を常にチェックし、好調台の隣を積極的に狙う立ち回りが極めて有効です！")
+                    elif hit_rate >= 15:
+                        st.info("💡 **並び 散見**: 時折、3台以上の並び（塊）が作られる日があります。イベント日などに絞って並びを意識すると良いかもしれません。")
+                    else:
+                        st.warning("⚠️ **並び 傾向薄**: 3台以上連続して出ている箇所は少ないようです。並びよりも、単品や末尾、全台系などを意識した方が良さそうです。")
+                        
+                    with st.expander("📅 直近の並び投入履歴", expanded=False):
+                        recent_hits = narabi_df[narabi_df['並びあり']].sort_values('対象日付', ascending=False).head(10)
+                        if not recent_hits.empty:
+                            recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
+                            st.dataframe(
+                                recent_hits[['対象日付_str', '最大並び台数']],
+                                column_config={
+                                    "対象日付_str": st.column_config.TextColumn("対象日付"),
+                                    "最大並び台数": st.column_config.NumberColumn("最大連続台数", format="%d台")
+                                },
+                                hide_index=True,
+                                width="stretch"
+                            )
+                        else:
+                            st.info("直近で明確な3台並びが存在した日がありません。")
+                else:
+                    st.info("集計に必要なデータが不足しています。")
+            else:
+                st.info("集計に必要なデータが不足しています。")
+
+        # --- 角台の投入頻度 ---
+        with st.expander(f"🪑 {selected_shop} の「角台」優遇傾向", expanded=False):
+            st.caption("日によって角台が特別に強くなる店舗を見抜くための分析です。\n角台の平均差枚が店舗平均より+500枚以上高く、かつ角台平均自体が+500枚以上の対象日を「角台が優遇された日」として集計します。")
+            
+            if '対象日付' in df_raw_shop.columns and 'is_corner' in df_raw_shop.columns and '差枚' in df_raw_shop.columns:
+                # 角台の成績を集計
+                daily_corner_stats = df_raw_shop[df_raw_shop['is_corner'] == 1].groupby('対象日付').agg(
+                    角台平均差枚=('差枚', 'mean'),
+                    角台サンプル数=('台番号', 'count')
+                ).reset_index()
+                
+                daily_shop_stats = df_raw_shop.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
+                
+                if not daily_corner_stats.empty:
+                    daily_merged = pd.merge(daily_corner_stats, daily_shop_stats, on='対象日付')
+                    
+                    # 角台優遇判定： 角台平均が+500枚以上 かつ 店舗平均を500枚以上上回る
+                    daily_merged['角台優遇あり'] = (daily_merged['角台平均差枚'] >= 500) & ((daily_merged['角台平均差枚'] - daily_merged['店舗平均差枚']) >= 500)
+                    
+                    hit_days = daily_merged['角台優遇あり'].sum()
+                    total_days = len(daily_merged)
+                    hit_rate = (hit_days / total_days * 100) if total_days > 0 else 0
+                    
+                    st.metric("角台 優遇率 (発生頻度)", f"{hit_rate:.1f}%", f"{hit_days}日 / 全{total_days}日")
+                    
+                    if hit_rate >= 30:
+                        st.success("✨ **角台 多用店**: 3割以上の営業日で角台が明確に優遇されています。台選びに迷ったら角台に座るのが最も期待値が高い立ち回りになります！")
+                    elif hit_rate >= 15:
+                        st.info("💡 **角台 散見**: 時折、角台が強くなる日があります。角台の挙動をチェックし、強そうなら粘る価値があります。")
+                    else:
+                        st.warning("⚠️ **角台 傾向薄**: 角台が特別に優遇される日は少ないようです。角というだけで過信せず、他の要素を重視したほうが良さそうです。")
+                        
+                    with st.expander("📅 直近の角台優遇履歴", expanded=False):
+                        recent_hits = daily_merged[daily_merged['角台優遇あり']].sort_values('対象日付', ascending=False).head(10)
+                        if not recent_hits.empty:
+                            recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
+                            st.dataframe(
+                                recent_hits[['対象日付_str', '角台サンプル数', '角台平均差枚', '店舗平均差枚']],
+                                column_config={
+                                    "対象日付_str": st.column_config.TextColumn("対象日付"),
+                                    "角台サンプル数": st.column_config.NumberColumn("角台数", format="%d台"),
+                                    "角台平均差枚": st.column_config.NumberColumn("角台の平均差枚", format="%+d 枚"),
+                                    "店舗平均差枚": st.column_config.NumberColumn("店舗全体の平均", format="%+d 枚")
+                                },
+                                hide_index=True,
+                                width="stretch"
+                            )
+                        else:
+                            st.info("直近で明確な角台優遇が存在した日がありません。")
+                else:
+                    st.info("集計に必要なデータ（角台のサンプル）が不足しています。")
+            else:
+                st.info("集計に必要なデータが不足しています。事前にサイドバーの「島マスター管理」から角台を登録し、データ更新を行ってください。")
 
     st.divider()
     st.markdown("### 🔍 詳細条件別の傾向分析")
@@ -681,6 +902,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     end_stats['末尾番号'] = end_stats['末尾番号'].astype(int).astype(str)
                     end_stats['信頼度'] = end_stats['サンプル数'].apply(get_confidence_indicator)
     
+                    st.markdown("**📊 全期間の末尾別 平均成績**")
+                    st.caption("過去の全データにおいて、特定の末尾が常に強いか（固定の当たり末尾があるか）を確認します。")
                     col_e1, col_e2 = st.columns([1.2, 1])
                     with col_e1:
                         chart_end = alt.Chart(end_stats).mark_bar().encode(
@@ -700,6 +923,63 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             hide_index=True,
                             width="stretch"
                         )
+                        
+                    st.divider()
+                    st.markdown("**🎯 日替わり「当たり末尾」の投入頻度 (ランダム末尾を探せ)**")
+                    st.caption("日によって当たり末尾が変わる店舗（全期間平均では目立たないが、1日単位で見ると特定の末尾だけ突出して出ている店）を見抜くための分析です。\n「その日一番出た末尾」が平均+500枚以上、かつ店舗全体の平均差枚を+500枚以上上回っている日を「当たり末尾が存在した日」として集計します。")
+                    
+                    if '対象日付' in end_df.columns and 'next_diff' in end_df.columns:
+                        daily_end_stats = end_df.groupby(['対象日付', '末尾番号']).agg(
+                            末尾平均差枚=('next_diff', 'mean'),
+                            サンプル数=('target', 'count')
+                        ).reset_index()
+                        
+                        # サンプル数が少なすぎる末尾（3台未満）は極端な値になりやすいので除外
+                        daily_end_stats = daily_end_stats[daily_end_stats['サンプル数'] >= 3]
+                        
+                        if not daily_end_stats.empty:
+                            idx_max = daily_end_stats.groupby('対象日付')['末尾平均差枚'].idxmax()
+                            daily_top = daily_end_stats.loc[idx_max].copy()
+                            daily_top = daily_top.rename(columns={'末尾番号': 'トップ末尾', '末尾平均差枚': 'トップ末尾差枚'})
+                            
+                            daily_shop = end_df.groupby('対象日付').agg(店舗平均差枚=('next_diff', 'mean')).reset_index()
+                            daily_merged = pd.merge(daily_top[['対象日付', 'トップ末尾', 'トップ末尾差枚']], daily_shop, on='対象日付')
+                            
+                            daily_merged['当たり末尾あり'] = (daily_merged['トップ末尾差枚'] >= 500) & ((daily_merged['トップ末尾差枚'] - daily_merged['店舗平均差枚']) >= 500)
+                            
+                            hit_days = daily_merged['当たり末尾あり'].sum()
+                            total_days = len(daily_merged)
+                            hit_rate = (hit_days / total_days * 100) if total_days > 0 else 0
+                            
+                            st.metric("当たり末尾 投入率 (発生頻度)", f"{hit_rate:.1f}%", f"{hit_days}日 / 全{total_days}日")
+                            
+                            if hit_rate >= 30:
+                                st.success("✨ **当たり末尾 多用店**: 3割以上の営業日で明確な「当たり末尾」が存在します。事前に予測できなくても、当日の周りの挙動（特に末尾）に注目して立ち回るのが非常に有効な店舗です！")
+                            elif hit_rate >= 15:
+                                st.info("💡 **当たり末尾 散見**: 時折、特定の末尾が強くなる日があります。イベント日などに絞って当たり末尾を探す立ち回りが有効かもしれません。")
+                            else:
+                                st.warning("⚠️ **当たり末尾 傾向薄**: 日替わりで特定の末尾が極端に強くなることは少ないようです。末尾狙いよりも、並びや他の傾向を重視したほうが良さそうです。")
+                                
+                            with st.expander("📅 直近の当たり末尾履歴", expanded=False):
+                                recent_hits = daily_merged[daily_merged['当たり末尾あり']].sort_values('対象日付', ascending=False).head(10)
+                                if not recent_hits.empty:
+                                    recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
+                                    recent_hits['トップ末尾'] = recent_hits['トップ末尾'].astype(int).astype(str)
+                                    st.dataframe(
+                                        recent_hits[['対象日付_str', 'トップ末尾', 'トップ末尾差枚', '店舗平均差枚']],
+                                        column_config={
+                                            "対象日付_str": st.column_config.TextColumn("対象日付"),
+                                            "トップ末尾": st.column_config.TextColumn("一番出た末尾"),
+                                            "トップ末尾差枚": st.column_config.NumberColumn("末尾の平均差枚", format="%+d 枚"),
+                                            "店舗平均差枚": st.column_config.NumberColumn("店舗全体の平均", format="%+d 枚")
+                                        },
+                                        hide_index=True,
+                                        width="stretch"
+                                    )
+                                else:
+                                    st.info("直近で明確な当たり末尾が存在した日がありません。")
+                        else:
+                            st.info("集計に必要なデータ（各末尾3台以上のサンプル）が不足しています。")
                 else:
                     st.info("末尾番号データがありません。")
 
@@ -716,7 +996,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             y_axis = alt.Axis(format=y_format, title=y_title) if y_format else alt.Axis(title=y_title)
             color_cond = alt.condition(alt.datum.平均翌日差枚 > 0, alt.value("#FF7043"), alt.value("#42A5F5")) if chart_metric == "平均翌日差枚" else alt.value("#AB47BC")
     
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃", "BB極端欠損", "相対稼働率"])
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["REG先行", "大凹み・大勝", "2日間トレンド", "上げリセット", "安定度vs一撃", "BB極端欠損", "相対稼働率", "曜日別リセット傾向"])
             
             with tab1:
                 if 'BIG' in reg_df.columns and 'REG' in reg_df.columns and 'REG確率' in reg_df.columns and 'BIG確率' in reg_df.columns:
@@ -1130,6 +1410,61 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 else:
                     st.info("相対稼働率のデータがありません。")
 
+            with tab8:
+                st.markdown("**🔍 曜日別 上げリセット・据え置き傾向**")
+                st.caption("前日大きく凹んだ台（-1000枚以下）が翌日高設定になる「上げリセット率」と、前日大きく勝った台（+1000枚以上）が翌日高設定になる「据え置き率」を曜日ごとに比較します。")
+                
+                if 'target_weekday' in reg_df.columns and '差枚' in reg_df.columns:
+                    weekdays_map = {0: '月曜', 1: '火曜', 2: '水曜', 3: '木曜', 4: '金曜', 5: '土曜', 6: '日曜'}
+                    wd_trend_df = reg_df.dropna(subset=['target_weekday']).copy()
+                    wd_trend_df['曜日'] = wd_trend_df['target_weekday'].map(weekdays_map)
+                    
+                    # 上げリセット（前日-1000枚以下）
+                    reset_df = wd_trend_df[wd_trend_df['差枚'] <= -1000].groupby(['target_weekday', '曜日']).agg(
+                        上げリセット率=('target_rate', 'mean'),
+                        凹み台サンプル=('target', 'count')
+                    ).reset_index()
+                    
+                    # 据え置き（前日+1000枚以上）
+                    sue_df = wd_trend_df[wd_trend_df['差枚'] >= 1000].groupby(['target_weekday', '曜日']).agg(
+                        据え置き率=('target_rate', 'mean'),
+                        大勝台サンプル=('target', 'count')
+                    ).reset_index()
+                    
+                    # 結合
+                    wd_cross_stats = pd.merge(reset_df, sue_df, on=['target_weekday', '曜日'], how='outer').sort_values('target_weekday')
+                    
+                    if not wd_cross_stats.empty:
+                        col_wxt1, col_wxt2 = st.columns([1.2, 1])
+                        
+                        # グラフ用にデータを縦持ちに変換
+                        melted_stats = pd.melt(wd_cross_stats, id_vars=['曜日', 'target_weekday'], value_vars=['上げリセット率', '据え置き率'], var_name='パターン', value_name='高設定率')
+                        
+                        with col_wxt1:
+                            chart_wxt = alt.Chart(melted_stats).mark_bar().encode(
+                                x=alt.X('曜日', sort=[weekdays_map[i] for i in range(7)], title='予測日の曜日 (前日→当日)'),
+                                y=alt.Y('高設定率', title='高設定率 (%)'),
+                                color=alt.Color('パターン', scale=alt.Scale(domain=['上げリセット率', '据え置き率'], range=['#FF7043', '#42A5F5'])),
+                                xOffset=alt.XOffset('パターン', sort=['上げリセット率', '据え置き率']),
+                                tooltip=['曜日', 'パターン', alt.Tooltip('高設定率', format='.1f', title='高設定率 (%)')]
+                            ).interactive()
+                            st.altair_chart(chart_wxt, width="stretch")
+                            
+                        with col_wxt2:
+                            st.dataframe(
+                                wd_cross_stats[['曜日', '上げリセット率', '据え置き率', '凹み台サンプル', '大勝台サンプル']],
+                                column_config={
+                                    "上げリセット率": st.column_config.ProgressColumn("上げリセット", format="%.1f%%", min_value=0, max_value=100, help="前日-1000枚以下の台が翌日高設定になった割合"),
+                                    "据え置き率": st.column_config.ProgressColumn("据え置き", format="%.1f%%", min_value=0, max_value=100, help="前日+1000枚以上の台が翌日高設定のままだった割合"),
+                                },
+                                hide_index=True,
+                                width="stretch"
+                            )
+                    else:
+                        st.info("集計に必要なデータが不足しています。")
+                else:
+                    st.info("曜日または差枚のデータがありません。")
+
     # --- 7. 特徴量重要度 (Feature Importance) ---
     with st.expander("🧠 AI特徴量重要度", expanded=False):
         if df_importance is not None and not df_importance.empty:
@@ -1142,7 +1477,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'mean_7days_diff': '台: 直近7日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
                 '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
                 'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
-                'neighbor_avg_diff': '配置: 両隣の平均差枚',
+                'neighbor_avg_diff': '配置: 両隣の平均差枚 (※片側の大爆発によるフェイク注意)',
+                'left_diff': '配置: 左隣の差枚', 'right_diff': '配置: 右隣の差枚', 'neighbor_positive_count': '配置: 両隣のプラス台数 (塊検知)',
                 'event_avg_diff': 'イベント: 平均差枚',
                 'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
                 'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',

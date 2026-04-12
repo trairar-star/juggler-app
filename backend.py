@@ -16,7 +16,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.2.0" 
+APP_VERSION = "v4.3.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -1385,6 +1385,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             n_val = np.where(is_next, next_diff, np.nan)
             df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
             
+            df['left_diff'] = np.where(is_prev, prev_diff, 0)
+            df['right_diff'] = np.where(is_next, next_diff, 0)
+            df['neighbor_positive_count'] = (np.where(is_prev & (prev_diff > 0), 1, 0) + np.where(is_next & (next_diff > 0), 1, 0))
+            
             # 元の並び順に戻す
             df = df.sort_values([shop_col, '対象日付', '台番号']).reset_index(drop=True)
         else:
@@ -1404,6 +1408,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             p_val = np.where(is_prev, prev_diff, np.nan)
             n_val = np.where(is_next, next_diff, np.nan)
             df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
+            
+            df['left_diff'] = np.where(is_prev, prev_diff, 0)
+            df['right_diff'] = np.where(is_next, next_diff, 0)
+            df['neighbor_positive_count'] = (np.where(is_prev & (prev_diff > 0), 1, 0) + np.where(is_next & (next_diff > 0), 1, 0))
             
             # 両隣(並び3台)の合算REG確率を計算
             prev_reg = df['REG'].shift(1)
@@ -1829,7 +1837,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_moved_machine'] = 0
 
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'std_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
