@@ -545,6 +545,99 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         width="stretch"
     )
 
+    # --- 推奨台のカテゴリ別成績 (機種・末尾・島) ---
+    st.divider()
+    st.subheader("🎰 推奨台のカテゴリ別成績 (機種・末尾・島)")
+    st.caption("AIが推奨した台（店舗上位約10%）の、機種ごと・末尾ごと・島（列）ごとの実際の成績です。AIがどのカテゴリを的確に予測できているかが分かります。")
+    
+    if not ai_recom_df.empty:
+        ai_recom_df['末尾番号'] = ai_recom_df['台番号'].astype(str).str[-1]
+        
+        tab_mac, tab_end, tab_isl = st.tabs(["🎰 機種別", "🔢 末尾番号別", "🏝️ 島(列)別"])
+        
+        with tab_mac:
+            mac_stats = ai_recom_df.groupby('機種名').agg(
+                推奨台数=('台番号', 'count'),
+                有効稼働数=('valid_play', 'sum'),
+                勝数=('valid_win', 'sum'),
+                平均差枚=('差枚_actual', 'mean'),
+                合計差枚=('差枚_actual', 'sum')
+            ).reset_index()
+            mac_stats['勝率'] = np.where(mac_stats['有効稼働数'] > 0, mac_stats['勝数'] / mac_stats['有効稼働数'] * 100, 0.0)
+            mac_stats = mac_stats.sort_values('合計差枚', ascending=False)
+            
+            st.dataframe(
+                mac_stats[['機種名', '推奨台数', '有効稼働数', '勝率', '平均差枚', '合計差枚']],
+                column_config={
+                    "機種名": st.column_config.TextColumn("機種名"),
+                    "推奨台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
+                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                    "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
+                    "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                    "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d枚")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            
+        with tab_end:
+            end_stats = ai_recom_df.groupby('末尾番号').agg(
+                推奨台数=('台番号', 'count'),
+                有効稼働数=('valid_play', 'sum'),
+                勝数=('valid_win', 'sum'),
+                平均差枚=('差枚_actual', 'mean'),
+                合計差枚=('差枚_actual', 'sum')
+            ).reset_index()
+            end_stats['勝率'] = np.where(end_stats['有効稼働数'] > 0, end_stats['勝数'] / end_stats['有効稼働数'] * 100, 0.0)
+            end_stats = end_stats.sort_values('末尾番号')
+            
+            st.dataframe(
+                end_stats[['末尾番号', '推奨台数', '有効稼働数', '勝率', '平均差枚', '合計差枚']],
+                column_config={
+                    "末尾番号": st.column_config.TextColumn("末尾番号"),
+                    "推奨台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
+                    "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                    "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
+                    "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                    "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d枚")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+        with tab_isl:
+            if 'island_id' in ai_recom_df.columns:
+                isl_df = ai_recom_df[ai_recom_df['island_id'] != "Unknown"].copy()
+                if not isl_df.empty:
+                    isl_df['島名'] = isl_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                    isl_stats = isl_df.groupby('島名').agg(
+                        推奨台数=('台番号', 'count'),
+                        有効稼働数=('valid_play', 'sum'),
+                        勝数=('valid_win', 'sum'),
+                        平均差枚=('差枚_actual', 'mean'),
+                        合計差枚=('差枚_actual', 'sum')
+                    ).reset_index()
+                    isl_stats['勝率'] = np.where(isl_stats['有効稼働数'] > 0, isl_stats['勝数'] / isl_stats['有効稼働数'] * 100, 0.0)
+                    isl_stats = isl_stats.sort_values('合計差枚', ascending=False)
+                    
+                    st.dataframe(
+                        isl_stats[['島名', '推奨台数', '有効稼働数', '勝率', '平均差枚', '合計差枚']],
+                        column_config={
+                            "島名": st.column_config.TextColumn("島名"),
+                            "推奨台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
+                            "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                            "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
+                            "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                            "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d枚")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.info("島マスターに登録された台の推奨データがありません。")
+            else:
+                st.info("島データがありません。事前にサイドバーの「島マスター管理」から島を登録してください。")
+
     # --- AI振り返りレポート ---
     st.divider()
     st.subheader("🤖 AIの振り返りレポート (過去の自分との比較)")
