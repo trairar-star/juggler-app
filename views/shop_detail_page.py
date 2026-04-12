@@ -487,7 +487,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             if df_importance is not None and not df_importance.empty:
                 imp_shop = df_importance[df_importance['shop_name'] == selected_shop]
                 if not imp_shop.empty:
-                    top_features = imp_shop.sort_values('importance', ascending=False).head(8)['feature'].tolist()
+                    imp_shop_sorted = imp_shop.sort_values('importance', ascending=False).reset_index(drop=True)
+                    top_features = imp_shop_sorted.head(8)['feature'].tolist()
+                    
+                    if '末尾番号' in imp_shop_sorted['feature'].values:
+                        end_digit_rank = imp_shop_sorted[imp_shop_sorted['feature'] == '末尾番号'].index[0] + 1
+                        total_features = len(imp_shop_sorted)
+                        if end_digit_rank <= 3:
+                            advice_list.append(f"🔥 **末尾の重要度 (極高)**: AI分析において「末尾番号」は全{total_features}指標中 **第{end_digit_rank}位** の超重要要素です！台選びの際は『当たり末尾』を探すことを最優先に立ち回ってください。")
+                        elif end_digit_rank <= 10:
+                            advice_list.append(f"🌟 **末尾の重要度 (高)**: AI分析において「末尾番号」は全{total_features}指標中 **第{end_digit_rank}位** と重視されています。周りの台の末尾の挙動には常に気を配りましょう。")
+                        elif end_digit_rank <= 20:
+                            advice_list.append(f"⚖️ **末尾の重要度 (中)**: AI分析において「末尾番号」は全{total_features}指標中 **第{end_digit_rank}位** です。意識はしつつも、末尾単体の根拠だけで粘るのは危険です。")
+                        else:
+                            advice_list.append(f"⚠️ **末尾の重要度 (低)**: AI分析において「末尾番号」は全{total_features}指標中 **第{end_digit_rank}位** とあまり重視されていません。この店舗では安易な末尾狙いは危険なため、他の要素を優先してください。")
+
                     if 'neighbor_avg_diff' in top_features:
                         advice_list.append("🤝 **並び・塊に注意**: AIの分析上、この店は「両隣の差枚（並び）」が設定予測に強く影響しています。自分の台が良くても両隣が死んでいればフェイクの可能性があり、逆に両隣が強ければ「3台並び」などの対象になっている可能性があります。")
                     if 'island_avg_diff' in top_features:
