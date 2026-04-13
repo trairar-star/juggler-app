@@ -1326,6 +1326,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         
                         # サンプル数が少なすぎる末尾（3台未満）は極端な値になりやすいので除外
                         daily_end_stats = daily_end_stats[daily_end_stats['サンプル数'] >= 3]
+                        daily_end_stats = daily_end_stats.dropna(subset=['末尾平均差枚'])
                         
                         if not daily_end_stats.empty:
                             idx_max = daily_end_stats.groupby('対象日付')['末尾平均差枚'].idxmax()
