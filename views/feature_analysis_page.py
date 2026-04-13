@@ -57,12 +57,14 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
                     machine_rank['信頼度'] = machine_rank['設置台数'].apply(get_confidence_indicator)
                     st.dataframe(machine_rank[['機種名', '平均差枚', '高設定率', 'REG確率', '設置台数', '信頼度']], column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "設置台数": st.column_config.NumberColumn(format="%d 台"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
                     
+                    agg_y_col = "平均差枚" if chart_metric_shop == "平均差枚" else "高設定率" if chart_metric_shop == "高設定率" else "REG確率_val"
+                    
                     st.markdown(f" **{selected_period} の末尾番号傾向 (0-9)**")
                     if '末尾番号' in period_df.columns:
                         digit_rank = period_df.groupby('末尾番号').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), REG確率_val=('REG確率_val', 'mean'), サンプル数=('差枚', 'count')).sort_index().reset_index()
                         digit_rank['REG確率'] = digit_rank['REG確率_val'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                         digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
-                        st.bar_chart(digit_rank.set_index('末尾番号')[y_col], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
+                        st.bar_chart(digit_rank.set_index('末尾番号')[agg_y_col], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
                         st.dataframe(digit_rank[['末尾番号', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']].style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, width="stretch")
                         
                     st.markdown(f"📅 **{selected_period} の曜日別傾向**")
@@ -73,7 +75,7 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
                         wd_rank['sort'] = wd_rank['曜日'].map(day_order).fillna(99)
                         wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
                         wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
-                        st.bar_chart(wd_rank.set_index('曜日')[y_col], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
+                        st.bar_chart(wd_rank.set_index('曜日')[agg_y_col], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
                         st.dataframe(wd_rank[['曜日', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']].style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
     
                     if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
@@ -81,7 +83,7 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
                         ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), REG確率_val=('REG確率_val', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(chart_metric_shop if chart_metric_shop != "REG確率" else "REG確率_val", ascending=False)
                         ev_rank['REG確率'] = ev_rank['REG確率_val'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                         ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
-                        st.bar_chart(ev_rank.set_index('日付要素')[y_col], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
+                        st.bar_chart(ev_rank.set_index('日付要素')[agg_y_col], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
                         st.dataframe(ev_rank[['日付要素', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']].style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
     
             st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
