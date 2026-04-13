@@ -272,6 +272,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         if '末尾番号' in shop_raw_pat.columns:
                             end_daily = shop_raw_pat.groupby(['対象日付', '末尾番号']).agg(末尾平均=('差枚', 'mean'), 台数=('台番号', 'count')).reset_index()
                             end_daily = end_daily[end_daily['台数'] >= 3]
+                            end_daily = end_daily.dropna(subset=['末尾平均'])
                             if not end_daily.empty:
                                 idx_max = end_daily.groupby('対象日付')['末尾平均'].idxmax()
                                 top_end = end_daily.loc[idx_max]
@@ -283,6 +284,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         if '機種名' in shop_raw_pat.columns:
                             mac_daily = shop_raw_pat.groupby(['対象日付', '機種名']).agg(機種平均=('差枚', 'mean'), 台数=('台番号', 'count')).reset_index()
                             mac_daily = mac_daily[mac_daily['台数'] >= 3]
+                            mac_daily = mac_daily.dropna(subset=['機種平均'])
                             if not mac_daily.empty:
                                 idx_max = mac_daily.groupby('対象日付')['機種平均'].idxmax()
                                 top_mac = mac_daily.loc[idx_max]

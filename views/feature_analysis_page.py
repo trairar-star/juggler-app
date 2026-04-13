@@ -15,7 +15,6 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
         trend_df['REG確率_val'] = np.where(trend_df['累計ゲーム'] > 0, trend_df['REG'] / trend_df['累計ゲーム'], 0)
         
         y_col = "差枚" if chart_metric_shop == "平均差枚" else "高設定_rate" if chart_metric_shop == "高設定率" else "REG確率_val"
-        agg_y_col = "平均差枚" if chart_metric_shop == "平均差枚" else "高設定率" if chart_metric_shop == "高設定率" else "REG確率_val"
 
         if '対象日付' in trend_df.columns:
             trend_df['day'] = trend_df['対象日付'].dt.day
@@ -63,7 +62,7 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
                         digit_rank = period_df.groupby('末尾番号').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), REG確率_val=('REG確率_val', 'mean'), サンプル数=('差枚', 'count')).sort_index().reset_index()
                         digit_rank['REG確率'] = digit_rank['REG確率_val'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                         digit_rank['信頼度'] = digit_rank['サンプル数'].apply(get_confidence_indicator)
-                        st.bar_chart(digit_rank.set_index('末尾番号')[agg_y_col], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
+                        st.bar_chart(digit_rank.set_index('末尾番号')[y_col], color="#29b6f6" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
                         st.dataframe(digit_rank[['末尾番号', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']].style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, width="stretch")
                         
                     st.markdown(f"📅 **{selected_period} の曜日別傾向**")
@@ -74,15 +73,15 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
                         wd_rank['sort'] = wd_rank['曜日'].map(day_order).fillna(99)
                         wd_rank = wd_rank.sort_values('sort').drop(columns=['sort'])
                         wd_rank['信頼度'] = wd_rank['サンプル数'].apply(get_confidence_indicator)
-                        st.bar_chart(wd_rank.set_index('曜日')[agg_y_col], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
+                        st.bar_chart(wd_rank.set_index('曜日')[y_col], color="#4B4BFF" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
                         st.dataframe(wd_rank[['曜日', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']].style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
     
                     if '日付要素' in period_df.columns and not period_df['日付要素'].isnull().all():
                         st.markdown(f"🔥 **{selected_period} のイベント別傾向**")
-                        ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), REG確率_val=('REG確率_val', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(agg_y_col, ascending=False)
+                        ev_rank = period_df.groupby('日付要素').agg(平均差枚=('差枚', 'mean'), 高設定率=('高設定_rate', 'mean'), REG確率_val=('REG確率_val', 'mean'), サンプル数=('差枚', 'count')).reset_index().sort_values(chart_metric_shop if chart_metric_shop != "REG確率" else "REG確率_val", ascending=False)
                         ev_rank['REG確率'] = ev_rank['REG確率_val'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                         ev_rank['信頼度'] = ev_rank['サンプル数'].apply(get_confidence_indicator)
-                        st.bar_chart(ev_rank.set_index('日付要素')[agg_y_col], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
+                        st.bar_chart(ev_rank.set_index('日付要素')[y_col], color="#FF4B4B" if chart_metric_shop == "平均差枚" else "#FF9800" if chart_metric_shop == "REG確率" else "#AB47BC")
                         st.dataframe(ev_rank[['日付要素', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']].style.background_gradient(subset=['平均差枚'], cmap='RdYlGn', vmin=-300, vmax=300), column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")}, hide_index=True, width="stretch")
     
             st.markdown(f"**📅 日付別 {chart_metric_shop}推移**")
@@ -422,59 +421,63 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         if '有効稼働' in daily_mac_stats.columns:
                             daily_mac_stats['勝率'] = np.where(daily_mac_stats['有効稼働'] > 0, (daily_mac_stats['勝台数'] / daily_mac_stats['有効稼働']) * 100, 0.0)
                         
-                        # 日別のトップ機種を取得
-                        idx_max = daily_mac_stats.groupby('対象日付')['機種平均差枚'].idxmax()
-                        daily_top_mac = daily_mac_stats.loc[idx_max].copy()
-                        daily_top_mac = daily_top_mac.rename(columns={'機種名': 'トップ機種', '機種平均差枚': 'トップ機種差枚'})
-                        
-                        # 日別の店舗平均差枚
-                        daily_shop_stats = df_raw_shop.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
-                        
-                        merge_cols_mac = ['対象日付', 'トップ機種', 'トップ機種差枚', 'サンプル数']
-                        if '勝率' in daily_top_mac.columns:
-                            merge_cols_mac.append('勝率')
+                        daily_mac_stats = daily_mac_stats.dropna(subset=['機種平均差枚'])
+                        if not daily_mac_stats.empty:
+                            # 日別のトップ機種を取得
+                            idx_max = daily_mac_stats.groupby('対象日付')['機種平均差枚'].idxmax()
+                            daily_top_mac = daily_mac_stats.loc[idx_max].copy()
+                            daily_top_mac = daily_top_mac.rename(columns={'機種名': 'トップ機種', '機種平均差枚': 'トップ機種差枚'})
                             
-                        daily_merged = pd.merge(daily_top_mac[merge_cols_mac], daily_shop_stats, on='対象日付')
-                        
-                        # 当たり機種判定： 機種平均が+1000枚以上 かつ 店舗平均を500枚以上上回る
-                        daily_merged['当たり機種あり'] = (daily_merged['トップ機種差枚'] >= 1000) & ((daily_merged['トップ機種差枚'] - daily_merged['店舗平均差枚']) >= 500)
-                        
-                        hit_days = daily_merged['当たり機種あり'].sum()
-                        total_days = len(daily_merged)
-                        hit_rate = (hit_days / total_days * 100) if total_days > 0 else 0
-                        
-                        st.metric("全台系(当たり機種) 投入率 (発生頻度)", f"{hit_rate:.1f}%", f"{hit_days}日 / 全{total_days}日")
-                        
-                        if hit_rate >= 20:
-                            st.success("✨ **全台系 多用店**: 2割以上の営業日で明確な「当たり機種（全台系）」が存在します。周りの台の挙動を見て、自分の台の機種全体が強ければ粘る価値が大いにあります！")
-                        elif hit_rate >= 10:
-                            st.info("💡 **全台系 散見**: 時折、特定の機種が全体的に強くなる日があります。特日などのイベント時に全台系を狙うのが有効かもしれません。")
-                        else:
-                            st.warning("⚠️ **全台系 傾向薄**: 機種単位での全台系（当たり機種）が用意されることは少ないようです。単品狙いや並び・末尾などを重視した立ち回りが良さそうです。")
-                        
-                        with st.expander("📅 直近の当たり機種履歴", expanded=False):
-                            recent_hits = daily_merged[daily_merged['当たり機種あり']].sort_values('対象日付', ascending=False).head(10)
-                            if not recent_hits.empty:
-                                recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
-                                display_cols_hit = ['対象日付_str', 'トップ機種', 'サンプル数']
-                                if '勝率' in recent_hits.columns:
-                                    display_cols_hit.append('勝率')
-                                display_cols_hit.extend(['トップ機種差枚', '店舗平均差枚'])
-                                st.dataframe(
-                                    recent_hits[display_cols_hit],
-                                    column_config={
-                                        "対象日付_str": st.column_config.TextColumn("対象日付"),
-                                        "トップ機種": st.column_config.TextColumn("一番出た機種"),
-                                        "サンプル数": st.column_config.NumberColumn("設置台数", format="%d台"),
-                                        "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
-                                        "トップ機種差枚": st.column_config.NumberColumn("機種平均差枚", format="%+d 枚"),
-                                        "店舗平均差枚": st.column_config.NumberColumn("店舗全体の平均", format="%+d 枚")
-                                    },
-                                    hide_index=True,
-                                    width="stretch"
-                                )
+                            # 日別の店舗平均差枚
+                            daily_shop_stats = df_raw_shop.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
+                            
+                            merge_cols_mac = ['対象日付', 'トップ機種', 'トップ機種差枚', 'サンプル数']
+                            if '勝率' in daily_top_mac.columns:
+                                merge_cols_mac.append('勝率')
+                                
+                            daily_merged = pd.merge(daily_top_mac[merge_cols_mac], daily_shop_stats, on='対象日付')
+                            
+                            # 当たり機種判定： 機種平均が+1000枚以上 かつ 店舗平均を500枚以上上回る
+                            daily_merged['当たり機種あり'] = (daily_merged['トップ機種差枚'] >= 1000) & ((daily_merged['トップ機種差枚'] - daily_merged['店舗平均差枚']) >= 500)
+                            
+                            hit_days = daily_merged['当たり機種あり'].sum()
+                            total_days = len(daily_merged)
+                            hit_rate = (hit_days / total_days * 100) if total_days > 0 else 0
+                            
+                            st.metric("全台系(当たり機種) 投入率 (発生頻度)", f"{hit_rate:.1f}%", f"{hit_days}日 / 全{total_days}日")
+                            
+                            if hit_rate >= 20:
+                                st.success("✨ **全台系 多用店**: 2割以上の営業日で明確な「当たり機種（全台系）」が存在します。周りの台の挙動を見て、自分の台の機種全体が強ければ粘る価値が大いにあります！")
+                            elif hit_rate >= 10:
+                                st.info("💡 **全台系 散見**: 時折、特定の機種が全体的に強くなる日があります。特日などのイベント時に全台系を狙うのが有効かもしれません。")
                             else:
-                                st.info("直近で明確な当たり機種が存在した日がありません。")
+                                st.warning("⚠️ **全台系 傾向薄**: 機種単位での全台系（当たり機種）が用意されることは少ないようです。単品狙いや並び・末尾などを重視した立ち回りが良さそうです。")
+                            
+                            with st.expander("📅 直近の当たり機種履歴", expanded=False):
+                                recent_hits = daily_merged[daily_merged['当たり機種あり']].sort_values('対象日付', ascending=False).head(10)
+                                if not recent_hits.empty:
+                                    recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
+                                    display_cols_hit = ['対象日付_str', 'トップ機種', 'サンプル数']
+                                    if '勝率' in recent_hits.columns:
+                                        display_cols_hit.append('勝率')
+                                    display_cols_hit.extend(['トップ機種差枚', '店舗平均差枚'])
+                                    st.dataframe(
+                                        recent_hits[display_cols_hit],
+                                        column_config={
+                                            "対象日付_str": st.column_config.TextColumn("対象日付"),
+                                            "トップ機種": st.column_config.TextColumn("一番出た機種"),
+                                            "サンプル数": st.column_config.NumberColumn("設置台数", format="%d台"),
+                                            "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
+                                            "トップ機種差枚": st.column_config.NumberColumn("機種平均差枚", format="%+d 枚"),
+                                            "店舗平均差枚": st.column_config.NumberColumn("店舗全体の平均", format="%+d 枚")
+                                        },
+                                        hide_index=True,
+                                        width="stretch"
+                                    )
+                                else:
+                                    st.info("直近で明確な当たり機種が存在した日がありません。")
+                        else:
+                            st.info("集計可能なデータ(機種平均差枚)がありません。")
                     else:
                         st.info("集計に必要なデータ（各機種3台以上のサンプル）が不足しています。")
 
@@ -1058,6 +1061,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         
                         # サンプル数が少なすぎる末尾（3台未満）は極端な値になりやすいので除外
                         daily_end_stats = daily_end_stats[daily_end_stats['サンプル数'] >= 3]
+                        daily_end_stats = daily_end_stats.dropna(subset=['末尾平均差枚'])
                         
                         if not daily_end_stats.empty:
                             idx_max = daily_end_stats.groupby('対象日付')['末尾平均差枚'].idxmax()
