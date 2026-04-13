@@ -623,15 +623,15 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             if '対象日付' in df_raw_shop.columns and 'is_corner' in df_raw_shop.columns and '差枚' in df_raw_shop.columns:
                 # 角台の成績を集計
-                    agg_dict_corner = {'角台平均差枚': ('差枚', 'mean'), '角台サンプル数': ('台番号', 'count')}
-                    if 'valid_play' in df_raw_shop.columns and 'is_win' in df_raw_shop.columns:
-                        agg_dict_corner['有効稼働'] = ('valid_play', 'sum')
-                        agg_dict_corner['勝台数'] = ('is_win', 'sum')
-                        
-                    daily_corner_stats = df_raw_shop[df_raw_shop['is_corner'] == 1].groupby('対象日付').agg(**agg_dict_corner).reset_index()
+                agg_dict_corner = {'角台平均差枚': ('差枚', 'mean'), '角台サンプル数': ('台番号', 'count')}
+                if 'valid_play' in df_raw_shop.columns and 'is_win' in df_raw_shop.columns:
+                    agg_dict_corner['有効稼働'] = ('valid_play', 'sum')
+                    agg_dict_corner['勝台数'] = ('is_win', 'sum')
                     
-                    if '有効稼働' in daily_corner_stats.columns:
-                        daily_corner_stats['勝率'] = np.where(daily_corner_stats['有効稼働'] > 0, (daily_corner_stats['勝台数'] / daily_corner_stats['有効稼働']) * 100, 0.0)
+                daily_corner_stats = df_raw_shop[df_raw_shop['is_corner'] == 1].groupby('対象日付').agg(**agg_dict_corner).reset_index()
+                
+                if '有効稼働' in daily_corner_stats.columns:
+                    daily_corner_stats['勝率'] = np.where(daily_corner_stats['有効稼働'] > 0, (daily_corner_stats['勝台数'] / daily_corner_stats['有効稼働']) * 100, 0.0)
                 
                 daily_shop_stats = df_raw_shop.groupby('対象日付').agg(店舗平均差枚=('差枚', 'mean')).reset_index()
                 
@@ -658,16 +658,16 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         recent_hits = daily_merged[daily_merged['角台優遇あり']].sort_values('対象日付', ascending=False).head(10)
                         if not recent_hits.empty:
                             recent_hits['対象日付_str'] = recent_hits['対象日付'].dt.strftime('%Y-%m-%d')
-                                display_cols_corner = ['対象日付_str', '角台サンプル数']
-                                if '勝率' in recent_hits.columns:
-                                    display_cols_corner.append('勝率')
-                                display_cols_corner.extend(['角台平均差枚', '店舗平均差枚'])
+                            display_cols_corner = ['対象日付_str', '角台サンプル数']
+                            if '勝率' in recent_hits.columns:
+                                display_cols_corner.append('勝率')
+                            display_cols_corner.extend(['角台平均差枚', '店舗平均差枚'])
                             st.dataframe(
-                                    recent_hits[display_cols_corner],
+                                recent_hits[display_cols_corner],
                                 column_config={
                                     "対象日付_str": st.column_config.TextColumn("対象日付"),
                                     "角台サンプル数": st.column_config.NumberColumn("角台数", format="%d台"),
-                                        "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
+                                    "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
                                     "角台平均差枚": st.column_config.NumberColumn("角台の平均差枚", format="%+d 枚"),
                                     "店舗平均差枚": st.column_config.NumberColumn("店舗全体の平均", format="%+d 枚")
                                 },
