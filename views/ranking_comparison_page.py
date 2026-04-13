@@ -255,13 +255,14 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         act_diff = pd.to_numeric(match_df['差枚_actual'], errors='coerce').fillna(0)
                         match_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
                         match_df['is_win'] = match_df['valid_play'] & (act_diff > 0)
+                        match_df['valid_差枚_actual'] = np.where(match_df['valid_play'], match_df['差枚_actual'], np.nan)
                         
                         rank_stats = match_df.groupby('ai_daily_rank').agg(
                             検証台数=('台番号', 'count'),
                             有効稼働数=('valid_play', 'sum'),
                             勝数=('is_win', 'sum'),
                             合計差枚=('差枚_actual', 'sum'),
-                            平均差枚=('差枚_actual', 'mean'),
+                            平均差枚=('valid_差枚_actual', 'mean'),
                             トップ3獲得数=('is_top3', 'sum'),
                             平均期待度=('prediction_score', 'mean')
                         ).reset_index()
@@ -277,7 +278,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         total_win = rank_stats['勝数'].sum()
                         total_diff = rank_stats['合計差枚'].sum()
                         total_top3 = rank_stats['トップ3獲得数'].sum()
-                        avg_diff = total_diff / total_count if total_count > 0 else 0
+                        avg_diff = total_diff / total_valid if total_valid > 0 else 0
                         total_win_rate = (total_win / total_valid) * 100 if total_valid > 0 else 0.0
                         total_avg_score = match_df['prediction_score'].mean() * 100 if not match_df.empty else 0.0
                         

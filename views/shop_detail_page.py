@@ -129,8 +129,14 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                     
                     count = len(same_wd_df)
                     avg_diff = same_wd_df['差枚'].mean()
-                    # 3000G以上を要求
-                    win_rate = ((same_wd_df['累計ゲーム'] >= 3000) & ((same_wd_df['REG確率'] >= spec_reg_p) | (same_wd_df['合算確率'] >= spec_tot_p))).mean() * 100
+                    
+                    # 高設定率は3000G以上の台のみを母数として計算
+                    high_valid_mask = same_wd_df['累計ゲーム'] >= 3000
+                    high_mask = high_valid_mask & ((same_wd_df['REG確率'] >= spec_reg_p) | (same_wd_df['合算確率'] >= spec_tot_p))
+                    
+                    high_valid_count = high_valid_mask.sum()
+                    win_rate = (high_mask.sum() / high_valid_count * 100) if high_valid_count > 0 else 0.0
+                    
                     avg_reg = same_wd_df['REG'].mean()
                     
                     sw1, sw2 = st.columns(2)
@@ -686,8 +692,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                             reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
                             tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
                             
+                            high_expect_df['valid_high_play'] = (act_g >= 3000)
                             high_expect_df['is_high_setting'] = (
-                                (act_g >= 3000) & 
                                 (((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | 
                                  ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val)))
                             ).astype(int)
@@ -695,22 +701,23 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                             act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
                             high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
                             high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
-                            high_expect_df['valid_high'] = high_expect_df['valid_play'] & (high_expect_df['is_high_setting'] == 1)
+                            high_expect_df['valid_high'] = high_expect_df['valid_high_play'] & (high_expect_df['is_high_setting'] == 1)
         
                             acc_stats = high_expect_df.groupby(shop_col).agg(
                                 正答数=('valid_high', 'sum'),
+                                高設定有効数=('valid_high_play', 'sum'),
                                 有効稼働数=('valid_play', 'sum'),
                                 勝数=('valid_win', 'sum'),
                                 サンプル数=('台番号', 'count')
                             ).reset_index()
                             acc_stats['勝率'] = np.where(acc_stats['有効稼働数'] > 0, acc_stats['勝数'] / acc_stats['有効稼働数'], 0.0)
-                            acc_stats['正答率'] = np.where(acc_stats['有効稼働数'] > 0, acc_stats['正答数'] / acc_stats['有効稼働数'], 0.0)
+                            acc_stats['正答率'] = np.where(acc_stats['高設定有効数'] > 0, acc_stats['正答数'] / acc_stats['高設定有効数'], 0.0)
                             
                             ai_accuracy_map = dict(zip(acc_stats[shop_col], acc_stats['正答率']))
                             ai_win_rate_map = dict(zip(acc_stats[shop_col], acc_stats['勝率']))
                             for _, r in acc_stats.iterrows():
                                 shop = r[shop_col]
-                                ai_acc_str_map[shop] = f"{r['正答率']*100:.1f}% ({int(r['正答数'])}/{int(r['サンプル数'])}台)"
+                                ai_acc_str_map[shop] = f"{r['正答率']*100:.1f}% ({int(r['正答数'])}/{int(r['高設定有効数'])}台)"
                                 ai_win_str_map[shop] = f"{r['勝率']*100:.1f}% ({int(r['勝数'])}/{int(r['有効稼働数'])}台)"
                     
                 shop_stats['AI正答率_数値'] = shop_stats[shop_col].map(ai_accuracy_map).fillna(0.0) * 100

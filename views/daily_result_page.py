@@ -230,23 +230,26 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         target_label = f"AI推奨台(上位10%・計{len(ai_target_df)}台)"
             
         if not ai_target_df.empty:
-            hit_df = ai_target_df[(ai_target_df['差枚'] > 0) | (ai_target_df['結果点数'] >= 50)]
-            hit_count = len(hit_df)
-            total_target = len(ai_target_df)
-            accuracy = hit_count / total_target * 100
-            acc_color = "🟢" if accuracy >= 60 else "🟡" if accuracy >= 40 else "🔴"
-            
-            # --- AI推奨台の有効稼働勝率 ---
             act_g = pd.to_numeric(ai_target_df['総回転'], errors='coerce').fillna(0)
             act_diff = pd.to_numeric(ai_target_df['差枚'], errors='coerce').fillna(0)
-            valid_df = ai_target_df[(act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))]
-            if not valid_df.empty:
-                win_c = (valid_df['差枚'] > 0).sum()
-                win_rate_str = f"{win_c / len(valid_df):.1%} ({win_c}/{len(valid_df)}台)"
-            else:
-                win_rate_str = "- (0/0台)"
+            
+            # 有効稼働のみに絞る (勝率ベース：3000G以上 or 差枚±750枚以上)
+            valid_mask = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
+            valid_target_df = ai_target_df[valid_mask]
+            
+            if not valid_target_df.empty:
+                hit_df = valid_target_df[(valid_target_df['差枚'] > 0) | (valid_target_df['結果点数'] >= 50)]
+                hit_count = len(hit_df)
+                total_target = len(valid_target_df)
+                accuracy = hit_count / total_target * 100
+                acc_color = "🟢" if accuracy >= 60 else "🟡" if accuracy >= 40 else "🔴"
                 
-            st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
+                win_c = (valid_target_df['差枚'] > 0).sum()
+                win_rate_str = f"{win_c / total_target:.1%} ({win_c}/{total_target}台)"
+                
+                st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} のうち有効稼働した **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
+            else:
+                st.info(f"⚪ **本日のAI予測精度: データなし** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} の中で有効稼働（3000G以上等）した台がありませんでした。")
 
     # --- 表示件数の絞り込み ---
     if display_mode == "厳選台 (上位10%)":

@@ -236,12 +236,11 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
             spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
             spec_reg3 = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
             
-            viz_df['valid_play'] = (viz_df['累計ゲーム'] >= 3000) | ((viz_df['累計ゲーム'] < 3000) & ((viz_df['差枚'] <= -750) | (viz_df['差枚'] >= 750)))
             viz_df['高設定'] = (
                 (viz_df['累計ゲーム'] >= 3000) & 
                 ((viz_df['REG確率'] >= spec_reg) | ((viz_df['合算確率'] >= spec_tot) & (viz_df['REG確率'] >= spec_reg3)))
             ).astype(int)
-            viz_df['高設定_rate'] = np.where(viz_df['valid_play'], viz_df['高設定'], np.nan) * 100
+            viz_df['高設定_rate'] = np.where(viz_df['累計ゲーム'] >= 3000, viz_df['高設定'], np.nan) * 100
         else:
             viz_df['高設定_rate'] = np.nan
         
@@ -350,11 +349,15 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 ).astype(int)
                 mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
                 
+                mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
+                mac_df['valid_設定5近似度'] = np.where(mac_df['valid_play'], mac_df['設定5近似度'], np.nan)
+                mac_df['valid_累計ゲーム'] = np.where(mac_df['valid_play'], mac_df['累計ゲーム'], np.nan)
+
                 mac_stats = mac_df.groupby('機種名').agg(
-                    平均差枚=('差枚', 'mean'),
-                    設定5近似度=('設定5近似度', 'mean'),
+                    平均差枚=('valid_差枚', 'mean'),
+                    設定5近似度=('valid_設定5近似度', 'mean'),
                     高設定率=('高設定率', 'mean'),
-                    平均回転数=('累計ゲーム', 'mean'),
+                    平均回転数=('valid_累計ゲーム', 'mean'),
                     サンプル数=('台番号', 'count')
                 ).reset_index().sort_values('設定5近似度', ascending=False)
                 
@@ -590,8 +593,10 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     # REG確率分母を計算 (0除算回避)
     analysis_df['REG分母'] = analysis_df['REG確率'].apply(lambda x: int(1/x) if x > 0 else 9999)
     
-    analysis_df['valid_play'] = (analysis_df['next_累計ゲーム'] >= 3000) | ((analysis_df['next_累計ゲーム'] < 3000) & ((analysis_df['next_diff'] <= -750) | (analysis_df['next_diff'] >= 750)))
-    analysis_df['target_rate'] = np.where(analysis_df['valid_play'], analysis_df['target'], np.nan) * 100
+    analysis_df['valid_high_play'] = analysis_df['next_累計ゲーム'] >= 3000
+    analysis_df['target_rate'] = np.where(analysis_df['valid_high_play'], analysis_df['target'], np.nan) * 100
+    analysis_df['valid_play_next'] = (analysis_df['next_累計ゲーム'] >= 3000) | ((analysis_df['next_累計ゲーム'] < 3000) & ((analysis_df['next_diff'] <= -750) | (analysis_df['next_diff'] >= 750)))
+    analysis_df['valid_next_diff'] = np.where(analysis_df['valid_play_next'], analysis_df['next_diff'], np.nan)
     
     # ノイズ除去用のゲーム数フィルター
     with col_f2:
@@ -615,7 +620,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             reg_stats = reg_df.groupby('REG区間', observed=True).agg(
                 高設定率=('target_rate', 'mean'),
-                平均翌日差枚=('next_diff', 'mean'),
+                平均翌日差枚=('valid_next_diff', 'mean'),
                 サンプル数=('target', 'count')
             ).reset_index()
             reg_stats['信頼度'] = reg_stats['サンプル数'].apply(get_confidence_indicator)
@@ -646,7 +651,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
             analysis_df['G数区間'] = pd.cut(analysis_df['累計ゲーム'], bins=g_bins, labels=g_labels)
             
-            g_stats = analysis_df.groupby('G数区間', observed=True)['next_diff'].mean().reset_index()
+            g_stats = analysis_df.groupby('G数区間', observed=True)['valid_next_diff'].mean().reset_index(name='next_diff')
     
             chart_g = alt.Chart(g_stats).mark_bar().encode(
                 x=alt.X('G数区間', title='前日の回転数'),
@@ -683,7 +688,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 
                 island_stats = island_df.groupby('島名').agg(
                     高設定率=('target_rate', 'mean'),
-                    平均翌日差枚=('next_diff', 'mean'),
+                    平均翌日差枚=('valid_next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('高設定率', ascending=False)
                 
@@ -862,7 +867,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     
                     wd_stats = wd_df.groupby(['target_weekday', '曜日']).agg(
                         高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('target_weekday')
     
@@ -895,7 +900,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     end_df = reg_df.dropna(subset=['末尾番号']).copy()
                     end_stats = end_df.groupby('末尾番号').agg(
                         高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('末尾番号')
                     
@@ -930,7 +935,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     if '対象日付' in end_df.columns and 'next_diff' in end_df.columns:
                         daily_end_stats = end_df.groupby(['対象日付', '末尾番号']).agg(
-                            末尾平均差枚=('next_diff', 'mean'),
+                            末尾平均差枚=('valid_next_diff', 'mean'),
                             サンプル数=('target', 'count')
                         ).reset_index()
                         
@@ -1029,7 +1034,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     rl_stats = reg_lead_df.groupby('REG先行分類').agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index()
     
@@ -1076,7 +1081,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 
                 dp_stats = diff_pat_df.groupby('前日結果').agg(
                     翌日高設定率=('target_rate', 'mean'),
-                    平均翌日差枚=('next_diff', 'mean'),
+                    平均翌日差枚=('valid_next_diff', 'mean'),
                     サンプル数=('target', 'count')
                 ).reset_index().sort_values('前日結果')
                 dp_stats['信頼度'] = dp_stats['サンプル数'].apply(get_confidence_indicator)
@@ -1115,7 +1120,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     bl_stats = big_lose_df.groupby('G数区間', observed=True).agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index()
                     bl_stats['信頼度'] = bl_stats['サンプル数'].apply(get_confidence_indicator)
@@ -1173,7 +1178,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     t2_stats = trend2d_df.groupby('2日間トレンド').agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('2日間トレンド')
                     t2_stats['信頼度'] = t2_stats['サンプル数'].apply(get_confidence_indicator)
@@ -1222,7 +1227,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     r_stats = reset_df.groupby('マイナス継続状況').agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('マイナス継続状況')
                     r_stats['信頼度'] = r_stats['サンプル数'].apply(get_confidence_indicator)
@@ -1278,7 +1283,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     stab_stats = stab_df.groupby('安定度分類').agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('安定度分類')
                     stab_stats['信頼度'] = stab_stats['サンプル数'].apply(get_confidence_indicator)
@@ -1335,7 +1340,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     bb_stats = bb_def_df.groupby('BB欠損分類').agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('BB欠損分類')
                     
@@ -1380,7 +1385,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     rel_stats = rel_df.groupby('相対稼働率', observed=True).agg(
                         翌日高設定率=('target_rate', 'mean'),
-                        平均翌日差枚=('next_diff', 'mean'),
+                        平均翌日差枚=('valid_next_diff', 'mean'),
                         サンプル数=('target', 'count')
                     ).reset_index().sort_values('相対稼働率')
                     
@@ -1474,7 +1479,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
                 '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
                 'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚',
-                'mean_7days_diff': '台: 直近7日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
+                'mean_7days_diff': '台: 直近7日平均差枚', 'median_7days_diff': '台: 直近7日中央値差枚(平常ベース)', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)', 'plus_rate_7days': '台: 直近7日間勝率 (プラス差枚割合)',
                 '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
                 'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
                 'neighbor_avg_diff': '配置: 両隣の平均差枚 (※片側の大爆発によるフェイク注意)',
@@ -1485,6 +1490,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
                 'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
                 'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
+                'shop_heavy_lose_rate': '店舗: 当日大負け率(-1000枚以下)',
+                'shop_play_rate': '店舗: 当日遊べる割合(±500枚以内)',
                 'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
                 'is_new_machine': '台: 新台導入(導入後7日以内)',
                 'is_moved_machine': '台: 配置変更(移動後7日以内)',
@@ -1492,6 +1499,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'prev_shop_daily_avg_diff': '店舗: 前日の平均差枚(日次ノルマ反動)',
                 'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
                 'machine_avg_diff': '機種: 当日平均差枚', 'machine_high_rate': '機種: 当日高設定率',
+                'machine_heavy_lose_rate': '機種: 当日大負け率(-1000枚以下)',
+                'machine_play_rate': '機種: 当日遊べる割合(±500枚以内)',
                 'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
                 'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
                 'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)',

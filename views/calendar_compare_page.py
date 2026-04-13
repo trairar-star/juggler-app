@@ -101,7 +101,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         r = pd.to_numeric(row.get('REG', 0), errors='coerce')
         diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
         
-        valid_play = (g >= 3000) or (g < 3000 and (diff <= -750 or diff >= 750))
+        valid_play = (g >= 3000)
         if not valid_play:
             return np.nan
         
@@ -169,6 +169,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                 
                 daily_stats = df_raw_eval.groupby([shop_col, '対象日付']).agg(
                     総台数=('台番号', 'count'),
+                    高設定有効数=('is_high', 'count'),
                     高設定台数=('is_high', 'sum'),
                     平均差枚=('差枚', 'mean')
                 ).reset_index()
@@ -187,11 +188,12 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                     cold_summary = cold_days.groupby(shop_col).agg(
                         回収日数=('対象日付', 'count'),
                         総台数=('総台数', 'sum'),
+                        高設定有効数=('高設定有効数', 'sum'),
                         高設定台数=('高設定台数', 'sum'),
                         回収日平均差枚=('平均差枚', 'mean')
                     ).reset_index()
                     
-                    cold_summary['回収日高設定率'] = (cold_summary['高設定台数'] / cold_summary['総台数']) * 100
+                    cold_summary['回収日高設定率'] = np.where(cold_summary['高設定有効数'] > 0, (cold_summary['高設定台数'] / cold_summary['高設定有効数']) * 100, 0.0)
                     cold_summary['1日平均高設定台数'] = cold_summary['高設定台数'] / cold_summary['回収日数']
                     
                     def get_betapin_badge(rate):

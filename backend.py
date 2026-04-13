@@ -16,7 +16,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.3.0" 
+APP_VERSION = "v4.10.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -1636,13 +1636,14 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     group_levels = list(range(len(group_keys))) # インデックス操作用
     
     df['mean_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+    df['median_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).median().reset_index(level=group_levels, drop=True).fillna(0)
     df['std_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).std().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_14days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=14, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_30days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=30, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
 
     # --- 勝率安定度（一撃ノイズ排除用） ---
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
-    # 高設定フラグにも「3000G以上回っている」条件を加え、信頼性の高い実績だけを評価する
+    # 高設定フラグは「3000G以上回っている」条件で、信頼性の高い実績だけを評価する
     df['is_win'] = (
         (df['累計ゲーム'] >= 3000) & 
         (
@@ -1653,12 +1654,25 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['shifted_is_win'] = df.groupby(group_keys)['is_win'].shift(1)
     df['win_rate_7days'] = df.groupby(group_keys)['shifted_is_win'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     
+    # --- 単純な差枚プラス勝率 ---
+    df['is_plus_diff'] = (df['差枚'] > 0).astype(int)
+    df['shifted_is_plus_diff'] = df.groupby(group_keys)['is_plus_diff'].shift(1)
+    df['plus_rate_7days'] = df.groupby(group_keys)['shifted_is_plus_diff'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+
+    # --- 大負け(-1000枚以下)フラグ ---
+    df['is_heavy_lose'] = (df['差枚'] <= -1000).astype(int)
+    # --- 遊べる台(±500枚以内)フラグ ---
+    df['is_play_machine'] = ((df['差枚'] >= -500) & (df['差枚'] <= 500)).astype(int)
+
     # 一時的に作成した不要な列を削除
-    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win', 'shifted_diff_ev_mac', 'shifted_diff_ev_end', 'prev_推定ぶどう確率_adj'], errors='ignore')
+    df = df.drop(columns=['shifted_diff_wd', 'shifted_diff_ev', 'shifted_diff', 'shifted_is_win', 'shifted_is_plus_diff', 'shifted_diff_ev_mac', 'shifted_diff_ev_end', 'prev_推定ぶどう確率_adj', 'is_plus_diff'], errors='ignore')
 
     if shop_col:
         df['shop_avg_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('mean').fillna(0)
+        df['shop_median_diff'] = df.groupby([shop_col, '対象日付'])['差枚'].transform('median').fillna(0)
         df['shop_high_rate'] = df.groupby([shop_col, '対象日付'])['is_win'].transform('mean').fillna(0)
+        df['shop_heavy_lose_rate'] = df.groupby([shop_col, '対象日付'])['is_heavy_lose'].transform('mean').fillna(0)
+        df['shop_play_rate'] = df.groupby([shop_col, '対象日付'])['is_play_machine'].transform('mean').fillna(0)
         # 店舗の平均稼働に対する自台の稼働割合（相対的な粘られ度）
         df['shop_avg_games'] = df.groupby([shop_col, '対象日付'])['累計ゲーム'].transform('mean').fillna(0)
         df['relative_games_ratio'] = (df['累計ゲーム'] / df['shop_avg_games'].replace(0, np.nan)).fillna(1.0)
@@ -1707,7 +1721,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df = pd.merge(df, machine_daily_avg[[shop_col, '機種名', '対象日付', 'machine_30days_avg_diff']], on=[shop_col, '機種名', '対象日付'], how='left')
         
         df['machine_avg_diff'] = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].transform('mean').fillna(0)
+        df['machine_median_diff'] = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].transform('median').fillna(0)
         df['machine_high_rate'] = df.groupby([shop_col, '機種名', '対象日付'])['is_win'].transform('mean').fillna(0)
+        df['machine_heavy_lose_rate'] = df.groupby([shop_col, '機種名', '対象日付'])['is_heavy_lose'].transform('mean').fillna(0)
+        df['machine_play_rate'] = df.groupby([shop_col, '機種名', '対象日付'])['is_play_machine'].transform('mean').fillna(0)
 
     if shop_col:
         # --- ③台番号（場所）ごとの扱い指標 (過去30日間のその台番号の平均差枚) ---
@@ -1836,8 +1853,11 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_new_machine'] = 0
         df['is_moved_machine'] = 0
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'std_7days_diff', 'win_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_high_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_high_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
+    # 一時的に作成したフラグは削除
+    df = df.drop(columns=['is_heavy_lose', 'is_play_machine'], errors='ignore')
+
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -2091,75 +2111,81 @@ def _calculate_shop_trends(df_train, shop_col, specs):
         train_shop = df_train[df_train[shop_col] == s]
         if len(train_shop) == 0: continue
         
-        s_base_win_rate = train_shop['target'].mean() * 100
+        def get_high_rate(subset):
+            valid = subset[subset['next_累計ゲーム'] >= 3000]
+            if len(valid) > 0:
+                return valid['target'].mean() * 100
+            return 0.0
+            
+        s_base_win_rate = get_high_rate(train_shop)
         trends = []
         
         if 'is_corner' in train_shop.columns:
             subset = train_shop[train_shop['is_corner'] == 1]
-            if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'REG確率' in train_shop.columns:
             spec_reg_5 = train_shop['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
             subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['REG確率'] >= spec_reg_5)]
-            if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行・BB欠損 (高設定不発狙い)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行・BB欠損 (高設定不発狙い)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
             if 'BIG確率' in train_shop.columns:
                 train_shop_tmp = train_shop.copy()
                 train_shop_tmp['BIG分母'] = train_shop_tmp['BIG確率'].apply(lambda x: 1/x if x > 0 else 9999)
                 subset_bb = train_shop_tmp[(train_shop_tmp['BIG分母'] >= 400) & (train_shop_tmp['REG確率'] >= spec_reg_5)]
-                if len(subset_bb) >= 5: trends.append({"id": "bb_deficit", "条件": "超不発台 (BIG 1/400以下 & REG高設定)", "高設定率": subset_bb['target'].mean() * 100, "サンプル": len(subset_bb)})
+                if len(subset_bb) >= 5: trends.append({"id": "bb_deficit", "条件": "超不発台 (BIG 1/400以下 & REG高設定)", "高設定率": get_high_rate(subset_bb), "サンプル": len(subset_bb)})
         if '連続マイナス日数' in train_shop.columns:
             subset = train_shop[train_shop['連続マイナス日数'] >= 3]
-            if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if '差枚' in train_shop.columns:
             subset = train_shop[train_shop['差枚'] <= -1000]
-            if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
             if '累計ゲーム' in train_shop.columns:
                 subset_taco = train_shop[(train_shop['差枚'] <= -1000) & (train_shop['累計ゲーム'] >= 7000)]
-                if len(subset_taco) >= 5: trends.append({"id": "taco_lose", "条件": "タコ粘り大凹み (7000G~ & -1000枚以下)", "高設定率": subset_taco['target'].mean() * 100, "サンプル": len(subset_taco)})
+                if len(subset_taco) >= 5: trends.append({"id": "taco_lose", "条件": "タコ粘り大凹み (7000G~ & -1000枚以下)", "高設定率": get_high_rate(subset_taco), "サンプル": len(subset_taco)})
             subset = train_shop[train_shop['差枚'] >= 1000]
-            if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
             if 'is_win' in train_shop.columns:
                 subset = train_shop[(train_shop['差枚'] >= 1000) & (train_shop['is_win'] == 1)]
-                if len(subset) >= 5: trends.append({"id": "prev_win_reg", "条件": "前日大勝ち (+1000枚以上) & 高設定挙動の据え置き", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "prev_win_reg", "条件": "前日大勝ち (+1000枚以上) & 高設定挙動の据え置き", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
             else:
                 subset = train_shop[train_shop['差枚'] >= 1000]
-                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": "prev_win", "条件": "前日大勝ち (+1000枚以上) の据え置き", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'prev_差枚' in train_shop.columns and '差枚' in train_shop.columns:
             subset_v = train_shop[(train_shop['prev_差枚'] < 0) & (train_shop['差枚'] >= 0)]
-            if len(subset_v) >= 5: trends.append({"id": "v_recovery", "条件": "V字反発 (前々日負け → 前日勝ち)", "高設定率": subset_v['target'].mean() * 100, "サンプル": len(subset_v)})
+            if len(subset_v) >= 5: trends.append({"id": "v_recovery", "条件": "V字反発 (前々日負け → 前日勝ち)", "高設定率": get_high_rate(subset_v), "サンプル": len(subset_v)})
             subset_cont_lose = train_shop[(train_shop['prev_差枚'] <= -1000) & (train_shop['差枚'] <= -1000)]
-            if len(subset_cont_lose) >= 5: trends.append({"id": "cont_big_lose", "条件": "連続大負け (-1000枚以下2日連続)", "高設定率": subset_cont_lose['target'].mean() * 100, "サンプル": len(subset_cont_lose)})
+            if len(subset_cont_lose) >= 5: trends.append({"id": "cont_big_lose", "条件": "連続大負け (-1000枚以下2日連続)", "高設定率": get_high_rate(subset_cont_lose), "サンプル": len(subset_cont_lose)})
         if 'target_date_end_digit' in train_shop.columns:
             for d in range(10):
                 subset = train_shop[train_shop['target_date_end_digit'] == d]
-                if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+                if len(subset) >= 5: trends.append({"id": f"day_{d}", "条件": f"{d}のつく日", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'target_weekday' in train_shop.columns:
             for wd, wd_name in enumerate(["月", "火", "水", "木", "金", "土", "日"]):
                 subset = train_shop[train_shop['target_weekday'] == wd]
-                if len(subset) >= 10: trends.append({"id": f"wd_{wd}", "条件": f"{wd_name}曜日", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+                if len(subset) >= 10: trends.append({"id": f"wd_{wd}", "条件": f"{wd_name}曜日", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if '機種名' in train_shop.columns:
             for mac in train_shop['機種名'].unique():
                 subset = train_shop[train_shop['機種名'] == mac]
-                if len(subset) >= 10: trends.append({"id": f"mac_{mac}", "条件": f"機種:{mac}", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+                if len(subset) >= 10: trends.append({"id": f"mac_{mac}", "条件": f"機種:{mac}", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if '末尾番号' in train_shop.columns:
             for m in range(10):
                 subset = train_shop[train_shop['末尾番号'] == m]
-                if len(subset) >= 10: trends.append({"id": f"end_{m}", "条件": f"末尾【{m}】", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+                if len(subset) >= 10: trends.append({"id": f"end_{m}", "条件": f"末尾【{m}】", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if '累計ゲーム' in train_shop.columns:
             subset = train_shop[train_shop['累計ゲーム'] >= 8000]
-            if len(subset) >= 5: trends.append({"id": "high_kado_reaction", "条件": "前日超高稼働 (8000G~)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "high_kado_reaction", "条件": "前日超高稼働 (8000G~)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'REG確率' in train_shop.columns and '累計ゲーム' in train_shop.columns:
             spec_reg_5 = train_shop['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
             subset = train_shop[(train_shop['累計ゲーム'] >= 5000) & (train_shop['REG確率'] >= spec_reg_5)]
-            if len(subset) >= 5: trends.append({"id": "high_setting_reaction", "条件": "前日高設定挙動", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "high_setting_reaction", "条件": "前日高設定挙動", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'prev_差枚' in train_shop.columns and '差枚' in train_shop.columns:
             subset = train_shop[(train_shop['prev_差枚'] >= 500) & (train_shop['差枚'] >= 500)]
-            if len(subset) >= 5: trends.append({"id": "cons_win_reaction", "条件": "連勝中 (2日連続+500枚~)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "cons_win_reaction", "条件": "連勝中 (2日連続+500枚~)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if '差枚' in train_shop.columns and 'REG確率' in train_shop.columns:
             subset = train_shop[(train_shop['差枚'] >= 2000) & (train_shop['REG確率'] < (1/350))]
-            if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "big_win_reaction", "条件": "大勝ち(+2000枚以上) & REG確率悪", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'mean_7days_diff' in train_shop.columns and 'win_rate_7days' in train_shop.columns:
             subset = train_shop[(train_shop['mean_7days_diff'] >= 500) & (train_shop['win_rate_7days'] < 0.5)]
-            if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 高設定率50%未満)", "高設定率": subset['target'].mean() * 100, "サンプル": len(subset)})
+            if len(subset) >= 5: trends.append({"id": "one_hit_reaction", "条件": "一撃荒波台 (週間+500枚以上 & 高設定率50%未満)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         
         s_top_trends_df = None
         s_worst_trends_df = None

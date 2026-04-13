@@ -84,7 +84,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
             /* 下へスクロールするボタン */
             .scroll-down-btn {
                 position: fixed;
-                bottom: 90px;
+                bottom: 150px;
                 right: 20px;
                 background-color: rgba(66, 165, 245, 0.8);
                 color: white !important;
@@ -139,7 +139,10 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         st.session_state["global_selected_shop"] = selected_shop
         st.success(f"【{selected_shop}】のデータをGeminiに連携する準備ができました！")
     else:
-        st.info("店舗を選択せずに質問すると、一般的な立ち回りの相談や「今日はどの店舗に行くべき？」といった店舗選びの相談ができます。")
+        if "データアナリスト" in chat_mode:
+            st.warning("⚠️ データアナリストにAIモデルの精度評価やチューニングの相談をするには、上のプルダウンから**分析対象の店舗を選択**してください。")
+        else:
+            st.info("店舗を選択せずに質問すると、一般的な立ち回りの相談や「今日はどの店舗に行くべき？」といった店舗選びの相談ができます。")
 
     st.divider()
     
@@ -387,7 +390,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
                         '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
                         'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚',
-                        'mean_7days_diff': '台: 直近7日平均差枚', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)',
+                        'mean_7days_diff': '台: 直近7日平均差枚', 'median_7days_diff': '台: 直近7日中央値差枚(平常ベース)', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)', 'plus_rate_7days': '台: 直近7日間勝率 (プラス差枚割合)',
                         '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
                         'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
                         'neighbor_avg_diff': '配置: 両隣の平均差枚 (※片側の大爆発に引かれるフェイク注意)',
@@ -396,15 +399,19 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
                         'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',
                         'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
-                        'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
+                        'shop_avg_diff': '店舗: 当日平均差枚', 'shop_median_diff': '店舗: 当日中央値差枚', 'island_avg_diff': '島: 当日平均差枚',
                         'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
+                        'shop_heavy_lose_rate': '店舗: 当日大負け率(-1000枚以下)',
+                        'shop_play_rate': '店舗: 当日遊べる割合(±500枚以内)',
                         'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
                         'is_new_machine': '台: 新台導入(導入後7日以内)',
                         'is_moved_machine': '台: 配置変更(移動後7日以内)',
                         'shop_7days_avg_diff': '店舗: 週間還元/回収モード(直近7日差枚)',
                         'prev_shop_daily_avg_diff': '店舗: 前日の平均差枚(日次ノルマ反動)',
                         'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
-                        'machine_avg_diff': '機種: 当日平均差枚', 'machine_high_rate': '機種: 当日高設定率',
+                        'machine_avg_diff': '機種: 当日平均差枚', 'machine_median_diff': '機種: 当日中央値差枚', 'machine_high_rate': '機種: 当日高設定率',
+                        'machine_heavy_lose_rate': '機種: 当日大負け率(-1000枚以下)',
+                        'machine_play_rate': '機種: 当日遊べる割合(±500枚以内)',
                         'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
                         'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
                         'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)',
@@ -498,11 +505,11 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                     else:
                         context_data += "AI店舗評価: 不明\n"
 
-                    context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (全台の期待度ランキング)】\n"
+                    context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (期待度上位30台)】\n"
                     cols = ['台番号', '機種名', 'prediction_score', '根拠']
                     available_cols = [c for c in cols if c in shop_pred.columns]
                     
-                    display_df = shop_pred[available_cols].copy()
+                    display_df = shop_pred[available_cols].head(30).copy()
                     if 'prediction_score' in display_df.columns:
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")
                     
@@ -898,6 +905,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
    - 例：「特徴量の相関が薄いものに引っ張られているため、`reg_alpha` (L1正則化) を上げてノイズを無視させましょう」
    - 例：「直近の店癖が大きく変わっている可能性があるため、学習期間を『直近1ヶ月』に短縮してみる価値があります」
 4. 【検証のアドバイス】: チューニング後にどのようなデータ（還元日の勝率など）に注目して結果を確認すべきかアドバイスしてください。
+5. 【店舗未選択時の対応】: 提供されたデータの中に「AI予測実績」や「現在のAIモデル設定」が含まれていない（＝店舗が指定されていない）場合は、無理に推測せず、「具体的なチューニング提案を行うには、画面上部のプルダウンから分析対象の店舗を選択してください」と案内してください。
 
 現在日時: {now_str}
 ※提供されているデータは、対象店舗の予測データおよびAIのバックテスト実績・パラメータ設定です。
