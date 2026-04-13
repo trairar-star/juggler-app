@@ -806,6 +806,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 display_mode = st.radio("表示件数", ["厳選推奨台 (店舗別 上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True)
             with col_d2:
                 min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=10, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。")
+                min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=0, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。")
         
             sort_cols = []
             if 'prediction_score' in df.columns: sort_cols.append('prediction_score')
@@ -846,6 +847,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     for shop_name, group in df_sorted.groupby(shop_col):
                         valid_group = group[group['prediction_score'] >= 0.10] if 'prediction_score' in group.columns else group
                         df_list.append(valid_group.head(max(3, int(len(group) * 0.10))))
+                        df_list.append(group.head(max(3, int(len(group) * 0.10))))
                     if df_list:
                         df_display = pd.concat(df_list, ignore_index=True)
                         if sort_cols:
@@ -856,6 +858,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     limit = max(3, int(len(df_sorted) * 0.10))
                     valid_group = df_sorted[df_sorted['prediction_score'] >= 0.10] if 'prediction_score' in df_sorted.columns else df_sorted
                     df_display = valid_group.head(limit)
+                    df_display = df_sorted.head(limit)
             elif display_mode == "Top 10":
                 df_display = df_sorted.head(10)
             elif display_mode == "Top 20":

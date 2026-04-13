@@ -618,15 +618,13 @@ def save_prediction_log(df):
         if shop_col:
             df_list = []
             for shop_name, group in save_df_initial.groupby(shop_col):
-                valid_group = group[group['prediction_score'] >= 0.10]
-                df_list.append(valid_group.sort_values('prediction_score', ascending=False).head(max(3, int(len(group) * 0.10))))
+                df_list.append(group.sort_values('prediction_score', ascending=False).head(max(3, int(len(group) * 0.10))))
             if df_list:
                 save_df_initial = pd.concat(df_list, ignore_index=True)
             else:
                 save_df_initial = pd.DataFrame(columns=save_df_initial.columns)
         else:
-            valid_group = save_df_initial[save_df_initial['prediction_score'] >= 0.10]
-            save_df_initial = valid_group.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
+            save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
             
         if save_df_initial.empty:
             st.warning("保存する推奨台がありません。")
