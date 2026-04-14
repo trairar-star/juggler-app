@@ -60,6 +60,24 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         else:
             st.metric("推定🍇確率", "-")
     
+    # --- 新規追加: AI評価用 詳細特徴量データ ---
+    st.markdown("**🔍 AI評価用 詳細特徴量データ:**")
+    st.caption("AIが裏側でスコア計算に使用している数値です。根拠の文章に現れない加点の理由（両隣の状況や機種の強さなど）を推測するのに役立ちます。")
+    c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+    with c_f1:
+        st.metric("前々日差枚", f"{int(row.get('prev_差枚', 0)):+d}枚" if pd.notna(row.get('prev_差枚')) else "-")
+        st.metric("両隣平均差枚", f"{int(row.get('neighbor_avg_diff', 0)):+d}枚" if pd.notna(row.get('neighbor_avg_diff')) else "-")
+    with c_f2:
+        prev_r = row.get('prev_REG確率', 0)
+        st.metric("前々日REG", f"1/{int(1/prev_r)}" if pd.notna(prev_r) and prev_r > 0 else "-")
+        st.metric("島平均差枚", f"{int(row.get('island_avg_diff', 0)):+d}枚" if pd.notna(row.get('island_avg_diff')) else "-")
+    with c_f3:
+        st.metric("連続凹み日数", f"{int(row.get('連続マイナス日数', 0))}日" if pd.notna(row.get('連続マイナス日数')) else "-")
+        st.metric("機種30日平均", f"{int(row.get('machine_30days_avg_diff', 0)):+d}枚" if pd.notna(row.get('machine_30days_avg_diff')) else "-")
+    with c_f4:
+        st.metric("相対稼働率", f"{row.get('relative_games_ratio', 1.0):.2f}倍" if pd.notna(row.get('relative_games_ratio')) else "-")
+        st.metric("店舗7日平均", f"{int(row.get('shop_7days_avg_diff', 0)):+d}枚" if pd.notna(row.get('shop_7days_avg_diff')) else "-")
+
     matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
     
     if matched_spec_key:
