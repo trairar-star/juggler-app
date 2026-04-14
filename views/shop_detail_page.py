@@ -106,11 +106,11 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 val = row.get(f_key, '-')
                 
                 # 特徴量の種類に応じて、直感的な表現に変える
-                if '確率' in f_key and '比率' not in f_name:
+                if '確率' in f_name and '比率' not in f_name:
                     corr_str = "🔼 確率が良いほど+" if corr >= 0 else "🔽 確率が悪いほど+"
-                elif '差枚' in f_key or '吸込み' in f_name:
+                elif '差枚' in f_name or '吸込み' in f_name:
                     corr_str = "🔼 出ているほど+" if corr >= 0 else "🔽 凹んでいるほど+"
-                elif 'ゲーム' in f_key or f_key == '累計ゲーム' or 'G数' in f_name:
+                elif 'ゲーム' in f_name or 'G数' in f_name:
                     corr_str = "🔼 回されているほど+" if corr >= 0 else "🔽 放置されているほど+"
                 elif '日数' in f_name:
                     corr_str = "🔼 続くほど+" if corr >= 0 else "🔽 少ないほど+"
@@ -122,9 +122,9 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 if isinstance(val, (int, float)) and not pd.isna(val):
                     if f_key.startswith('is_') or 'フラグ' in f_name or ('日' in f_name and val in [0,1]):
                         val_str = "あり" if val == 1 else "なし"
-                    elif '確率' in f_key and val > 0 and val < 1: val_str = f"1/{int(1/val)}"
-                    elif '差枚' in f_key or '吸込み' in f_name: val_str = f"{int(val):+d}枚"
-                    elif 'ゲーム' in f_key or f_key == '累計ゲーム' or 'G数' in f_name: val_str = f"{int(val)}G"
+                    elif '確率' in f_name and val > 0 and val < 1: val_str = f"1/{int(1/val)}"
+                    elif '差枚' in f_name or '吸込み' in f_name: val_str = f"{int(val):+d}枚"
+                    elif 'ゲーム' in f_name or 'G数' in f_name: val_str = f"{int(val)}G"
                     elif '割合' in f_name or '率' in f_name: val_str = f"{val*100:.1f}%" if val <= 1.0 else f"{val:.1f}%"
                     else: val_str = str(int(val)) if float(val).is_integer() else f"{val:.2f}"
                 else: val_str = str(val)
