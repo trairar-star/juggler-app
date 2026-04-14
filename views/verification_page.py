@@ -1276,96 +1276,196 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 width="stretch"
             )
 
-    # --- 5. 大外れ（ワースト予測）の分析 ---
+    # --- 5. 予測エラー分析 (ワースト予測 ＆ 取りこぼし) ---
     st.divider()
-    st.subheader("📉 AIの期待外れ台 (ワーストランキング)")
-    st.caption("※この表は**「過去にAIが推奨台（店舗上位10%）として保存した予測ログ」**の中から抽出されています。\n\nAIが高く評価（期待度65%以上）したのに大きく負けて（-1000枚以下）しまった台のワーストランキングです。なぜ大負けしたのか（低稼働による見切りか、不発か、順当な低設定か）、なぜAIは評価を上げていたのかを振り返ることができます。")
-    # 表示用に整理
-    display_df = merged_df.copy()
-    display_df['結果判定'] = display_df['差枚_actual'].apply(lambda x: 'Win 🔴' if x > 0 else 'Lose 🔵')
-    display_df = display_df.sort_values('対象日付', ascending=False)
+    st.subheader("🔍 AIの予測エラー分析 (ワースト＆取りこぼし)")
     
-    if 'prediction_score' in display_df.columns:
-        display_df['予想設定5以上確率'] = (display_df['prediction_score'] * 100).astype(int)
-    else:
-        display_df['予想設定5以上確率'] = 0
-
-    def analyze_bad_reason(row):
-        prev_g = row.get('prev_累計ゲーム', 0)
-        prev_diff = row.get('prev_差枚', 0)
-        cons_minus = row.get('連続マイナス日数', 0)
-        prev_reg_prob = row.get('prev_REG確率', 0)
-        neighbor_diff = row.get('neighbor_avg_diff', 0)
-        is_corner = row.get('is_corner', 0)
-        cons_minus_diff = row.get('cons_minus_total_diff', 0)
+    tab_worst, tab_missed = st.tabs(["📉 期待外れ台 (高評価→大負け)", "📈 逃したお宝台 (低評価→大勝ち)"])
+    
+    with tab_worst:
+        st.caption("※この表は**「過去にAIが推奨台（店舗上位10%）として保存した予測ログ」**の中から抽出されています。\n\nAIが高く評価（期待度65%以上）したのに大きく負けて（-1000枚以下）しまった台のワーストランキングです。なぜ大負けしたのか（低稼働による見切りか、不発か、順当な低設定か）、なぜAIは評価を上げていたのかを振り返ることができます。")
+        # 表示用に整理
+        display_df = merged_df.copy()
+        display_df['結果判定'] = display_df['差枚_actual'].apply(lambda x: 'Win 🔴' if x > 0 else 'Lose 🔵')
+        display_df = display_df.sort_values('対象日付', ascending=False)
         
-        if pd.isna(prev_g): prev_g = 0
-        if pd.isna(prev_diff): prev_diff = 0
-        if pd.isna(cons_minus): cons_minus = 0
-        if pd.isna(prev_reg_prob): prev_reg_prob = 0
-        if pd.isna(neighbor_diff): neighbor_diff = 0
-        if pd.isna(is_corner): is_corner = 0
-        if pd.isna(cons_minus_diff): cons_minus_diff = 0
-        
-        prev_reg_str = f"1/{int(1/prev_reg_prob)}" if prev_reg_prob > 0 else "-"
-        
-        extra_info = []
-        if is_corner == 1: extra_info.append("角台")
-        if neighbor_diff > 500: extra_info.append(f"両隣優秀(平均+{int(neighbor_diff)}枚)")
-        elif neighbor_diff < -500: extra_info.append(f"両隣凹み(平均{int(neighbor_diff)}枚)")
-        
-        extra_str = f" [{', '.join(extra_info)}]" if extra_info else ""
-        
-        if cons_minus >= 3:
-            diff_str = f" (計{int(cons_minus_diff)}枚吸込)" if cons_minus_diff < 0 else ""
-            return f"{int(cons_minus)}日連続凹み{diff_str}の上げリセット狙い{extra_str}"
-        elif prev_diff < -1000:
-            return f"前日大凹み ({int(prev_diff)}枚) の上げリセット狙い{extra_str}"
-        elif prev_diff > 1000:
-            return f"前日大勝 (+{int(prev_diff)}枚) の据え置き狙い{extra_str}"
-        elif prev_reg_prob >= (1/300):
-            return f"前日REG優秀 ({prev_reg_str}) の据え置き狙い{extra_str}"
+        if 'prediction_score' in display_df.columns:
+            display_df['予想設定5以上確率'] = (display_df['prediction_score'] * 100).astype(int)
         else:
-            return f"前日 {int(prev_g)}G / {int(prev_diff)}枚 / REG {prev_reg_str}{extra_str}"
+            display_df['予想設定5以上確率'] = 0
 
-    def analyze_bad_identity(row):
-        g = row.get('結果_累計ゲーム', 0)
-        score = row.get('設定5近似度', 0)
+        def analyze_bad_reason(row):
+            prev_g = row.get('prev_累計ゲーム', 0)
+            prev_diff = row.get('prev_差枚', 0)
+            cons_minus = row.get('連続マイナス日数', 0)
+            prev_reg_prob = row.get('prev_REG確率', 0)
+            neighbor_diff = row.get('neighbor_avg_diff', 0)
+            is_corner = row.get('is_corner', 0)
+            cons_minus_diff = row.get('cons_minus_total_diff', 0)
+            
+            if pd.isna(prev_g): prev_g = 0
+            if pd.isna(prev_diff): prev_diff = 0
+            if pd.isna(cons_minus): cons_minus = 0
+            if pd.isna(prev_reg_prob): prev_reg_prob = 0
+            if pd.isna(neighbor_diff): neighbor_diff = 0
+            if pd.isna(is_corner): is_corner = 0
+            if pd.isna(cons_minus_diff): cons_minus_diff = 0
+            
+            prev_reg_str = f"1/{int(1/prev_reg_prob)}" if prev_reg_prob > 0 else "-"
+            
+            extra_info = []
+            if is_corner == 1: extra_info.append("角台")
+            if neighbor_diff > 500: extra_info.append(f"両隣優秀(平均+{int(neighbor_diff)}枚)")
+            elif neighbor_diff < -500: extra_info.append(f"両隣凹み(平均{int(neighbor_diff)}枚)")
+            
+            extra_str = f" [{', '.join(extra_info)}]" if extra_info else ""
+            
+            if cons_minus >= 3:
+                diff_str = f" (計{int(cons_minus_diff)}枚吸込)" if cons_minus_diff < 0 else ""
+                return f"{int(cons_minus)}日連続凹み{diff_str}の上げリセット狙い{extra_str}"
+            elif prev_diff < -1000:
+                return f"前日大凹み ({int(prev_diff)}枚) の上げリセット狙い{extra_str}"
+            elif prev_diff > 1000:
+                return f"前日大勝 (+{int(prev_diff)}枚) の据え置き狙い{extra_str}"
+            elif prev_reg_prob >= (1/300):
+                return f"前日REG優秀 ({prev_reg_str}) の据え置き狙い{extra_str}"
+            else:
+                return f"前日 {int(prev_g)}G / {int(prev_diff)}枚 / REG {prev_reg_str}{extra_str}"
+
+        def analyze_bad_identity(row):
+            g = row.get('結果_累計ゲーム', 0)
+            score = row.get('設定5近似度', 0)
+            
+            if g < 2000:
+                return "🏃 客の早見切り (不発の可能性残る)"
+            elif score >= 40:
+                return "💦 展開負け (REGは引けている等)"
+            else:
+                return "💀 順当に低設定 (AIの予測ミス)"
+
+        display_df['AI高評価の要因(前日状況)'] = display_df.apply(analyze_bad_reason, axis=1)
+        display_df['大負けの正体(結果分析)'] = display_df.apply(analyze_bad_identity, axis=1)
+
+        cols_base = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母']
+        bad_cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', 'AI高評価の要因(前日状況)', '設定5近似度', '大負けの正体(結果分析)', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母']
+
+        config_dict = {
+            "対象日付": st.column_config.DateColumn("予測対象日", format="MM/DD"),
+            "予想設定5以上確率": st.column_config.NumberColumn("事前AI期待度", format="%d%%", help="AIが事前に予測した設定5以上の確率"),
+            "設定5近似度": st.column_config.NumberColumn("近似度スコア", format="%d点", help="設定5近似度"),
+            "差枚_actual": st.column_config.NumberColumn("差枚", format="%+d"),
+            "結果_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
+            "結果_BIG": st.column_config.NumberColumn("BIG", format="%d"),
+            "結果_BIG確率分母": st.column_config.NumberColumn("B確率", format="1/%d"),
+            "結果_REG": st.column_config.NumberColumn("REG", format="%d"),
+            "結果_REG確率分母": st.column_config.NumberColumn("R確率", format="1/%d"),
+            "AI高評価の要因(前日状況)": st.column_config.TextColumn("AI高評価の要因", help="AIが事前期待度を高く見積もった理由と思われる、前日の状況です。"),
+            "大負けの正体(結果分析)": st.column_config.TextColumn("大負けの正体", help="低稼働による見切りか、回された上での低設定か等を判定します。"),
+        }
+
+        if 'prediction_score' in merged_df.columns:
+            bad_pred_df = display_df[(display_df['prediction_score'] >= 0.65) & (display_df['差枚_actual'] <= -1000)].copy()
+            
+            if bad_pred_df.empty:
+                st.success("現在、大きく期待を裏切った台はありません！")
+            else:
+                st.dataframe(bad_pred_df[bad_cols].sort_values('差枚_actual'), column_config=config_dict, width="stretch", hide_index=True)
+
+    with tab_missed:
+        st.caption("※この表は**「過去の全稼働データ（バックテスト結果）」**の中から抽出されています。\n\nAIが低く評価（期待度20%未満）したのに大きく勝って（+2000枚以上）しまった台のランキングです。なぜ大勝ちしたのか（低設定の誤爆か、本物の高設定か）、なぜAIは事前に評価を下げていたのか（前日の稼働不足か、回収トレンドか）を振り返ることができます。")
         
-        if g < 2000:
-            return "🏃 客の早見切り (不発の可能性残る)"
-        elif score >= 40:
-            return "💦 展開負け (REGは引けている等)"
-        else:
-            return "💀 順当に低設定 (AIの予測ミス)"
-
-    display_df['AI高評価の要因(前日状況)'] = display_df.apply(analyze_bad_reason, axis=1)
-    display_df['大負けの正体(結果分析)'] = display_df.apply(analyze_bad_identity, axis=1)
-
-    cols_base = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', '設定5近似度', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母']
-    bad_cols = ['対象日付', shop_col, '台番号', '機種名', '予想設定5以上確率', 'AI高評価の要因(前日状況)', '設定5近似度', '大負けの正体(結果分析)', '差枚_actual', '結果_累計ゲーム', '結果_BIG', '結果_BIG確率分母', '結果_REG', '結果_REG確率分母']
-
-    config_dict = {
-        "対象日付": st.column_config.DateColumn("予測対象日", format="MM/DD"),
-        "予想設定5以上確率": st.column_config.NumberColumn("事前AI期待度", format="%d%%", help="AIが事前に予測した設定5以上の確率"),
-        "設定5近似度": st.column_config.NumberColumn("近似度スコア", format="%d点", help="設定5近似度"),
-        "差枚_actual": st.column_config.NumberColumn("差枚", format="%+d"),
-        "結果_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
-        "結果_BIG": st.column_config.NumberColumn("BIG", format="%d"),
-        "結果_BIG確率分母": st.column_config.NumberColumn("B確率", format="1/%d"),
-        "結果_REG": st.column_config.NumberColumn("REG", format="%d"),
-        "結果_REG確率分母": st.column_config.NumberColumn("R確率", format="1/%d"),
-        "AI高評価の要因(前日状況)": st.column_config.TextColumn("AI高評価の要因", help="AIが事前期待度を高く見積もった理由と思われる、前日の状況です。"),
-        "大負けの正体(結果分析)": st.column_config.TextColumn("大負けの正体", help="低稼働による見切りか、回された上での低設定か等を判定します。"),
-    }
-
-    if 'prediction_score' in merged_df.columns:
-        bad_pred_df = display_df[(display_df['prediction_score'] >= 0.65) & (display_df['差枚_actual'] <= -1000)].copy()
+        missed_df_raw = df_verify[df_verify[shop_col] == selected_shop].copy() if not df_verify.empty and shop_col in df_verify.columns else pd.DataFrame()
         
-        if bad_pred_df.empty:
-            st.success("現在、大きく期待を裏切った台はありません！")
+        if missed_df_raw.empty or 'prediction_score' not in missed_df_raw.columns or 'next_diff' not in missed_df_raw.columns:
+            st.info("分析に必要なデータがありません。")
         else:
-            st.dataframe(bad_pred_df[bad_cols].sort_values('差枚_actual'), column_config=config_dict, width="stretch", hide_index=True)
+            missed_df = missed_df_raw[(missed_df_raw['prediction_score'] < 0.20) & (missed_df_raw['next_diff'] >= 2000)].copy()
+            missed_df = missed_df.sort_values('next_diff', ascending=False)
+            
+            if missed_df.empty:
+                st.success("現在、大きく取りこぼしたお宝台はありません！")
+            else:
+                missed_df['予想設定5以上確率'] = (missed_df['prediction_score'] * 100).astype(int)
+                
+                def analyze_missed_reason(row):
+                    g = row.get('累計ゲーム', 0)
+                    diff = row.get('差枚', 0)
+                    win_rate_7d = row.get('win_rate_7days', 0)
+                    mean_7d = row.get('mean_7days_diff', 0)
+                    cons_minus = row.get('連続マイナス日数', 0)
+                    
+                    if pd.isna(g): g = 0
+                    if pd.isna(diff): diff = 0
+                    if pd.isna(win_rate_7d): win_rate_7d = 0
+                    
+                    reasons = []
+                    if g < 2000:
+                        reasons.append(f"前日低稼働({int(g)}G)でデータ不足")
+                    if win_rate_7d < 0.2 and mean_7d < -500:
+                        reasons.append("週間トレンドが完全な回収モード")
+                    if diff >= 1500:
+                        reasons.append(f"前日大勝({int(diff)}枚)からの連勝ストップ警戒")
+                    elif diff <= -2000 and cons_minus < 3:
+                        reasons.append(f"前日大敗({int(diff)}枚)だが上げリセットの根拠弱")
+                        
+                    if not reasons:
+                        return "特筆すべき強調データがなく全体的に評価が低かった"
+                    return " / ".join(reasons)
+                    
+                def analyze_missed_identity(row):
+                    g = row.get('next_累計ゲーム', 0)
+                    b = row.get('next_BIG', 0)
+                    r = row.get('next_REG', 0)
+                    machine = row.get('機種名', '')
+                    
+                    if pd.isna(g): g = 0
+                    if pd.isna(b): b = 0
+                    if pd.isna(r): r = 0
+                    
+                    if g < 3000:
+                        return "🎲 稼働不足での上振れ (まぐれ吹き)"
+                        
+                    reg_prob = g / r if r > 0 else 9999
+                    
+                    specs = backend.get_machine_specs()
+                    matched_key = backend.get_matched_spec_key(machine, specs)
+                    spec_r4 = specs[matched_key].get('設定4', {"REG": 300.0})["REG"] if matched_key in specs else 300.0
+                    
+                    if reg_prob > spec_r4 * 1.15: # 設定4より明らかに悪い
+                        return "💣 低設定のBIG偏り (誤爆)"
+                    else:
+                        return "💎 本物の高設定 (AIの完全な取りこぼし)"
+
+                missed_df['AI低評価の要因(前日状況)'] = missed_df.apply(analyze_missed_reason, axis=1)
+                missed_df['大勝の正体(結果分析)'] = missed_df.apply(analyze_missed_identity, axis=1)
+                
+                missed_df['結果_BIG確率分母'] = np.where(missed_df['next_BIG'] > 0, missed_df['next_累計ゲーム'] / missed_df['next_BIG'], 0).astype(int)
+                missed_df['結果_REG確率分母'] = np.where(missed_df['next_REG'] > 0, missed_df['next_累計ゲーム'] / missed_df['next_REG'], 0).astype(int)
+                
+                if 'next_date' in missed_df.columns:
+                    missed_df['予測対象日'] = pd.to_datetime(missed_df['next_date'])
+                else:
+                    missed_df['予測対象日'] = pd.to_datetime(missed_df['対象日付']) + pd.Timedelta(days=1)
+                    
+                missed_cols = ['予測対象日', shop_col, '台番号', '機種名', '予想設定5以上確率', 'AI低評価の要因(前日状況)', '大勝の正体(結果分析)', 'next_diff', 'next_累計ゲーム', 'next_BIG', '結果_BIG確率分母', 'next_REG', '結果_REG確率分母']
+                
+                st.dataframe(
+                    missed_df[missed_cols],
+                    column_config={
+                        "予測対象日": st.column_config.DateColumn("対象日", format="MM/DD"),
+                        "予想設定5以上確率": st.column_config.NumberColumn("事前AI期待度", format="%d%%"),
+                        "next_diff": st.column_config.NumberColumn("結果差枚", format="%+d"),
+                        "next_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
+                        "next_BIG": st.column_config.NumberColumn("BIG", format="%d"),
+                        "結果_BIG確率分母": st.column_config.NumberColumn("B確率", format="1/%d"),
+                        "next_REG": st.column_config.NumberColumn("REG", format="%d"),
+                        "結果_REG確率分母": st.column_config.NumberColumn("R確率", format="1/%d"),
+                        "AI低評価の要因(前日状況)": st.column_config.TextColumn("AI低評価の要因", help="AIが事前期待度を低く見積もった理由と思われる、前日の状況です。"),
+                        "大勝の正体(結果分析)": st.column_config.TextColumn("大勝の正体", help="低設定のまぐれ吹きか、本物の高設定の取りこぼしかを判定します。"),
+                    },
+                    width="stretch",
+                    hide_index=True
+                )
 
     # --- 6. 全履歴データ (バックテスト結果) ---
     st.divider()
