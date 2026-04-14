@@ -19,7 +19,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.11.0" 
+APP_VERSION = "v4.12.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -2818,6 +2818,13 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     train_df = df.dropna(subset=['next_diff']).copy()
+    
+    # --- ノイズデータ（設定が判別できない放置台）を学習母数から除外 ---
+    # 3000G以上回った台、または3000G未満でも±750枚以上動いて見切られた(または誤爆した)台のみを学習対象とする
+    # これにより、0G放置台などが分母から消え、純粋な「稼働した際の本物の高設定確率」が算出される
+    valid_play_mask = (train_df['next_累計ゲーム'] >= 3000) | ((train_df['next_累計ゲーム'] < 3000) & ((train_df['next_diff'] <= -750) | (train_df['next_diff'] >= 750)))
+    train_df = train_df[valid_play_mask].copy()
+    
     predict_df = df[df['next_diff'].isna()].copy()
     
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
