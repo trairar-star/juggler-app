@@ -5,6 +5,9 @@ import lightgbm as lgb # type: ignore
 import streamlit as st # type: ignore
 import gspread
 import unicodedata
+import hashlib
+import pickle
+import glob
 from google.oauth2.service_account import Credentials
 
 # 定数定義
@@ -326,9 +329,13 @@ def clear_local_cache():
     if os.path.exists(HISTORY_CACHE_FILE):
         try:
             os.remove(HISTORY_CACHE_FILE)
-            return True
         except Exception:
-            return False
+            pass
+    for f_path in glob.glob(os.path.join(BASE_DIR, 'ai_cache_*.pkl')):
+        try:
+            os.remove(f_path)
+        except Exception:
+            pass
     return True
 
 @st.cache_resource(ttl=3300)
@@ -2753,6 +2760,21 @@ def _postprocess_predictions(predict_df, train_df):
 def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, target_date=None):
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
+    # --- AI処理のローカルキャッシュ機構 ---
+    # 生データの状態（行数や最新日付）、予測対象日、AI設定から一意なハッシュを作成
+    data_status = f"{len(df)}_{df['対象日付'].max()}_{target_date}_{APP_VERSION}_{str(shop_hyperparams)}"
+    cache_key = hashlib.md5(data_status.encode()).hexdigest()
+    cache_file = os.path.join(BASE_DIR, f"ai_cache_{cache_key}.pkl")
+    
+    # すでに同じデータ状態で計算済みのキャッシュがあれば、それをロードして一瞬で返す
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                cached_data = pickle.load(f)
+            return cached_data['df'], cached_data['df_verify'], cached_data['df_importance']
+        except Exception:
+            pass # 読み込みエラー時はそのまま通常の分析へ進む
+
     # 過去の店舗別予測スコアを読み込む
     _df_daily_scores = load_daily_shop_scores()
 
@@ -2785,5 +2807,17 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
 
     # 6. 後処理 (スコア補正、根拠の自然言語生成)
     predict_df, train_df = _postprocess_predictions(predict_df, train_df)
+
+    # --- 処理の最後に計算結果をキャッシュとして保存 ---
+    try:
+        # 古いAIキャッシュファイルを掃除
+        for f_path in glob.glob(os.path.join(BASE_DIR, 'ai_cache_*.pkl')):
+            try: os.remove(f_path)
+            except Exception: pass
+        # 今回の結果を保存
+        with open(cache_file, 'wb') as f:
+            pickle.dump({'df': predict_df, 'df_verify': train_df, 'df_importance': feature_importances}, f)
+    except Exception:
+        pass
 
     return predict_df, train_df, feature_importances
