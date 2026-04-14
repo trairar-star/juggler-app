@@ -19,7 +19,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.12.0" 
+APP_VERSION = "v4.16.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -2306,6 +2306,7 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     matched_key = get_matched_spec_key(mac_name, specs)
     if matched_key and matched_key in specs:
         spec_b1 = specs[matched_key].get('設定1', {}).get('BIG', 280.0)
+        spec_b5 = specs[matched_key].get('設定5', {}).get('BIG', 260.0)
         spec_b6 = specs[matched_key].get('設定6', {}).get('BIG', 260.0)
         spec_r6 = specs[matched_key].get('設定6', {}).get('REG', 260.0)
         b_prob = row.get('BIG確率', 0)
@@ -2315,7 +2316,9 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
             if (1.0 / b_prob) > spec_b1 and (1.0 / r_prob) > spec_r6:
                 fixed_cold.append("中間設定濃厚")
             if (1.0 / b_prob) <= spec_b6:
-                fixed_hot.append("BB突出")
+                    fixed_hot.append("BB設定6以上")
+            elif (1.0 / b_prob) <= spec_b5:
+                    fixed_hot.append("BB設定5以上")
         if games >= 5000 and r_prob > 0:
             if (1.0 / r_prob) <= 200.0:
                 fixed_hot.append("超REG突出")
@@ -2368,7 +2371,8 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         elif h.endswith("曜日"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『{h}』に高設定を多く投入する還元傾向があります {rate_str}。")
         elif h == "看板機種": add_reasons.append(f"【🎯店癖】過去の傾向から、この機種はこの店舗の看板機種として非常に甘く扱われています {rate_str}。")
 
-    if "BB突出" in fixed_hot: add_reasons.append("【🎯期待】3000G以上回ってBIG確率が設定6を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
+    if "BB設定6以上" in fixed_hot: add_reasons.append("【🎯期待】5000G以上回ってBIG確率が設定6を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
+    if "BB設定5以上" in fixed_hot: add_reasons.append("【🎯期待】5000G以上回ってBIG確率が設定5を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
     if "超REG突出" in fixed_hot: add_reasons.append("【🎯激熱】5000G以上回ってREG確率が1/200より良い極端な優秀台です。設定6（またはそれ以上）の期待が非常に高いお宝台です。")
 
     for tid, c in zip(matched_cold_ids, matched_cold):
