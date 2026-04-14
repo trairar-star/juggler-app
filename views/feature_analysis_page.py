@@ -1949,6 +1949,8 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
                 'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
                 'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)',
+                'is_low_play_high_reg': '複合: 前日低稼働(1000-3000G)＆高設定挙動',
+                'is_hot_wd_and_heavy_lose': '複合: 還元曜日＆週間大凹み',
                 'predicted_diff': 'AI予測: 予測差枚数(ST)'
             }
     

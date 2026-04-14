@@ -1372,9 +1372,22 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 st.dataframe(bad_pred_df[bad_cols].sort_values('差枚_actual'), column_config=config_dict, width="stretch", hide_index=True)
 
     with tab_missed:
-        st.caption("※この表は**「過去の全稼働データ（バックテスト結果）」**の中から抽出されています。\n\nAIが低く評価（期待度20%未満）したのに大きく勝って（+2000枚以上）しまった台のランキングです。なぜ大勝ちしたのか（低設定の誤爆か、本物の高設定か）、なぜAIは事前に評価を下げていたのか（前日の稼働不足か、回収トレンドか）を振り返ることができます。")
+        st.caption("※この表は**「過去にAIが予測を保存した日」**の全稼働データの中から抽出されています。\n\nAIが低く評価（期待度20%未満）したのに大きく勝って（+2000枚以上）しまった台のランキングです。なぜ大勝ちしたのか（低設定の誤爆か、本物の高設定か）、なぜAIは事前に評価を下げていたのか（前日の稼働不足か、回収トレンドか）を振り返ることができます。")
         
         missed_df_raw = df_verify[df_verify[shop_col] == selected_shop].copy() if not df_verify.empty and shop_col in df_verify.columns else pd.DataFrame()
+        
+        if not missed_df_raw.empty and not df_pred_log.empty and '予測対象日_merge' in df_pred_log.columns:
+            if shop_col in df_pred_log.columns:
+                logged_dates = df_pred_log[df_pred_log[shop_col] == selected_shop]['予測対象日_merge'].dropna().dt.date.unique()
+            else:
+                logged_dates = df_pred_log['予測対象日_merge'].dropna().dt.date.unique()
+                
+            if 'next_date' in missed_df_raw.columns:
+                missed_df_raw['tmp_target_date'] = pd.to_datetime(missed_df_raw['next_date'], errors='coerce').dt.date
+            else:
+                missed_df_raw['tmp_target_date'] = (pd.to_datetime(missed_df_raw['対象日付'], errors='coerce') + pd.Timedelta(days=1)).dt.date
+                
+            missed_df_raw = missed_df_raw[missed_df_raw['tmp_target_date'].isin(logged_dates)].copy()
         
         if missed_df_raw.empty or 'prediction_score' not in missed_df_raw.columns or 'next_diff' not in missed_df_raw.columns:
             st.info("分析に必要なデータがありません。")

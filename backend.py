@@ -1393,7 +1393,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             
             p_val = np.where(is_prev, prev_diff, np.nan)
             n_val = np.where(is_next, next_diff, np.nan)
-            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
+            # 両隣の爆発に引っ張られないようクリップ処理を適用 (-2000枚 ～ +2000枚)
+            p_val_clip = np.clip(p_val, -2000, 2000)
+            n_val_clip = np.clip(n_val, -2000, 2000)
+            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val_clip, 'n': n_val_clip}).mean(axis=1).fillna(0)
             
             df['left_diff'] = np.where(is_prev, prev_diff, 0)
             df['right_diff'] = np.where(is_next, next_diff, 0)
@@ -1417,7 +1420,9 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         
             p_val = np.where(is_prev, prev_diff, np.nan)
             n_val = np.where(is_next, next_diff, np.nan)
-            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val, 'n': n_val}).mean(axis=1).fillna(0)
+            p_val_clip = np.clip(p_val, -2000, 2000)
+            n_val_clip = np.clip(n_val, -2000, 2000)
+            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val_clip, 'n': n_val_clip}).mean(axis=1).fillna(0)
             
             df['left_diff'] = np.where(is_prev, prev_diff, 0)
             df['right_diff'] = np.where(is_next, next_diff, 0)
@@ -1751,9 +1756,17 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['prev_bonus_balance'] = df['REG'] - df['BIG']
     df['prev_unlucky_gap'] = (df['REG'] * 200) - df['差枚']
 
+    # --- 新規: 低稼働・高設定据え置き特化の特徴量 ---
+    if 'prev_累計ゲーム' in df.columns and 'prev_REG確率' in df.columns:
+        df['is_low_play_high_reg'] = ((df['prev_累計ゲーム'] >= 1000) & (df['prev_累計ゲーム'] < 3000) & (df['prev_REG確率'] >= 1.0/260.0)).astype(int)
+        
+    # --- 新規: 週間吸い込みからの還元曜日狙い 特化の特徴量 ---
+    if 'mean_7days_diff' in df.columns and 'weekday_avg_diff' in df.columns:
+        df['is_hot_wd_and_heavy_lose'] = ((df['weekday_avg_diff'] >= 100) & (df['mean_7days_diff'] <= -500)).astype(int)
+
     # --- ノイズ対策: 低稼働データの確率系特徴量を無効化 ---
-    # 稼働が2000G未満の場合、確率やボーナスバランスのブレが偶然（ノイズ）である可能性が高いため0に丸める
-    low_kado_mask = df['累計ゲーム'] < 2000
+    # 以前は2000G未満を0に丸めていたが、低稼働台のポテンシャルを見抜くため1000G未満に緩和
+    low_kado_mask = df['累計ゲーム'] < 1000
     if 'REG確率' in df.columns:
         df.loc[low_kado_mask, 'REG確率'] = 0.0
     if 'BIG確率' in df.columns:
@@ -1764,7 +1777,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df.loc[low_kado_mask, 'prev_unlucky_gap'] = 0.0
     
     if 'prev_累計ゲーム' in df.columns and 'prev_REG確率' in df.columns:
-        prev_low_kado_mask = df['prev_累計ゲーム'] < 2000
+        prev_low_kado_mask = df['prev_累計ゲーム'] < 1000
         df.loc[prev_low_kado_mask, 'prev_REG確率'] = 0.0
 
     if 'island_id' in df.columns:
@@ -1868,7 +1881,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # 一時的に作成したフラグは削除
     df = df.drop(columns=['is_heavy_lose', 'is_play_machine'], errors='ignore')
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day']
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
         if f in df.columns: features.append(f)
         
@@ -2402,15 +2415,18 @@ def _postprocess_predictions(predict_df, train_df):
         score = row.get('prediction_score', 0)
         hc = row.get('history_count', 1)
         games = row.get('累計ゲーム', 0)
+        reg_prob = row.get('REG確率', 0)
         
         # 過去データが少ない場合は予測のブレが大きいためスコアを割り引く
         if hc < 14: score *= 0.8
         elif hc < 30: score *= 0.95
         
-        # 前日の稼働（総回転数）が少ない場合も予測の信頼度が落ちるためスコアを割り引く
-        if games < 1000: score *= 0.70
-        elif games < 2000: score *= 0.85
-        elif games < 3000: score *= 0.95
+        # 前日の稼働が少ない場合の減点（ただし、高設定挙動を示している場合は減点を緩和する）
+        is_good_reg = reg_prob >= (1.0 / 280.0) if reg_prob > 0 else False
+        
+        if games < 1000: score *= (0.85 if is_good_reg else 0.70)
+        elif games < 2000: score *= (0.95 if is_good_reg else 0.85)
+        elif games < 3000: score *= (1.0 if is_good_reg else 0.95)
         
         return score
         
@@ -2459,8 +2475,11 @@ def _postprocess_predictions(predict_df, train_df):
             reasons.append("【🔻減点】過去1週間で高設定挙動がなく、店側が全く設定を入れていない(見捨てられている)可能性が高いです。")
             
         if games < 1000:
-            # 減点自体は apply_reliability_penalty で実施済みなので理由だけ追記
-            reasons.append("【🔻減点】前日の総回転数が極端に少なく、データ不足のため期待度を割り引いています。")
+            is_good_reg = reg_prob >= (1.0 / 280.0) if reg_prob > 0 else False
+            if is_good_reg:
+                reasons.append("【💎期待】前日の回転数は少ないですが、高設定挙動を示しているためポテンシャルを評価しています。")
+            else:
+                reasons.append("【🔻減点】前日の総回転数が極端に少なく、データ不足のため期待度を少し割り引いています。")
 
         score *= penalty_factor
         
@@ -2643,6 +2662,11 @@ def _postprocess_predictions(predict_df, train_df):
             reasons.append("【新台】新台導入から1週間以内のため、店側のアピール(高設定投入)が期待できます。")
         if row.get('is_moved_machine', 0) == 1:
             reasons.append("【配置変更】配置変更(移動)から1週間以内のため、扱いが変化している可能性があります。")
+            
+        if row.get('is_low_play_high_reg', 0) == 1:
+            reasons.append("【💎お宝台候補】前日はあまり回されていませんが、高設定挙動を示しており、そのまま据え置かれる(隠れ高設定)ポテンシャルがあります。")
+        if row.get('is_hot_wd_and_heavy_lose', 0) == 1:
+            reasons.append("【📈還元曜日×凹み反発】この店舗の強い曜日(還元日)と、直近1週間大きく凹んでいる条件が重なっており、絶好の上げリセット狙い目です。")
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)
