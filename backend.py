@@ -1501,11 +1501,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     spec_tot = df['機種名'].map(tot_map)
     spec_reg3 = df['機種名'].map(reg3_map)
     
-    # 🎯【精度向上】ターゲットを超厳格化: 5000G以上 + 差枚+500枚以上 + REG確率設定5以上のみを正解とする
+    # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に設定 ---
     df['target'] = (
-        (df['next_累計ゲーム'] >= 5000) & 
-        (df['next_diff'] >= 500) & 
-        (df['next_reg_prob'] >= spec_reg)
+        (df['next_累計ゲーム'] >= 3000) & 
+        (
+            (df['next_reg_prob'] >= spec_reg) | 
+            ((df['next_total_prob'] >= spec_tot) & (df['next_reg_prob'] >= spec_reg3))
+        )
     ).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
