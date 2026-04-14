@@ -20,6 +20,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
 APP_VERSION = "v4.16.0" 
+APP_VERSION = "v4.17.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -2687,6 +2688,7 @@ def _postprocess_predictions(predict_df, train_df):
         if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
             set5_reg_prob_threshold = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
             if games >= 3000 and reg_prob >= set5_reg_prob_threshold:
+            if games >= 5000 and reg_prob >= set5_reg_prob_threshold:
                 is_setting5_over = True
 
         spec_reg_5 = 1.0 / specs[matched_spec_key].get("設定5", {"REG": 260.0})["REG"] if matched_spec_key else 1/260.0
@@ -2699,21 +2701,33 @@ def _postprocess_predictions(predict_df, train_df):
         if is_setting5_over:
             reasons.append(f"【🌟高設定挙動】前日のREG確率が1/{int(1/reg_prob)}で、機種スペックの**「設定5以上」**の基準を満たしており、強く推奨されます。")
         elif reg > big and reg_prob >= spec_reg_5:            
+            reasons.append(f"【🌟高設定挙動】5000G以上回って前日のREG確率が1/{int(1/reg_prob)}で、機種スペックの**「設定5以上」**の基準を満たしており、強く推奨されます。")
+        elif reg > big and reg_prob >= spec_reg_5 and games >= 5000:            
             if big_denom >= 400:
                 if diff <= 0:
                     reasons.append(f"【超不発】BIG確率が1/{int(big_denom)}と極端に欠損していますが、REG確率は設定5以上(1/{int(1/reg_prob)})をキープしている超・狙い目台です。")
+                    reasons.append(f"【超不発】5000G以上回ってBIG確率が1/{int(big_denom)}と極端に欠損していますが、REG確率は設定5以上(1/{int(1/reg_prob)})をキープしている超・狙い目台です。")
                 else:
                     reasons.append(f"【特殊】BIGが極端に引けていませんが(1/{int(big_denom)})、REG確率は設定5以上(1/{int(1/reg_prob)})の高設定挙動です。")
+                    reasons.append(f"【特殊】5000G以上回ってBIGが極端に引けていませんが(1/{int(big_denom)})、REG確率は設定5以上(1/{int(1/reg_prob)})の高設定挙動です。")
             else:
                 if diff <= 0:
                     reasons.append(f"【特殊】REG先行(BB欠損)で差枚が沈んでいる、狙い目の「高設定 不発台」です。(REG 1/{int(1/reg_prob)})")
+                    reasons.append(f"【特殊】5000G以上回ってREG先行(BB欠損)で差枚が沈んでいる、狙い目の「高設定 不発台」です。(REG 1/{int(1/reg_prob)})")
                 else:
                     reasons.append(f"【特殊】REG先行かつREG確率が設定5以上(1/{int(1/reg_prob)})の「高設定台」です。")
         elif big >= reg and big_prob >= spec_big_5:
             reasons.append(f"【特殊】BIG先行(1/{int(big_denom)})でBIG確率が設定5以上をキープしています。BIGヒキ強台の据え置き狙いとして期待できます。")
+                    reasons.append(f"【特殊】5000G以上回ってREG先行かつREG確率が設定5以上(1/{int(1/reg_prob)})の「高設定台」です。")
+        elif big >= reg and big_prob >= spec_big_5 and games >= 5000:
+            reasons.append(f"【特殊】5000G以上回ってBIG先行(1/{int(big_denom)})でBIG確率が設定5以上をキープしています。BIGヒキ強台の据え置き狙いとして期待できます。")
         else:
             if reg_prob > (1/280): reasons.append(f"前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
             elif reg_prob > (1/350): reasons.append(f"REG確率(1/{int(1/reg_prob)})が悪くなく、粘る価値があります。")
+            if reg_prob > (1/280) and games >= 5000: reasons.append(f"5000G以上回って前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
+            elif reg_prob > (1/350) and games >= 5000: reasons.append(f"5000G以上回ってREG確率(1/{int(1/reg_prob)})が悪くなく、粘る価値があります。")
+            elif reg_prob > (1/280) and games >= 3000: reasons.append(f"3000G以上回って前日のREG確率が**1/{int(1/reg_prob)}**と高設定水準です。")
+            elif reg_prob > (1/350) and games >= 3000: reasons.append(f"3000G以上回ってREG確率(1/{int(1/reg_prob)})が悪くなく、粘る価値があります。")
         
         e_avg = row.get('event_avg_diff', 0)
         if e_avg > 150: reasons.append(f"今日はイベント特定日(平均+{int(e_avg)}枚)のため期待値が高いです。")
