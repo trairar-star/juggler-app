@@ -1926,7 +1926,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
                 'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
                 'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
-                'shop_heavy_lose_rate': '店舗: 当日大負け率(-1000枚以下)',
+                'prev_island_reg_prob': '前日: 島全体のREG確率', 'shop_heavy_lose_rate': '店舗: 当日大負け率(-1000枚以下)',
                 'shop_play_rate': '店舗: 当日遊べる割合(±500枚以内)',
                 'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
                 'is_new_machine': '台: 新台導入(導入後7日以内)',

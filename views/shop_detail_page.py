@@ -76,7 +76,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 'prev_event_rank_score': '前日(特日)ランク', 'prev_REG確率': '前々日 REG確率', 'prev_累計ゲーム': '前々日 累計G数',
                 'shop_avg_diff': '店舗 当日平均', 'island_avg_diff': '島 平均差枚',
                 'shop_median_diff': '店舗 当日中央値', 'shop_high_rate': '店舗 高設定率', 'island_high_rate': '島 高設定率',
-                'shop_heavy_lose_rate': '店舗 大負け率', 'shop_play_rate': '店舗 遊べる割合',
+                'prev_island_reg_prob': '前日 島REG確率', 'shop_heavy_lose_rate': '店舗 大負け率', 'shop_play_rate': '店舗 遊べる割合',
                 'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
                 'shop_7days_avg_diff': '店舗 直近7日平均', 'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
                 'machine_30days_avg_diff': '機種 30日平均', 'machine_avg_diff': '機種 当日平均', 'machine_median_diff': '機種 当日中央値',
@@ -92,7 +92,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             }
             
             st.markdown(f"**🌟 この店舗のAI評価 決定要因 (トップ10):**")
-            st.caption("AIはこの店舗の傾向として、以下の10個の指標を特に重視しています。\n(「🔼大きいほど+」は数値が高いほど、「🔽小さいほど+」は数値が低い(凹んでいる)ほど、AIの評価が上がることを意味します)")
+            st.caption("AIはこの店舗の傾向として、以下の10個の指標を特に重視しています。")
             
             top10 = imp_shop.head(10)
             cols1 = st.columns(5)
@@ -103,11 +103,22 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 f_key = imp_row['feature']
                 f_name = feature_name_map.get(f_key, f_key)
                 corr = imp_row.get('correlation', 0)
-                
-                # どちらも評価にプラスであることを強調するテキスト
-                corr_str = "🔼 大きいほど+" if corr >= 0 else "🔽 小さいほど+"
-                
                 val = row.get(f_key, '-')
+                
+                # 特徴量の種類に応じて、直感的な表現に変える
+                if '確率' in f_key and '比率' not in f_name:
+                    corr_str = "🔼 確率が良いほど+" if corr >= 0 else "🔽 確率が悪いほど+"
+                elif '差枚' in f_key or '吸込み' in f_name:
+                    corr_str = "🔼 出ているほど+" if corr >= 0 else "🔽 凹んでいるほど+"
+                elif 'ゲーム' in f_key or f_key == '累計ゲーム' or 'G数' in f_name:
+                    corr_str = "🔼 回されているほど+" if corr >= 0 else "🔽 放置されているほど+"
+                elif '日数' in f_name:
+                    corr_str = "🔼 続くほど+" if corr >= 0 else "🔽 少ないほど+"
+                elif f_key.startswith('is_') or 'フラグ' in f_name or ('日' in f_name and isinstance(val, (int, float)) and val in [0,1]):
+                    corr_str = "🔼 該当すれば+" if corr >= 0 else "🔽 該当しない方が+"
+                else:
+                    corr_str = "🔼 大きいほど+" if corr >= 0 else "🔽 小さいほど+"
+                
                 if isinstance(val, (int, float)) and not pd.isna(val):
                     if f_key.startswith('is_') or 'フラグ' in f_name or ('日' in f_name and val in [0,1]):
                         val_str = "あり" if val == 1 else "なし"
@@ -958,10 +969,10 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             base_cols = ['AI順位', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
             display_cols = [c for c in base_cols if c in df_display.columns]
 
-            # データフレームの表示設定 (Pandas Stylerを使って赤いバーを描画)
+            # データフレームの表示設定 (Pandas Stylerを使って緑いバーを描画)
             styled_display = df_display[display_cols]
             if '予想設定5以上確率' in display_cols:
-                styled_display = styled_display.style.bar(subset=['予想設定5以上確率'], color='rgba(255, 75, 75, 0.6)', vmin=0, vmax=100)
+                styled_display = styled_display.style.bar(subset=['予想設定5以上確率'], color='rgba(76, 175, 80, 0.6)', vmin=0, vmax=100)
         
             st.dataframe(
                 styled_display,
