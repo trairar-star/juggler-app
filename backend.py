@@ -2687,7 +2687,6 @@ def _postprocess_predictions(predict_df, train_df):
         is_setting5_over = False
         if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
             set5_reg_prob_threshold = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
-            if games >= 3000 and reg_prob >= set5_reg_prob_threshold:
             if games >= 5000 and reg_prob >= set5_reg_prob_threshold:
                 is_setting5_over = True
 
@@ -2717,8 +2716,7 @@ def _postprocess_predictions(predict_df, train_df):
                 else:
                     reasons.append(f"【特殊】REG先行かつREG確率が設定5以上(1/{int(1/reg_prob)})の「高設定台」です。")
         elif big >= reg and big_prob >= spec_big_5:
-            reasons.append(f"【特殊】BIG先行(1/{int(big_denom)})でBIG確率が設定5以上をキープしています。BIGヒキ強台の据え置き狙いとして期待できます。")
-                    reasons.append(f"【特殊】5000G以上回ってREG先行かつREG確率が設定5以上(1/{int(1/reg_prob)})の「高設定台」です。")
+            reasons.append(f"【特殊】5000G以上回ってREG先行かつREG確率が設定5以上(1/{int(1/reg_prob)})の「高設定台」です。")
         elif big >= reg and big_prob >= spec_big_5 and games >= 5000:
             reasons.append(f"【特殊】5000G以上回ってBIG先行(1/{int(big_denom)})でBIG確率が設定5以上をキープしています。BIGヒキ強台の据え置き狙いとして期待できます。")
         else:
