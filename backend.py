@@ -487,6 +487,11 @@ def load_data():
         else:
             df = target_raw_df
 
+        # --- 重複データの排除 (スプレッドシート上の二重登録を防ぐ) ---
+        shop_col_name = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
+        dup_subset = [shop_col_name, '台番号', date_col] if shop_col_name else ['台番号', date_col]
+        df = df.drop_duplicates(subset=dup_subset, keep='last').reset_index(drop=True)
+
         # --- データ型のダウンキャストによるメモリ最適化 ---
         for col in df.select_dtypes(include=['float64']).columns:
             df[col] = df[col].astype('float32')
@@ -1701,6 +1706,8 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             scores_to_merge = df_daily_scores[['店名', '予測対象日', '予測平均差枚']].copy()
             scores_to_merge = scores_to_merge.rename(columns={'予測対象日': '対象日付', '予測平均差枚': 'prev_day_shop_predicted_avg_diff'})
             scores_to_merge['対象日付'] = pd.to_datetime(scores_to_merge['対象日付'], errors='coerce')
+            
+            scores_to_merge = scores_to_merge.drop_duplicates(subset=['店名', '対象日付'], keep='last')
             
             df = pd.merge(df, scores_to_merge, on=['店名', '対象日付'], how='left')
             
