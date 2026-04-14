@@ -7,7 +7,7 @@ import altair as alt # type: ignore
 import backend
 from utils import get_confidence_indicator
 
-def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw, df_events, specs):
+def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw, df_events, specs, df_importance=None):
     """店舗別詳細ページで、ランキング上位台の詳細情報を表示するExpanderを描画する"""
     shop_name = row.get(shop_col, '')
     machine_name = row.get('機種名', '')
@@ -60,9 +60,47 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         else:
             st.metric("推定🍇確率", "-")
     
+    # --- 新規追加: 店舗ごとの重要特徴量トップ5の動的表示 ---
+    if df_importance is not None and not df_importance.empty:
+        imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
+        if not imp_shop.empty:
+            feature_name_map = {
+                '累計ゲーム': '前日 累計G数', 'REG確率': '前日 REG確率', 'BIG確率': '前日 BIG確率', '差枚': '前日 差枚数', 
+                '末尾番号': '台番号 末尾', 'target_weekday': '予測日 曜日', 'target_date_end_digit': '予測日 日付末尾', 
+                'weekday_avg_diff': '店舗 曜日平均', 'mean_7days_diff': '台 直近7日平均', 'win_rate_7days': '台 7日間高設定率', 
+                '連続マイナス日数': '台 連続凹み日数', '連続低稼働日数': '台 連続放置日数', 'neighbor_avg_diff': '両隣 平均差枚', 
+                'event_rank_score': 'イベント ランク', 'prev_差枚': '前々日 差枚数', 'prev_REG確率': '前々日 REG確率', 
+                'shop_avg_diff': '店舗 当日平均', 'island_avg_diff': '島 平均差枚', 'relative_games_ratio': '台 相対稼働率', 
+                'shop_7days_avg_diff': '店舗 直近7日平均', 'machine_30days_avg_diff': '機種 直近30日平均',
+                'prev_unlucky_gap': '前日 BB欠損度', 'predicted_diff': 'AI予測 差枚数', 'is_corner': '角台フラグ'
+            }
+            
+            st.markdown(f"**🌟 この店舗のAI評価 決定要因 (トップ5):**")
+            st.caption("AIはこの店舗の傾向として、以下の5つの指標を特に重視しています。(🔻青色のマイナス相関は「数値が低い(凹んでいる)ほど高評価になる」という意味です)")
+            
+            top5 = imp_shop.head(5)
+            cols = st.columns(5)
+            
+            for idx, (_, imp_row) in enumerate(top5.iterrows()):
+                f_key = imp_row['feature']
+                f_name = feature_name_map.get(f_key, f_key)
+                corr = imp_row.get('correlation', 0)
+                corr_str = "🔴プラス相関" if corr >= 0 else "🔵マイナス相関"
+                
+                val = row.get(f_key, '-')
+                if isinstance(val, (int, float)) and not pd.isna(val):
+                    if '確率' in f_key and val > 0 and val < 1: val_str = f"1/{int(1/val)}"
+                    elif '差枚' in f_key: val_str = f"{int(val):+d}枚"
+                    elif 'ゲーム' in f_key or f_key == '累計ゲーム': val_str = f"{int(val)}G"
+                    else: val_str = str(int(val)) if float(val).is_integer() else f"{val:.2f}"
+                else: val_str = str(val)
+                    
+                with cols[idx]:
+                    st.metric(f_name, val_str, delta=corr_str, delta_color="normal" if corr>=0 else "inverse")
+
     # --- 新規追加: AI評価用 詳細特徴量データ ---
-    st.markdown("**🔍 AI評価用 詳細特徴量データ:**")
-    st.caption("AIが裏側でスコア計算に使用している数値です。根拠の文章に現れない加点の理由（両隣の状況や機種の強さなど）を推測するのに役立ちます。")
+    st.markdown("**🔍 その他のサブ特徴量データ:**")
+    st.caption("根拠の文章に現れない加点の理由を推測するための追加データです。")
     c_f1, c_f2, c_f3, c_f4 = st.columns(4)
     with c_f1:
         st.metric("前々日差枚", f"{int(row.get('prev_差枚', 0)):+d}枚" if pd.notna(row.get('prev_差枚')) else "-")
@@ -930,7 +968,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 label = f"{label_prefix}#{machine_no} {machine_name} ({prob_val}%)"
                 
                 with st.expander(label, expanded=(i == 0)):
-                    _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs)
+                    _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs, df_importance)
+                    
+            st.info("💡 **なぜこの台の期待度が高くなったか、もっと詳しく知りたいですか？**\nサイドバーの「🤖 AIチャット相談」を開き、データアナリストに「〇〇番台の評価理由を詳しく分析して」と質問すると、AIが全データをもとに論理的に解説してくれます！")
 
     with tab_trend:
         if selected_shop == '全て':
