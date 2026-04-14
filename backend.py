@@ -19,7 +19,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.10.0" 
+APP_VERSION = "v4.11.0" 
 
 # ---------------------------------------------------------
 # 共通判定ロジック
@@ -2004,7 +2004,11 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             else:
                 shop_train = shop_df_full.copy()
                 
-            if len(shop_train) >= 150: # ノイズ過学習防止のため、最低サンプル数を引き上げ
+            y_shop_check = shop_train['target']
+            
+            # ノイズ過学習防止と、正例(当たり台)が少なすぎて確率が0%に張り付くバグを防ぐため、
+            # 最低サンプル数150件 ＋ 正例が5件以上ある場合のみ専用モデルを構築する
+            if len(shop_train) >= 150 and y_shop_check.sum() >= 5:
                 X_shop = shop_train[features]
                 y_shop = shop_train['target']
                 sw_shop = None
@@ -2057,9 +2061,10 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     if 'target_weekday' in train_df_common.columns:
         for wd in sorted(train_df_common['target_weekday'].unique()):
             wd_train = train_df_common[train_df_common['target_weekday'] == wd]
-            if len(wd_train) >= 150:
+            y_wd_check = wd_train['target']
+            if len(wd_train) >= 150 and y_wd_check.sum() >= 5:
                 X_wd = wd_train[features]
-                y_wd = wd_train['target']
+                y_wd = y_wd_check
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index).all() else None
                 
                 wd_reg = lgb.LGBMRegressor(
@@ -2095,9 +2100,10 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         train_df_ev['is_event'] = train_df_ev['イベント名'].apply(lambda x: '通常日' if x == '通常' else 'イベント日')
         for ev_type in ['通常日', 'イベント日']:
             ev_train = train_df_ev[train_df_ev['is_event'] == ev_type]
-            if len(ev_train) >= 150:
+            y_ev_check = ev_train['target']
+            if len(ev_train) >= 150 and y_ev_check.sum() >= 5:
                 X_ev = ev_train[features]
-                y_ev = ev_train['target']
+                y_ev = y_ev_check
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index).all() else None
                 
                 ev_reg = lgb.LGBMRegressor(
