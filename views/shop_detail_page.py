@@ -497,6 +497,14 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             else:
                 st.warning(f"🥶 **全店舗 回収警戒**: 本日は全店舗の予測平均差枚がマイナスで (一番マシな **{best_shop}** でも {int(best_diff)}枚)、厳しい戦いが予想されます。無理な勝負は避けるのが無難です。")
 
+        # --- 前日データ欠損アラート ---
+        if not df.empty and '対象日付' in df.columns:
+            latest_data_date = df['対象日付'].max().date()
+            pred_target_date = df['next_date'].max().date()
+            
+            if (pred_target_date - latest_data_date).days > 1:
+                st.warning(f"⚠️ **前日データ欠損**: {latest_data_date.strftime('%m/%d')} のデータがありません。AIは2日前のデータで予測しているため、精度が低下している可能性があります。")
+
         # --- � AI本日の立ち回りアドバイス (店舗個別) ---
         if selected_shop != '全て' and not df.empty:
             st.markdown("### 💬 AI本日の立ち回りアドバイス")

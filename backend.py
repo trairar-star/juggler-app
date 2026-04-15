@@ -711,7 +711,10 @@ def save_prediction_log(df):
         if 'next_date' in save_df.columns:
             save_df['予測対象日'] = save_df['next_date']
         else:
-            save_df['予測対象日'] = save_df['対象日付'] + pd.Timedelta(days=1)
+            # 確実に予測対象日を生成する
+            max_date_in_df = pd.to_datetime(save_df['対象日付']).max()
+            target_date = max_date_in_df + pd.Timedelta(days=1)
+            save_df['予測対象日'] = target_date
             
         for col in save_df.columns:
             if pd.api.types.is_datetime64_any_dtype(save_df[col]):
