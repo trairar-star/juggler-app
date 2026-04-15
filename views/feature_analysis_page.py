@@ -1956,6 +1956,10 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス',
                 'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
                 'is_low_play_high_reg': '複合: 前日低稼働(1000-3000G)＆高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜日＆週間大凹み',
+                'trend_v_recovery': '波: V字反発(負→勝)',
+                'trend_cont_lose': '波: 連続凹み(負→負)',
+                'trend_cont_win': '波: 連続据え(勝→勝)',
+                'trend_down_rebound': '波: 上げ戻し(勝→負)',
                 'predicted_diff': 'AI予測: 予測差枚数(ST)'
             }
     

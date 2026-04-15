@@ -1819,6 +1819,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_prev_low_reg_and_good_diff'] = ((df['prev_REG確率'] < spec_reg) & (df['prev_差枚'] > 0)).astype(int)
         df['prev_reg_reliability_score'] = np.where(spec_reg > 0, np.clip(df['prev_REG確率'] / spec_reg, 0, 2.0) * (df['prev_累計ゲーム'] / 1000.0), 0)
 
+    # --- 新規追加: 2日間の波(トレンド) 複合特徴量 ---
+    if 'prev_差枚' in df.columns and '差枚' in df.columns:
+        df['trend_v_recovery'] = ((df['prev_差枚'] < 0) & (df['差枚'] > 0)).astype(int)
+        df['trend_cont_lose'] = ((df['prev_差枚'] < 0) & (df['差枚'] < 0)).astype(int)
+        df['trend_cont_win'] = ((df['prev_差枚'] > 0) & (df['差枚'] > 0)).astype(int)
+        df['trend_down_rebound'] = ((df['prev_差枚'] > 0) & (df['差枚'] < 0)).astype(int)
+
     # --- ノイズ対策: 低稼働データの確率系特徴量を無効化 ---
     # 以前は2000G未満を0に丸めていたが、低稼働台のポテンシャルを見抜くため1000G未満に緩和
     low_kado_mask = df['累計ゲーム'] < 1000
@@ -1936,7 +1943,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # 一時的に作成したフラグは削除
     df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end'], errors='ignore')
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count']
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count', 'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_high_rate', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg', 'weekday_high_rate', 'weekday_avg_diff']:
         if f in df.columns: features.append(f)
         

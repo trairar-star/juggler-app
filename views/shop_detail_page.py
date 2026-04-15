@@ -94,6 +94,10 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス',
                 'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
                 'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
+                'trend_v_recovery': '波 V字反発(負→勝)',
+                'trend_cont_lose': '波 連続凹み(負→負)',
+                'trend_cont_win': '波 連続据え(勝→勝)',
+                'trend_down_rebound': '波 上げ戻し(勝→負)',
                 'shop_pred_diff_7d_avg': '店舗 AI予測7日平均', 'predicted_diff': 'AI予測 差枚数'
             }
             
