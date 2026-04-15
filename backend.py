@@ -1494,16 +1494,6 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             )
         )
 
-    # 【高速化】機種スペックのマッピングをapplyから辞書マッピングに変更
-    unique_machines = df['機種名'].unique()
-    specs = get_machine_specs()
-    reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
-    tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
-    reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
-    spec_reg = df['機種名'].map(reg_map)
-    spec_tot = df['機種名'].map(tot_map)
-    spec_reg3 = df['機種名'].map(reg3_map)
-
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
     if 'BIG' in df.columns: df['next_BIG'] = df.groupby(group_keys)['BIG'].shift(-1)
     if 'REG' in df.columns: df['next_REG'] = df.groupby(group_keys)['REG'].shift(-1)
@@ -1640,6 +1630,26 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             df['prev_event_rank_score'] = df['prev_event_rank_score'].fillna(0)
         else:
             df['prev_event_rank_score'] = 0
+
+    # 【高速化】機種スペックのマッピングを上に移動して is_win を先に計算
+    unique_machines = df['機種名'].unique()
+    specs = get_machine_specs()
+    reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
+    tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
+    reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
+    spec_reg = df['機種名'].map(reg_map)
+    spec_tot = df['機種名'].map(tot_map)
+    spec_reg3 = df['機種名'].map(reg3_map)
+
+    # 先に当日の高設定挙動フラグ(is_win)を計算
+    df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
+    df['is_win'] = (
+        (df['累計ゲーム'] >= 3000) & 
+        (
+            (df['REG確率'] >= spec_reg) | 
+            ((df['total_prob'] >= spec_tot) & (df['REG確率'] >= spec_reg3))
+        )
+    ).astype(int)
 
     # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更
     df = df.sort_values('対象日付').reset_index(drop=True)

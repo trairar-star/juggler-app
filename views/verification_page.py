@@ -1144,7 +1144,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                         status_text.text("✅ 全店舗のOptunaチューニングが完了しました！")
                         st.toast("✅ 全店舗のAIパラメータを最適化しました！")
-                        st.cache_data.clear(); st.rerun()
+                        st.rerun()
 
             st.divider()
             with st.expander("🤖 総合原因分析 (AIの自己診断レポート)", expanded=True):
@@ -1564,13 +1564,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda
             }
             backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-            st.cache_data.clear(); st.rerun()
+            st.rerun()
             
         if reset_btn:
             if selected_shop in st.session_state["shop_hyperparams"]:
                 del st.session_state["shop_hyperparams"][selected_shop]
                 backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-                st.cache_data.clear(); st.rerun()
+                st.rerun()
                 
         if test_btn:
             with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
@@ -1812,7 +1812,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     }
                     backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                     st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")
-                    st.cache_data.clear(); st.rerun()
+                    st.rerun()
 
         with st.expander("🔧 AIパラメータ調整用のシミュレーション結果 (答え合わせ)", expanded=True):
             st.info("💡 **この表の役割について**\nこの表はAIが「答えを知っている状態」でのテスト結果であり、未来の勝率を表すものではありません。**「AIのパラメータ設定を変更した直後」**や**「AIが過学習（過去のまぐれを丸暗記）していないかの確認」**を行うための開発・メンテナンス用ツールです。")
