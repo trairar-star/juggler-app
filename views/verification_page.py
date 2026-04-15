@@ -1037,7 +1037,29 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         st.warning("チューニング対象の店舗がありません。")
                     else:
                         import lightgbm as lgb
-                        base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_median_diff', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                        base_features = [
+                            '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
+                            'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
+                            'mean_7days_reg_prob', 
+                            'mean_7days_reg_prob', 
+                            'mean_7days_reg_prob', 
+                            '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
+                            'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
+                            'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
+                            'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
+                            'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 
+                            'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+                            'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
+                            'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 
+                            'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 
+                            'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 
+                            'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 
+                            'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 
+                            'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 
+                            'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 
+                            'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
+                            'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'event_high_rate', 'weekday_avg_diff'
+                        ]
                         actual_features = [f for f in base_features if f in df_verify.columns]
                         cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                         
@@ -1510,14 +1532,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
         
         with st.form(f"hp_form_{selected_shop}"):
-            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1, help="AIが学習に使う過去データの期間です。店の傾向が頻繁に変わるなら短く（1〜3ヶ月）、安定しているなら長く（6ヶ月以上）設定するのが有効です。")
-            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、やりすぎると過学習（過去の偶然を必勝法と勘違いする）のリスクが増えます。学習率とセットで調整し、上げすぎると逆に期待度が下がる場合は過学習を疑ってください。")
-            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01, help="1回の学習でどれだけ賢くなるかの度合い。小さいほど慎重に学習し、過学習しにくくなりますが、多くの学習回数が必要になります。基本的には0.01〜0.05の範囲が推奨されます。")
-            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1, help="モデルが作成できる分岐（葉）の最大数。大きいほど複雑な条件分岐を作れますが、過学習しやすくなります。深さ制限とセットで調整し、上げすぎると逆に期待度が下がる場合は過学習を疑ってください。")
-            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1, help="条件分岐の深さ。-1は無制限。深いほど複雑な条件の組み合わせ（例:『AかつBかつC』）を学習できますが、過学習しやすくなります。通常は3〜7程度が適切です。")
-            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10, help="1つの分岐（葉）を作るために必要な最小サンプル数。大きいほど、より多くのデータに当てはまる一般的なルールを作るようになり、過学習を抑制します。過学習気味ならこの値を大きくします。")
-            hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくすると、AIが「予測に不要」と判断した特徴量（例: この店では関係ない『角台』など）を完全に無視しやすくなります。特徴量が多い時に有効です。")
-            hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくすると、AIが特定の特徴量だけに極端に依存することを防ぎ、よりバランスの取れた予測をするようになります。")
+            hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1, help="店の傾向が頻繁に変わるなら短く（1〜3ヶ月）、安定しているなら長く（6ヶ月以上）設定するのが有効です。")
+            hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、過学習のリスクが増えます。過学習を抑えるには、学習率を下げつつこの値を調整します。")
+            hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01, help="1回の学習でどれだけ賢くなるかの度合い。小さいほど慎重に学習し、過学習しにくくなります。基本的には0.01〜0.05の範囲が推奨されます。")
+            hp_num_leaves = st.slider("葉の数 (num_leaves)", 10, 127, int(current_hp.get('num_leaves', 15)), step=1, help="モデルが作成できる分岐（葉）の最大数。大きいほど複雑な条件分岐を作れますが、過学習しやすくなります。過学習を抑えるにはこの値を小さくします。")
+            hp_max_depth = st.slider("深さ制限 (max_depth)", -1, 15, int(current_hp.get('max_depth', 4)), step=1, help="条件分岐の深さ。-1は無制限。深いほど複雑な条件の組み合わせを学習できますが、過学習しやすくなります。過学習を抑えるにはこの値を小さくします (例: 3〜7)。")
+            hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10, help="1つの分岐（葉）を作るために必要な最小サンプル数。大きいほど、より一般的なルールを作るようになり、過学習を抑制します。")
+            hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくするほど、予測に不要な特徴量を無視しやすくなり、過学習を抑制します。")
+            hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくするほど、AIが特定の特徴量に極端に依存するのを防ぎ、過学習を抑制します。")
             
             cols = st.columns(4)
             submitted = cols[0].form_submit_button("保存して再分析", type="primary")
@@ -1543,7 +1565,27 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if test_btn:
             with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
                 import lightgbm as lgb
-                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_median_diff', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                base_features = [
+                    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
+                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
+                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', 
+                    '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
+                    'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
+                    'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
+                    'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
+                    'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 
+                    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+                    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
+                    'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 
+                    'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 
+                    'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 
+                    'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 
+                    'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 
+                    'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 
+                    'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 
+                    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
+                    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'event_high_rate', 'weekday_avg_diff'
+                ]
                 actual_features = [f for f in base_features if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                 
@@ -1657,7 +1699,27 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if auto_tune_btn:
             with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
                 import lightgbm as lgb
-                base_features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続低稼働日数', 'is_new_machine', 'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'neighbor_avg_diff', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'relative_games_ratio', 'shop_7days_avg_diff', 'machine_30days_avg_diff', 'machine_median_diff', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'machine_no_30days_avg_diff']
+                base_features = [
+                    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
+                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
+                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', 
+                    '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
+                    'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
+                    'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
+                    'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
+                    'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 
+                    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+                    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
+                    'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 
+                    'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 
+                    'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 
+                    'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 
+                    'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 
+                    'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 
+                    'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 
+                    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
+                    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'event_high_rate', 'weekday_avg_diff'
+                ]
                 actual_features = [f for f in base_features if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                 
@@ -1764,9 +1826,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sim_df['対象日付_merge_key'] = pd.to_datetime(sim_df['対象日付']).dt.normalize()
                     sim_df = pd.merge(sim_df, daily_avg_score_df[['対象日付', '予測営業区分']], left_on='対象日付_merge_key', right_on='対象日付', how='left', suffixes=('', '_drop'))
                     sim_df = sim_df.drop(columns=['対象日付_merge_key', '対象日付_drop'], errors='ignore')
-                    sim_df['予測営業区分'] = sim_df['予測営業区分'].fillna("⚖️ 通常営業予測 (10~19%)")
+                    sim_df['予測営業区分'] = sim_df['予測営業区分'].fillna("⚖️ 通常営業予測")
                 else:
-                    sim_df['予測営業区分'] = "⚖️ 通常営業予測 (10~19%)"
+                    sim_df['予測営業区分'] = "⚖️ 通常営業予測"
                     
                 tabs_sim = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
                 
@@ -1811,9 +1873,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     )
 
                 with tabs_sim[0]: render_sim_stats(sim_df)
-                with tabs_sim[1]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🔥 還元日予測 (20%~)"])
-                with tabs_sim[2]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "⚖️ 通常営業予測 (10~19%)"])
-                with tabs_sim[3]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🥶 回収日予測 (~9%)"])
+                with tabs_sim[1]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🔥 還元日予測"])
+                with tabs_sim[2]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "⚖️ 通常営業予測"])
+                with tabs_sim[3]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🥶 回収日予測"])
                 
                 with st.expander("🔍 シミュレーション詳細データを確認", expanded=False):
                     st.caption("シミュレーションで各確率帯に分類された台の具体的な日付と結果を確認できます。")

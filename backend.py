@@ -1391,53 +1391,60 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
                 ((df['island_id'] != "Unknown") & (df['island_id'] == next_island)) |
                 ((df['island_id'] == "Unknown") & (df['island_id'] == next_island) & ((next_no - df['台番号']).between(1, 3)))
             )
-            
-            p_val = np.where(is_prev, prev_diff, np.nan)
-            n_val = np.where(is_next, next_diff, np.nan)
-            # 両隣の爆発に引っ張られないようクリップ処理を適用 (-2000枚 ～ +2000枚)
-            p_val_clip = np.clip(p_val, -2000, 2000)
-            n_val_clip = np.clip(n_val, -2000, 2000)
-            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val_clip, 'n': n_val_clip}).mean(axis=1).fillna(0)
-            
-            df['left_diff'] = np.where(is_prev, prev_diff, 0)
-            df['right_diff'] = np.where(is_next, next_diff, 0)
-            df['neighbor_positive_count'] = (np.where(is_prev & (prev_diff > 0), 1, 0) + np.where(is_next & (next_diff > 0), 1, 0))
-            
-            # 元の並び順に戻す
-            df = df.sort_values([shop_col, '対象日付', '台番号']).reset_index(drop=True)
         else:
             df = df.sort_values([shop_col, '対象日付', '台番号'])
             prev_shop = df[shop_col].shift(1)
             prev_date = df['対象日付'].shift(1)
             prev_no = df['台番号'].shift(1)
-            prev_diff = df['差枚'].shift(1)
             next_shop = df[shop_col].shift(-1)
             next_date = df['対象日付'].shift(-1)
             next_no = df['台番号'].shift(-1)
-            next_diff = df['差枚'].shift(-1)
             
             is_prev = (df[shop_col] == prev_shop) & (df['対象日付'] == prev_date) & ((df['台番号'] - prev_no).between(1, 3))
             is_next = (df[shop_col] == next_shop) & (df['対象日付'] == next_date) & ((next_no - df['台番号']).between(1, 3))
         
-            p_val = np.where(is_prev, prev_diff, np.nan)
-            n_val = np.where(is_next, next_diff, np.nan)
-            p_val_clip = np.clip(p_val, -2000, 2000)
-            n_val_clip = np.clip(n_val, -2000, 2000)
-            df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val_clip, 'n': n_val_clip}).mean(axis=1).fillna(0)
+        prev_diff = df['差枚'].shift(1)
+        next_diff = df['差枚'].shift(-1)
+        
+        p_val = np.where(is_prev, prev_diff, np.nan)
+        n_val = np.where(is_next, next_diff, np.nan)
+        # 両隣の爆発に引っ張られないようクリップ処理を適用 (-2000枚 ～ +2000枚)
+        p_val_clip = np.clip(p_val, -2000, 2000)
+        n_val_clip = np.clip(n_val, -2000, 2000)
+        df['neighbor_avg_diff'] = pd.DataFrame({'p': p_val_clip, 'n': n_val_clip}).mean(axis=1).fillna(0)
+        
+        df['left_diff'] = np.where(is_prev, prev_diff, 0)
+        df['right_diff'] = np.where(is_next, next_diff, 0)
+        df['neighbor_positive_count'] = (np.where(is_prev & (prev_diff > 0), 1, 0) + np.where(is_next & (next_diff > 0), 1, 0))
+        
+        # 両隣(並び3台)の合算REG確率を計算
+        prev_reg = df['REG'].shift(1)
+        next_reg = df['REG'].shift(-1)
+        prev_g = df['累計ゲーム'].shift(1)
+        next_g = df['累計ゲーム'].shift(-1)
             
-            df['left_diff'] = np.where(is_prev, prev_diff, 0)
-            df['right_diff'] = np.where(is_next, next_diff, 0)
-            df['neighbor_positive_count'] = (np.where(is_prev & (prev_diff > 0), 1, 0) + np.where(is_next & (next_diff > 0), 1, 0))
-            
-            # 両隣(並び3台)の合算REG確率を計算
-            prev_reg = df['REG'].shift(1)
-            next_reg = df['REG'].shift(-1)
-            prev_g = df['累計ゲーム'].shift(1)
-            next_g = df['累計ゲーム'].shift(-1)
-            
-            neighbor_reg_sum = df['REG'] + np.where(is_prev, prev_reg, 0) + np.where(is_next, next_reg, 0)
-            neighbor_g_sum = df['累計ゲーム'] + np.where(is_prev, prev_g, 0) + np.where(is_next, next_g, 0)
-            df['neighbor_reg_prob'] = np.where(neighbor_g_sum > 0, neighbor_reg_sum / neighbor_g_sum, 0)
+        neighbor_reg_sum_3 = df['REG'] + np.where(is_prev, prev_reg, 0) + np.where(is_next, next_reg, 0)
+        neighbor_g_sum_3 = df['累計ゲーム'] + np.where(is_prev, prev_g, 0) + np.where(is_next, next_g, 0)
+        df['neighbor_reg_prob'] = np.where(neighbor_g_sum_3 > 0, neighbor_reg_sum_3 / neighbor_g_sum_3, 0)
+
+        # --- 新規: 両隣のみのデータに基づく特徴量 ---
+        neighbor_reg_sum = np.where(is_prev, prev_reg, 0) + np.where(is_next, next_reg, 0)
+        neighbor_g_sum = np.where(is_prev, prev_g, 0) + np.where(is_next, next_g, 0)
+        neighbor_count = np.where(is_prev, 1, 0) + np.where(is_next, 1, 0)
+        
+        df['neighbor_only_reg_prob'] = np.where(neighbor_g_sum > 0, neighbor_reg_sum / neighbor_g_sum, 0)
+        df['neighbor_only_avg_g'] = np.where(neighbor_count > 0, neighbor_g_sum / neighbor_count, 0)
+        
+        is_prev_high = is_prev & (prev_g >= 3000) & ((prev_reg / prev_g) >= 1.0/260.0)
+        is_next_high = is_next & (next_g >= 3000) & ((next_reg / next_g) >= 1.0/260.0)
+        df['neighbor_high_setting_count'] = np.where(is_prev_high, 1, 0) + np.where(is_next_high, 1, 0)
+        
+        df['is_neighbor_high_reg'] = ((df['neighbor_only_reg_prob'] >= 1.0/260.0) & (neighbor_g_sum >= 4000)).astype(int)
+        df['neighbor_reg_reliability_score'] = np.clip(df['neighbor_only_reg_prob'] / (1.0/260.0), 0, 2.0) * (df['neighbor_only_avg_g'] / 1000.0)
+
+        if 'island_id' in df.columns:
+            # 元の並び順に戻す
+            df = df.sort_values([shop_col, '対象日付', '台番号']).reset_index(drop=True)
             
     if shop_col and '末尾番号' in df.columns and '対象日付' in df.columns:
         df['end_digit_total_g'] = df.groupby([shop_col, '対象日付', '末尾番号'])['累計ゲーム'].transform('sum')
@@ -1453,6 +1460,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         
     for col in ['neighbor_reg_prob', 'end_digit_reg_prob']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
+        
+    for col in ['neighbor_high_setting_count', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score']:
+        if col in df.columns:
+            df[col] = df.groupby(group_keys)[col].shift(1).fillna(0)
     
     if '推定ぶどう確率' in df.columns:
         df['prev_推定ぶどう確率_raw'] = df.groupby(group_keys)['推定ぶどう確率'].shift(1)
@@ -1483,6 +1494,16 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             )
         )
 
+    # 【高速化】機種スペックのマッピングをapplyから辞書マッピングに変更
+    unique_machines = df['機種名'].unique()
+    specs = get_machine_specs()
+    reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
+    tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
+    reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
+    spec_reg = df['機種名'].map(reg_map)
+    spec_tot = df['機種名'].map(tot_map)
+    spec_reg3 = df['機種名'].map(reg3_map)
+
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
     if 'BIG' in df.columns: df['next_BIG'] = df.groupby(group_keys)['BIG'].shift(-1)
     if 'REG' in df.columns: df['next_REG'] = df.groupby(group_keys)['REG'].shift(-1)
@@ -1491,16 +1512,6 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に変更 ---
     df['next_reg_prob'] = df['next_REG'] / df['next_累計ゲーム'].replace(0, np.nan)
     df['next_total_prob'] = (df['next_BIG'].fillna(0) + df['next_REG'].fillna(0)) / df['next_累計ゲーム'].replace(0, np.nan)
-    specs = get_machine_specs()
-    
-    # 【高速化】機種スペックのマッピングをapplyから辞書マッピングに変更
-    unique_machines = df['機種名'].unique()
-    reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
-    tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
-    reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
-    spec_reg = df['機種名'].map(reg_map)
-    spec_tot = df['機種名'].map(tot_map)
-    spec_reg3 = df['機種名'].map(reg3_map)
     
     # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に設定 ---
     df['target'] = (
@@ -1651,6 +1662,8 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
 
     df = df.sort_values(sort_keys).reset_index(drop=True)
     df['shifted_diff'] = df.groupby(group_keys)['差枚'].shift(1)
+    df['shifted_g'] = df.groupby(group_keys)['累計ゲーム'].shift(1)
+    df['shifted_reg'] = df.groupby(group_keys)['REG'].shift(1)
     group_levels = list(range(len(group_keys))) # インデックス操作用
     
     df['mean_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
@@ -1659,16 +1672,17 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['mean_14days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=14, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_30days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=30, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
 
+    df['mean_7days_games'] = df.groupby(group_keys)['shifted_g'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
+    df['is_prev_no_play'] = (df['shifted_g'] == 0).astype(int)
+
+    # --- 新規: 週間REG確率 ---
+    # 7日間の合計REG回数と合計ゲーム数から計算し、ノイズを低減
+    rolling_7d_reg_g = df.groupby(group_keys)[['shifted_reg', 'shifted_g']].rolling(window=7, min_periods=1)
+    sum_7d_reg = rolling_7d_reg_g['shifted_reg'].sum().reset_index(level=group_levels, drop=True).fillna(0)
+    sum_7d_g = rolling_7d_reg_g['shifted_g'].sum().reset_index(level=group_levels, drop=True).fillna(0)
+    df['mean_7days_reg_prob'] = np.where(sum_7d_g > 0, sum_7d_reg / sum_7d_g, 0)
+
     # --- 勝率安定度（一撃ノイズ排除用） ---
-    df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
-    # 高設定フラグは「3000G以上回っている」条件で、信頼性の高い実績だけを評価する
-    df['is_win'] = (
-        (df['累計ゲーム'] >= 3000) & 
-        (
-            (df['REG確率'] >= spec_reg) | 
-            ((df['total_prob'] >= spec_tot) & (df['REG確率'] >= spec_reg3))
-        )
-    ).astype(int)
     df['shifted_is_win'] = df.groupby(group_keys)['is_win'].shift(1)
     df['win_rate_7days'] = df.groupby(group_keys)['shifted_is_win'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     
@@ -1734,11 +1748,15 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
 
 
     if shop_col and '機種名' in df.columns:
-        # --- ②機種ごとの扱い指標 (過去30日間のその機種の平均差枚) ---
-        machine_daily_avg = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].mean().reset_index(name='machine_daily_avg_diff')
+        # --- ②機種ごとの扱い指標 (過去30日間のその機種の平均差枚・高設定率) ---
+        machine_daily_avg = df.groupby([shop_col, '機種名', '対象日付']).agg(
+            machine_daily_avg_diff=('差枚', 'mean'),
+            machine_daily_high_rate=('is_win', 'mean')
+        ).reset_index()
         machine_daily_avg = machine_daily_avg.sort_values([shop_col, '機種名', '対象日付'])
         machine_daily_avg['machine_30days_avg_diff'] = machine_daily_avg.groupby([shop_col, '機種名'])['machine_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
-        df = pd.merge(df, machine_daily_avg[[shop_col, '機種名', '対象日付', 'machine_30days_avg_diff']], on=[shop_col, '機種名', '対象日付'], how='left')
+        machine_daily_avg['machine_30days_high_rate'] = machine_daily_avg.groupby([shop_col, '機種名'])['machine_daily_high_rate'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
+        df = pd.merge(df, machine_daily_avg[[shop_col, '機種名', '対象日付', 'machine_30days_avg_diff', 'machine_30days_high_rate']], on=[shop_col, '機種名', '対象日付'], how='left')
         
         df['machine_avg_diff'] = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].transform('mean').fillna(0)
         df['machine_median_diff'] = df.groupby([shop_col, '機種名', '対象日付'])['差枚'].transform('median').fillna(0)
@@ -1747,11 +1765,15 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['machine_play_rate'] = df.groupby([shop_col, '機種名', '対象日付'])['is_play_machine'].transform('mean').fillna(0)
 
     if shop_col:
-        # --- ③台番号（場所）ごとの扱い指標 (過去30日間のその台番号の平均差枚) ---
-        machine_no_daily_avg = df.groupby([shop_col, '台番号', '対象日付'])['差枚'].mean().reset_index(name='machine_no_daily_avg_diff')
+        # --- ③台番号（場所）ごとの扱い指標 (過去30日間のその台番号の平均差枚・高設定率) ---
+        machine_no_daily_avg = df.groupby([shop_col, '台番号', '対象日付']).agg(
+            machine_no_daily_avg_diff=('差枚', 'mean'),
+            machine_no_daily_high_rate=('is_win', 'mean')
+        ).reset_index()
         machine_no_daily_avg = machine_no_daily_avg.sort_values([shop_col, '台番号', '対象日付'])
         machine_no_daily_avg['machine_no_30days_avg_diff'] = machine_no_daily_avg.groupby([shop_col, '台番号'])['machine_no_daily_avg_diff'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
-        df = pd.merge(df, machine_no_daily_avg[[shop_col, '台番号', '対象日付', 'machine_no_30days_avg_diff']], on=[shop_col, '台番号', '対象日付'], how='left')
+        machine_no_daily_avg['machine_no_30days_high_rate'] = machine_no_daily_avg.groupby([shop_col, '台番号'])['machine_no_daily_high_rate'].transform(lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()).fillna(0)
+        df = pd.merge(df, machine_no_daily_avg[[shop_col, '台番号', '対象日付', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate']], on=[shop_col, '台番号', '対象日付'], how='left')
 
     # ソート順を元に戻す
     df = df.sort_values('original_order').drop(columns=['original_order']).reset_index(drop=True)
@@ -1766,6 +1788,12 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # --- 新規: 週間吸い込みからの還元曜日狙い 特化の特徴量 ---
     if 'mean_7days_diff' in df.columns and 'weekday_avg_diff' in df.columns:
         df['is_hot_wd_and_heavy_lose'] = ((df['weekday_avg_diff'] >= 100) & (df['mean_7days_diff'] <= -500)).astype(int)
+        
+    # --- 新規: 前日の据え置き狙い複合特徴量 ---
+    if 'prev_差枚' in df.columns and 'prev_REG確率' in df.columns:
+        df['is_prev_up_trend_and_high_reg'] = ((df['prev_差枚'] > 0) & (df['prev_REG確率'] >= spec_reg)).astype(int)
+        df['is_prev_low_reg_and_good_diff'] = ((df['prev_REG確率'] < spec_reg) & (df['prev_差枚'] > 0)).astype(int)
+        df['prev_reg_reliability_score'] = np.where(spec_reg > 0, np.clip(df['prev_REG確率'] / spec_reg, 0, 2.0) * (df['prev_累計ゲーム'] / 1000.0), 0)
 
     # --- ノイズ対策: 低稼働データの確率系特徴量を無効化 ---
     # 以前は2000G未満を0に丸めていたが、低稼働台のポテンシャルを見抜くため1000G未満に緩和
@@ -1882,10 +1910,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_moved_machine'] = 0
 
     # 一時的に作成したフラグは削除
-    df = df.drop(columns=['is_heavy_lose', 'is_play_machine'], errors='ignore')
+    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end'], errors='ignore')
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg']:
+    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count']
+    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_high_rate', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg', 'weekday_high_rate', 'weekday_avg_diff']:
         if f in df.columns: features.append(f)
         
     if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
@@ -2646,6 +2674,9 @@ def _postprocess_predictions(predict_df, train_df):
         if cons_low_util >= 3:
             reasons.append(f"【特殊】現在{int(cons_low_util)}日連続で放置(1500G未満)されています。店側の「稼働喚起のテコ入れ(見せ台)」のターゲットになる可能性があります。")
 
+        if row.get('is_prev_no_play', 0) == 1:
+            reasons.append("【特殊】前日は全く稼働しておらず(0G)、店側のアピール(設定変更・テコ入れ)のターゲットになる可能性があります。")
+
         shop_7d = row.get('shop_7days_avg_diff', 0)
         if shop_7d < -150:
             reasons.append(f"【店舗状況】店舗全体が直近1週間回収モード(平均{int(shop_7d)}枚)ですが、あえてこの台を推奨しています。")
@@ -2680,6 +2711,11 @@ def _postprocess_predictions(predict_df, train_df):
             reasons.append("【💎お宝台候補】前日はあまり回されていませんが、高設定挙動を示しており、そのまま据え置かれる(隠れ高設定)ポテンシャルがあります。")
         if row.get('is_hot_wd_and_heavy_lose', 0) == 1:
             reasons.append("【📈還元曜日×凹み反発】この店舗の強い曜日(還元日)と、直近1週間大きく凹んでいる条件が重なっており、絶好の上げリセット狙い目です。")
+
+        if row.get('is_prev_up_trend_and_high_reg', 0) == 1:
+            reasons.append("【📈右肩上がり据え置き】前日は差枚がプラスでREG確率も高設定水準です。優秀台の完全な据え置きが期待できます。")
+        if row.get('is_prev_low_reg_and_good_diff', 0) == 1:
+            reasons.append("【⚠️低REG・差枚プラス】前日は差枚がプラスですがREG確率が伴っていません。低設定の誤爆による回収リスクと、据え置きの両面をAIが評価しています。")
 
         big = row.get('BIG', 0)
         reg = row.get('REG', 0)
@@ -2760,6 +2796,13 @@ def _postprocess_predictions(predict_df, train_df):
         if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
         n_avg = row.get('neighbor_avg_diff', 0)
         if n_avg > 300: reasons.append(f"両隣が好調(平均+{int(n_avg)}枚)で、並びや全台系の可能性があります。")
+        
+        neighbor_high_count = row.get('neighbor_high_setting_count', 0)
+        if neighbor_high_count > 0:
+            reasons.append(f"【🤝並び・塊】両隣のうち{int(neighbor_high_count)}台が高設定挙動を示しており、並びの対象になっている可能性が高いです。")
+        elif row.get('is_neighbor_high_reg', 0) == 1:
+            reasons.append("【🤝並び・塊】両隣の合算REG確率が高設定水準であり、強い「並び」の根拠となっています。")
+            
         i_avg = row.get('island_avg_diff', 0)
         if i_avg > 400: reasons.append(f"所属する島全体が好調(平均+{int(i_avg)}枚)で、塊対象の可能性があります。")
         
