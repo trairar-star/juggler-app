@@ -533,7 +533,12 @@ def load_prediction_log():
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet('prediction_log')
-        df = pd.DataFrame(worksheet.get_all_records())
+        
+        # get_all_records はヘッダー異常でエラーになるため、get_all_values を使用
+        data = worksheet.get_all_values()
+        if not data or len(data) < 2: return pd.DataFrame()
+        df = pd.DataFrame(data[1:], columns=data[0])
+        
         # 古いカラム名「予想設定5以上確率」との互換性維持
         if '予想設定5以上確率' in df.columns and 'prediction_score' not in df.columns:
             df['prediction_score'] = pd.to_numeric(df['予想設定5以上確率'], errors='coerce')
@@ -553,7 +558,11 @@ def load_daily_shop_scores():
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet('daily_shop_scores')
-        df = pd.DataFrame(worksheet.get_all_records())
+        
+        data = worksheet.get_all_values()
+        if not data or len(data) < 2: return pd.DataFrame()
+        df = pd.DataFrame(data[1:], columns=data[0])
+        
         if '店舗平均期待度' in df.columns:
             df['店舗平均期待度'] = pd.to_numeric(df['店舗平均期待度'], errors='coerce')
         if '予測平均差枚' in df.columns:
@@ -838,7 +847,11 @@ def load_shop_events():
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet('shop_events')
-        df = pd.DataFrame(worksheet.get_all_records())
+        
+        data = worksheet.get_all_values()
+        if not data or len(data) < 2: return pd.DataFrame()
+        df = pd.DataFrame(data[1:], columns=data[0])
+        
         if not df.empty and 'イベント日付' in df.columns:
             df['イベント日付'] = pd.to_datetime(df['イベント日付'])
         return df
@@ -962,7 +975,11 @@ def load_island_master():
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet('island_master')
-        return pd.DataFrame(worksheet.get_all_records())
+        
+        data = worksheet.get_all_values()
+        if not data or len(data) < 2: return pd.DataFrame()
+        df = pd.DataFrame(data[1:], columns=data[0])
+        return df
     except: return pd.DataFrame()
 
 def save_island_master(shop, island_name, rule_str, main_corner="指定なし", island_type="普通"):
@@ -1066,7 +1083,11 @@ def load_my_balance():
         gc = _get_gspread_client()
         sh = gc.open_by_key(SPREADSHEET_KEY)
         worksheet = sh.worksheet('my_balance')
-        df = pd.DataFrame(worksheet.get_all_records())
+        
+        data = worksheet.get_all_values()
+        if not data or len(data) < 2: return pd.DataFrame()
+        df = pd.DataFrame(data[1:], columns=data[0])
+        
         if not df.empty and '日付' in df.columns:
             df['日付'] = pd.to_datetime(df['日付'])
         return df
@@ -1509,10 +1530,11 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
     reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
     b6_den_map = {m: specs[get_matched_spec_key(m, specs)].get('設定6', {"BIG": 260.0})["BIG"] for m in unique_machines}
-    spec_reg = df['機種名'].map(reg_map)
-    spec_tot = df['機種名'].map(tot_map)
-    spec_reg3 = df['機種名'].map(reg3_map)
-    spec_b6_den = df['機種名'].map(b6_den_map)
+    
+    df['spec_reg'] = df['機種名'].map(reg_map)
+    df['spec_tot'] = df['機種名'].map(tot_map)
+    df['spec_reg3'] = df['機種名'].map(reg3_map)
+    df['spec_b6_den'] = df['機種名'].map(b6_den_map)
 
     # 先に当日の高設定挙動フラグ(is_win)を計算
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
@@ -1520,10 +1542,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['is_win'] = (
         (df['累計ゲーム'] >= 3000) & 
         (
-            (df['REG確率'] >= spec_reg) | 
-            ((df['total_prob'] >= spec_tot) & (df['REG確率'] >= spec_reg3))
+            (df['REG確率'] >= df['spec_reg']) | 
+            ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3']))
         ) &
-        (df['BIG分母'] <= spec_b6_den + 100)
+        (df['BIG分母'] <= df['spec_b6_den'] + 100)
     ).astype(int)
 
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
@@ -1540,10 +1562,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['target'] = (
         (df['next_累計ゲーム'] >= 3000) & 
         (
-            (df['next_reg_prob'] >= spec_reg) | 
-            ((df['next_total_prob'] >= spec_tot) & (df['next_reg_prob'] >= spec_reg3))
+            (df['next_reg_prob'] >= df['spec_reg']) | 
+            ((df['next_total_prob'] >= df['spec_tot']) & (df['next_reg_prob'] >= df['spec_reg3']))
         ) &
-        (df['next_big_den'] <= spec_b6_den + 100)
+        (df['next_big_den'] <= df['spec_b6_den'] + 100)
     ).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
@@ -1815,9 +1837,9 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         
     # --- 新規: 前日の据え置き狙い複合特徴量 ---
     if 'prev_差枚' in df.columns and 'prev_REG確率' in df.columns:
-        df['is_prev_up_trend_and_high_reg'] = ((df['prev_差枚'] > 0) & (df['prev_REG確率'] >= spec_reg)).astype(int)
-        df['is_prev_low_reg_and_good_diff'] = ((df['prev_REG確率'] < spec_reg) & (df['prev_差枚'] > 0)).astype(int)
-        df['prev_reg_reliability_score'] = np.where(spec_reg > 0, np.clip(df['prev_REG確率'] / spec_reg, 0, 2.0) * (df['prev_累計ゲーム'] / 1000.0), 0)
+        df['is_prev_up_trend_and_high_reg'] = ((df['prev_差枚'] > 0) & (df['prev_REG確率'] >= df['spec_reg'])).astype(int)
+        df['is_prev_low_reg_and_good_diff'] = ((df['prev_REG確率'] < df['spec_reg']) & (df['prev_差枚'] > 0)).astype(int)
+        df['prev_reg_reliability_score'] = np.where(df['spec_reg'] > 0, np.clip(df['prev_REG確率'] / df['spec_reg'], 0, 2.0) * (df['prev_累計ゲーム'] / 1000.0), 0)
 
     # --- 新規追加: 2日間の波(トレンド) 複合特徴量 ---
     if 'prev_差枚' in df.columns and '差枚' in df.columns:
@@ -1941,7 +1963,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_moved_machine'] = 0
 
     # 一時的に作成したフラグは削除
-    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end'], errors='ignore')
+    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'BIG分母', 'total_prob'], errors='ignore')
 
     features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count', 'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound']
     for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_high_rate', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg', 'weekday_high_rate', 'weekday_avg_diff']:
