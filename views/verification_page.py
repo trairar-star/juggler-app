@@ -1045,9 +1045,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         base_features = [
                             '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
                             'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-                            'mean_7days_reg_prob', 
-                            'mean_7days_reg_prob', 
-                            'mean_7days_reg_prob', 
+                            'mean_7days_reg_prob',
                             '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
                             'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
                             'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
@@ -1578,7 +1576,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 base_features = [
                     '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
                     'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', 
+                    'mean_7days_reg_prob', 
                     '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
                     'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
                     'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
@@ -1712,7 +1710,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 base_features = [
                     '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
                     'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', 
+                    'mean_7days_reg_prob', 
                     '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
                     'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
                     'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 

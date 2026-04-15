@@ -302,6 +302,8 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
         if g >= penalty_g:
             reg_prob_den = g / act_r if act_r > 0 else 9999
             tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
+            big_prob_den = g / act_b if act_b > 0 else 9999
+            spec_b6_den = 1.0 / p_b_6
             
             penalty_val = 0
             if reg_prob_den > 400: penalty_val += 30
@@ -309,6 +311,12 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
                 
             if tot_prob_den > 180: penalty_val += 30
             elif tot_prob_den > 150: penalty_val += 15
+            
+            # BB確率が設定6の確率分母+100を超える場合は減点
+            if big_prob_den > spec_b6_den + 150:
+                penalty_val += 30
+            elif big_prob_den > spec_b6_den + 100:
+                penalty_val += 20
             
             # 超高稼働(8000G以上)の場合は、打つべき根拠があった可能性が高いため悪確率ペナルティを半減
             if g >= 8000:
