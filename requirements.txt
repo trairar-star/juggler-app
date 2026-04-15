@@ -10,3 +10,4 @@ google-auth
 pyarrow
 google-generativeai
 tabulate
+optuna

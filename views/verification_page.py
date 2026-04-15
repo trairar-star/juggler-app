@@ -1036,6 +1036,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     if not all_shops:
                         st.warning("チューニング対象の店舗がありません。")
                     else:
+                        try:
+                            import optuna
+                        except ImportError:
+                            st.error("Optunaがインストールされていません。ターミナル等で `pip install optuna` を実行してください。")
+                            st.stop()
                         import lightgbm as lgb
                         base_features = [
                             '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
@@ -1063,26 +1068,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         actual_features = [f for f in base_features if f in df_verify.columns]
                         cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                         
-                        param_candidates = [
-                            {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                            {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
-                            {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.0},
-                            {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 12, 'max_depth': 3, 'min_child_samples': 80, 'reg_alpha': 0.1, 'reg_lambda': 1.0},
-                            {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                            {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
-                            {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100, 'reg_alpha': 2.0, 'reg_lambda': 0.0},
-                            {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
-                            {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
-                            {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                            {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
-                            {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
-                        ]
-                        
                         progress_bar = st.progress(0)
                         status_text = st.empty()
+                        optuna.logging.set_verbosity(optuna.logging.WARNING)
                         
                         for shop_idx, shop_name in enumerate(all_shops):
-                            status_text.text(f"[{shop_idx+1}/{len(all_shops)}] {shop_name} の最適なパラメータを探索中...")
+                            status_text.text(f"[{shop_idx+1}/{len(all_shops)}] {shop_name} の最適なパラメータをOptunaで探索中...")
                             shop_df = df_verify[df_verify[shop_col] == shop_name].copy()
                             if len(shop_df) < 150:
                                 continue
@@ -1099,10 +1090,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             days_diff = (max_date - train_data['対象日付']).dt.days
                             sample_weights = 0.995 ** days_diff
                             
-                            best_score = -9999
-                            best_params = param_candidates[0]
-                            
-                            for params in param_candidates:
+                            def objective_all(trial):
+                                params = {
+                                    'n_estimators': trial.suggest_int('n_estimators', 100, 800, step=50),
+                                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
+                                    'max_depth': trial.suggest_int('max_depth', 3, 7),
+                                    'min_child_samples': trial.suggest_int('min_child_samples', 10, 100, step=10),
+                                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 5.0),
+                                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 5.0)
+                                }
+                                max_leaves = min(127, (2 ** params['max_depth']) - 1)
+                                params['num_leaves'] = trial.suggest_int('num_leaves', 7, max_leaves)
+                                
                                 try:
                                     model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
                                     model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
@@ -1110,18 +1109,29 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                     test_eval = test_data.copy()
                                     test_eval['pred_score'] = preds
                                     
+                                    if test_eval['pred_score'].nunique() <= 1:
+                                        return -1.0
+                                    
                                     threshold = test_eval['pred_score'].quantile(0.85)
                                     target_df = test_eval[test_eval['pred_score'] >= threshold]
-                                    if len(target_df) == 0: score = -1
-                                    else:
-                                        precision = target_df['target'].mean()
-                                        avg_diff = target_df['next_diff'].mean()
-                                        coverage = len(target_df) / len(test_eval)
-                                        score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
-                                    if score > best_score:
-                                        best_score = score
-                                        best_params = params
-                                except Exception: pass
+                                    if len(target_df) == 0: return -1.0
+                                    
+                                    precision = target_df['target'].mean()
+                                    avg_diff = target_df['next_diff'].mean()
+                                    coverage = len(target_df) / len(test_eval)
+                                    score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                                    return score
+                                except Exception:
+                                    return -1.0
+                                    
+                            study = optuna.create_study(direction='maximize')
+                            # 全店舗一括は時間がかかるため、1店舗あたりの探索回数を15回に抑える
+                            study.optimize(objective_all, n_trials=15)
+                            
+                            best_params = study.best_params
+                            max_leaves_best = min(127, (2 ** best_params['max_depth']) - 1)
+                            if 'num_leaves' not in best_params:
+                                best_params['num_leaves'] = study.best_trial.params.get('num_leaves', max_leaves_best)
                                 
                             current_hp = st.session_state["shop_hyperparams"].get(shop_name, st.session_state["shop_hyperparams"].get("デフォルト", {}))
                             st.session_state["shop_hyperparams"][shop_name] = {
@@ -1132,7 +1142,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             progress_bar.progress((shop_idx + 1) / len(all_shops))
                             
                         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-                        status_text.text("✅ 全店舗のチューニングが完了しました！")
+                        status_text.text("✅ 全店舗のOptunaチューニングが完了しました！")
                         st.toast("✅ 全店舗のAIパラメータを最適化しました！")
                         st.cache_data.clear(); st.rerun()
 
@@ -1741,18 +1751,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sample_weights = 0.995 ** days_diff
                     
                     param_candidates = [
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 0.5, 'reg_lambda': 0.5}, # 少し断捨離
-                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.0}, # L1強め
-                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 12, 'max_depth': 3, 'min_child_samples': 80, 'reg_alpha': 0.1, 'reg_lambda': 1.0}, # L2強め
-                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 50, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 10, 'max_depth': 3, 'min_child_samples': 100, 'reg_alpha': 2.0, 'reg_lambda': 0.0}, # 断捨離マックス
-                        {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 20, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
-                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 20, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
-                        {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
-                        {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 50, 'reg_alpha': 0.1, 'reg_lambda': 1.0},
+                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 30, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 2.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
+                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 15, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
+                        {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 20, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
                     ]
                     
                     best_score = -9999
@@ -1776,19 +1786,23 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_eval = test_data.copy()
                             test_eval['pred_score'] = preds
                             
-                            # データ上の裏付けに基づく評価：生のシビアな確率に対応するため、単純に「上位15%の台」を評価対象とする
-                            threshold = test_eval['pred_score'].quantile(0.85)
-                            target_df = test_eval[test_eval['pred_score'] >= threshold]
-                            if len(target_df) == 0: score = -1
+                            if test_eval['pred_score'].nunique() <= 1:
+                                score = -1
                             else:
-                                precision = target_df['target'].mean()
-                                avg_diff = target_df['next_diff'].mean()
-                                coverage = len(target_df) / len(test_eval)
-                                score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                                # データ上の裏付けに基づく評価
+                                threshold = test_eval['pred_score'].quantile(0.85)
+                                target_df = test_eval[test_eval['pred_score'] >= threshold]
+                                if len(target_df) == 0: score = -1
+                                else:
+                                    precision = target_df['target'].mean()
+                                    avg_diff = target_df['next_diff'].mean()
+                                    coverage = len(target_df) / len(test_eval)
+                                    score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
                             if score > best_score:
                                 best_score = score
                                 best_params = params
-                        except Exception: pass
+                        except Exception as e:
+                            print(f"Auto tune error (Single): {e}")
                         progress_bar.progress((i + 1) / len(param_candidates))
                     
                     st.session_state["shop_hyperparams"][selected_shop] = {
