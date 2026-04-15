@@ -1508,18 +1508,22 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     reg_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"REG": 260.0})["REG"] for m in unique_machines}
     tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
     reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
+    b6_den_map = {m: specs[get_matched_spec_key(m, specs)].get('設定6', {"BIG": 260.0})["BIG"] for m in unique_machines}
     spec_reg = df['機種名'].map(reg_map)
     spec_tot = df['機種名'].map(tot_map)
     spec_reg3 = df['機種名'].map(reg3_map)
+    spec_b6_den = df['機種名'].map(b6_den_map)
 
     # 先に当日の高設定挙動フラグ(is_win)を計算
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
+    df['BIG分母'] = np.where(df['BIG'].fillna(0) > 0, df['累計ゲーム'] / df['BIG'], 9999)
     df['is_win'] = (
         (df['累計ゲーム'] >= 3000) & 
         (
             (df['REG確率'] >= spec_reg) | 
             ((df['total_prob'] >= spec_tot) & (df['REG確率'] >= spec_reg3))
-        )
+        ) &
+        (df['BIG分母'] <= spec_b6_den + 100)
     ).astype(int)
 
     df['next_diff'] = df.groupby(group_keys)['差枚'].shift(-1)
@@ -1530,6 +1534,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に変更 ---
     df['next_reg_prob'] = df['next_REG'] / df['next_累計ゲーム'].replace(0, np.nan)
     df['next_total_prob'] = (df['next_BIG'].fillna(0) + df['next_REG'].fillna(0)) / df['next_累計ゲーム'].replace(0, np.nan)
+    df['next_big_den'] = np.where(df['next_BIG'].fillna(0) > 0, df['next_累計ゲーム'] / df['next_BIG'], 9999)
     
     # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に設定 ---
     df['target'] = (
@@ -1537,7 +1542,8 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         (
             (df['next_reg_prob'] >= spec_reg) | 
             ((df['next_total_prob'] >= spec_tot) & (df['next_reg_prob'] >= spec_reg3))
-        )
+        ) &
+        (df['next_big_den'] <= spec_b6_den + 100)
     ).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
