@@ -23,6 +23,53 @@ APP_VERSION = "v4.16.0"
 APP_VERSION = "v4.17.0" 
 
 # ---------------------------------------------------------
+# AI特徴量定義 (全体共通)
+# ---------------------------------------------------------
+BASE_FEATURES = [
+    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
+    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
+    'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
+    'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
+    'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
+    'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score',
+    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+    'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound',
+    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
+    'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 
+    'neighbor_positive_count', 'event_avg_diff', 'event_high_rate', 'event_code', 'event_rank_score', 'prev_event_rank_score',
+    'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate',
+    'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff',
+    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
+    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'weekday_avg_diff'
+]
+
+FEATURE_NAME_MAP = {
+    '累計ゲーム': '前日 累計G数', 'REG確率': '前日 REG確率', 'BIG確率': '前日 BIG確率',
+    '差枚': '前日 差枚数', '末尾番号': '台番号末尾', 'target_weekday': '予測日 曜日',
+    'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
+    'mean_7days_diff': '台 直近7日平均', 'median_7days_diff': '台 7日中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
+    'mean_7days_games': '台 直近7日平均G数',
+    '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'is_prev_no_play': '前日 稼働なし',
+    'machine_code': '機種', 'shop_code': '店舗',
+    'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
+    'neighbor_avg_diff': '両隣 平均差枚', 'neighbor_positive_count': '両隣 プラス台数',
+    'is_neighbor_high_reg': '両隣 REG高設定水準', 'neighbor_reg_reliability_score': '両隣 REG信頼度スコア', 'neighbor_high_setting_count': '両隣 高設定示唆台数',
+    'event_avg_diff': 'イベント 平均差枚', 'event_high_rate': 'イベント 高設定率', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク',
+    'prev_event_rank_score': '前日(特日)ランク',
+    'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
+    'shop_7days_avg_diff': '店舗 直近7日平均', 'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
+    'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
+    'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_machine_high_rate': 'イベント×機種 高設定率', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚',
+    'cons_minus_total_diff': '連続凹み 吸込み量', 'machine_no_30days_avg_diff': '場所 30日平均', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
+    'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',
+    'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 BB/RB偏り', 'prev_unlucky_gap': '前日 不発度合い',
+    'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス', 'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
+    'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
+    'trend_v_recovery': '波: V字反発(負→勝)', 'trend_cont_lose': '波: 連続凹み(負→負)', 'trend_cont_win': '波: 連続据え(勝→勝)', 'trend_down_rebound': '波: 上げ戻し(勝→負)',
+    'shop_pred_diff_7d_avg': '店舗 AI予測7日平均', 'predicted_diff': 'AI予測 差枚数'
+}
+
+# ---------------------------------------------------------
 # 共通判定ロジック
 # ---------------------------------------------------------
 def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
@@ -1968,14 +2015,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # 一時的に作成したフラグは削除
     df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'BIG分母', 'total_prob'], errors='ignore')
 
-    features = ['累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count', 'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound']
-    for f in ['machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 'neighbor_positive_count', 'event_avg_diff', 'event_high_rate', 'event_code', 'event_rank_score', 'prev_event_rank_score', 'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 'shop_pred_diff_7d_avg', 'weekday_high_rate', 'weekday_avg_diff']:
-        if f in df.columns: features.append(f)
-        
-    if 'prev_推定ぶどう確率' in df.columns: features.append('prev_推定ぶどう確率')
-
-    # 確実に存在する特徴量のみに絞り込み、学習時の KeyError を防止
-    features = [f for f in features if f in df.columns]
+    features = [f for f in BASE_FEATURES if f in df.columns]
 
     return df, features
 

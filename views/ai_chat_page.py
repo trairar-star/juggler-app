@@ -431,55 +431,13 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
             if df_importance is not None and not df_importance.empty:
                 imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
                 if not imp_shop.empty:
-                    feature_map = {
-                        '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
-                        '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
-                        'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚',
-                        'mean_7days_diff': '台: 直近7日平均差枚', 'median_7days_diff': '台: 直近7日中央値差枚(平常ベース)', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)', 'plus_rate_7days': '台: 直近7日間勝率 (プラス差枚割合)',
-                        '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)', 'machine_code': '機種', 'shop_code': '店舗',
-                        'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
-                        'neighbor_avg_diff': '配置: 両隣の平均差枚 (※片側の大爆発に引かれるフェイク注意)',
-                        'left_diff': '配置: 左隣の差枚', 'right_diff': '配置: 右隣の差枚', 'neighbor_positive_count': '配置: 両隣のプラス台数 (塊検知)',
-                        'event_avg_diff': 'イベント: 平均差枚',
-                        'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
-                        'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',
-                        'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
-                        'shop_avg_diff': '店舗: 当日平均差枚', 'shop_median_diff': '店舗: 当日中央値差枚', 'island_avg_diff': '島: 当日平均差枚',
-                        'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
-                        'prev_island_reg_prob': '前日: 島全体のREG確率', 'shop_heavy_lose_rate': '店舗: 当日大負け率(-1000枚以下)',
-                        'shop_play_rate': '店舗: 当日遊べる割合(±500枚以内)',
-                        'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
-                        'is_new_machine': '台: 新台導入(導入後7日以内)',
-                        'is_moved_machine': '台: 配置変更(移動後7日以内)',
-                        'shop_7days_avg_diff': '店舗: 週間還元/回収モード(直近7日差枚)',
-                        'prev_shop_daily_avg_diff': '店舗: 前日の平均差枚(日次ノルマ反動)',
-                        'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)',
-                        'machine_avg_diff': '機種: 当日平均差枚', 'machine_median_diff': '機種: 当日中央値差枚', 'machine_high_rate': '機種: 当日高設定率',
-                        'machine_heavy_lose_rate': '機種: 当日大負け率(-1000枚以下)',
-                        'machine_play_rate': '機種: 当日遊べる割合(±500枚以内)',
-                        'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
-                        'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
-                        'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)',
-                        'event_x_machine_avg_diff': '複合: イベント×機種の平均差枚',
-                        'event_x_end_digit_avg_diff': '複合: イベント×末尾の平均差枚',
-                        'cons_minus_total_diff': '台: 連続マイナス期間の合計吸い込み(枚)',
-                        'machine_no_30days_avg_diff': '台番号: その場所の強さ(直近30日差枚)',
-                        'is_beginning_of_month': '予測日: 月初(1-7日)', 'is_end_of_month': '予測日: 月末(25日-)',
-                        'is_pension_day': '予測日: 年金支給日(14-16日)',
-                        'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
-                        'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
-                        'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)',
-                        'is_low_play_high_reg': '複合: 前日低稼働(1000-3000G)＆高設定挙動',
-                        'is_hot_wd_and_heavy_lose': '複合: 還元曜日＆週間大凹み',
-                        'predicted_diff': 'AI予測: 予測差枚数(スタッキング)'
-                    }
                     context_data += f"\n【{selected_shop} の設定投入のクセ (AIが重視している特徴量上位10件)】\n"
                     context_data += "※ 相関がプラスなら「その値が大きいほど高設定になりやすい」、マイナスなら「値が小さいほど高設定になりやすい」ことを示します。\n"
                     count = 0
                     for _, row in imp_shop.iterrows():
                         f_key = row['feature']
-                        if f_key in feature_map:
-                            f_name = feature_map[f_key]
+                        if f_key in backend.FEATURE_NAME_MAP:
+                            f_name = backend.FEATURE_NAME_MAP[f_key]
                             importance = row.get('importance', 0)
                             correlation = row.get('correlation', 0)
                             corr_str = f"プラス相関 (+{correlation:.2f})" if correlation >= 0 else f"マイナス相関 ({correlation:.2f})"

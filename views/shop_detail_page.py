@@ -73,24 +73,18 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'is_prev_no_play': '前日 稼働なし',
                 'machine_code': '機種', 'shop_code': '店舗',
                 'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
-                'neighbor_avg_diff': '両隣 平均差枚', 'left_diff': '左隣 差枚', 'right_diff': '右隣 差枚', 'neighbor_positive_count': '両隣 プラス台数',
+                'neighbor_avg_diff': '両隣 平均差枚', 'neighbor_positive_count': '両隣 プラス台数',
                 'is_neighbor_high_reg': '両隣 REG高設定水準', 'neighbor_reg_reliability_score': '両隣 REG信頼度スコア', 'neighbor_high_setting_count': '両隣 高設定示唆台数',
-                'event_avg_diff': 'イベント 平均差枚', 'event_high_rate': 'イベント 高設定率', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク', 'prev_差枚': '前々日 差枚数',
-                'prev_event_rank_score': '前日(特日)ランク', 'prev_REG確率': '前々日 REG確率', 'prev_累計ゲーム': '前々日 累計G数',
-                'shop_avg_diff': '店舗 当日平均', 'island_avg_diff': '島 平均差枚',
-                'shop_median_diff': '店舗 当日中央値', 'shop_high_rate': '店舗 高設定率', 'island_high_rate': '島 高設定率',
-                'prev_island_reg_prob': '前日 島REG確率', 'shop_heavy_lose_rate': '店舗 大負け率', 'shop_play_rate': '店舗 遊べる割合',
+                'event_avg_diff': 'イベント 平均差枚', 'event_high_rate': 'イベント 高設定率', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク',
+                'prev_event_rank_score': '前日(特日)ランク',
                 'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
                 'shop_7days_avg_diff': '店舗 直近7日平均',
                 'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
-                'machine_30days_avg_diff': '機種 30日平均', 'machine_30days_high_rate': '機種 30日高設定率', 'machine_avg_diff': '機種 当日平均', 'machine_median_diff': '機種 当日中央値',
-                'machine_high_rate': '機種 高設定率', 'machine_heavy_lose_rate': '機種 大負け率', 'machine_play_rate': '機種 遊べる割合',
                 'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
                 'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_machine_high_rate': 'イベント×機種 高設定率', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚',
-                'cons_minus_total_diff': '連続凹み 吸込み量', 'machine_no_30days_avg_diff': '場所 30日平均', 'machine_no_30days_high_rate': '場所 30日高設定率',
+                'cons_minus_total_diff': '連続凹み 吸込み量', 'machine_no_30days_avg_diff': '場所 30日平均', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
                 'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',
                 'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 BB/RB偏り', 'prev_unlucky_gap': '前日 不発度合い',
-                'prev_neighbor_reg_prob': '前々日 両隣REG確率', 'prev_end_digit_reg_prob': '前々日 末尾REG確率',
                 'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス',
                 'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
                 'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
@@ -486,16 +480,17 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
 
         # --- 👑 本日のおすすめ店舗 ピックアップ ---
         if selected_shop == '全て' and shop_col in df.columns and '予測差枚数' in df.columns:
-            shop_mean_diff = df.groupby(shop_col)['予測差枚数'].mean()
-            best_shop = shop_mean_diff.idxmax()
-            best_diff = shop_mean_diff.max()
-            
-            if best_diff >= 100:
-                st.success(f"👑 **本日のおすすめ店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / 🔥還元予測)\n\n系列・登録店舗の中で最も出玉（差枚）が甘く、全体的に還元される可能性が高いとAIが推奨しています！")
-            elif best_diff >= 0:
-                st.info(f"👍 **本日の注目店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / ⚖️通常営業)\n\n突出した還元予測の店舗はありませんが、登録店舗の中では一番差枚が甘いと予測されています。")
-            else:
-                st.warning(f"🥶 **全店舗 回収警戒**: 本日は全店舗の予測平均差枚がマイナスで (一番マシな **{best_shop}** でも {int(best_diff)}枚)、厳しい戦いが予想されます。無理な勝負は避けるのが無難です。")
+            shop_mean_diff = df.groupby(shop_col)['予測差枚数'].mean() if not df.empty else pd.Series()
+            if not shop_mean_diff.empty:
+                best_shop = shop_mean_diff.idxmax()
+                best_diff = shop_mean_diff.max()
+                
+                if best_diff >= 100:
+                    st.success(f"👑 **本日のおすすめ店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / 🔥還元予測)\n\n系列・登録店舗の中で最も出玉（差枚）が甘く、全体的に還元される可能性が高いとAIが推奨しています！")
+                elif best_diff >= 0:
+                    st.info(f"👍 **本日の注目店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / ⚖️通常営業)\n\n突出した還元予測の店舗はありませんが、登録店舗の中では一番差枚が甘いと予測されています。")
+                else:
+                    st.warning(f"🥶 **全店舗 回収警戒**: 本日は全店舗の予測平均差枚がマイナスで (一番マシな **{best_shop}** でも {int(best_diff)}枚)、厳しい戦いが予想されます。無理な勝負は避けるのが無難です。")
 
         # --- 前日データ欠損アラート ---
         if not df.empty and '対象日付' in df.columns:
@@ -917,8 +912,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             with col_d1:
                 display_mode = st.radio("表示件数", ["厳選推奨台 (店舗別 上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True)
             with col_d2:
-                min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=10, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。")
-                min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=0, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。")
+                min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=0, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。", key="min_score_filter")
         
             sort_cols = []
             if 'prediction_score' in df.columns: sort_cols.append('prediction_score')

@@ -161,12 +161,15 @@ def _render_manager_personality_analysis(selected_shop, top_trends_df, analysis_
             sum_df['valid_high_play'] = sum_df['next_累計ゲーム'] >= 3000
             sum_df['target_rate'] = np.where(sum_df['valid_high_play'], sum_df['target'], np.nan) * 100
             
-            minus_stats = sum_df[sum_df['連続マイナス日数'] >= 2].agg(上げ確率=('target_rate', 'mean'))
-            plus_stats = sum_df[sum_df['連続プラス日数'] >= 2].agg(据え置き確率=('target_rate', 'mean'))
+            minus_df = sum_df[sum_df['連続マイナス日数'] >= 2]
+            plus_df = sum_df[sum_df['連続プラス日数'] >= 2]
             
-            age_rate = minus_stats['上げ確率'] if not minus_stats.empty and not pd.isna(minus_stats['上げ確率']) else 0
-            sue_rate = plus_stats['据え置き確率'] if not plus_stats.empty and not pd.isna(plus_stats['据え置き確率']) else 0
+            age_rate = minus_df['target_rate'].mean() if not minus_df.empty else 0
+            sue_rate = plus_df['target_rate'].mean() if not plus_df.empty else 0
             
+            age_rate = age_rate if pd.notna(age_rate) else 0
+            sue_rate = sue_rate if pd.notna(sue_rate) else 0
+
             if age_rate > sue_rate and age_rate > 10:
                  personality_traits.append("📈 **凹み台救済派**: 連日勝っている台よりも、連日凹んでいる台を救済する（上げる）傾向が強いです。")
             elif sue_rate > age_rate and sue_rate > 10:
@@ -2093,68 +2096,16 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
         if df_importance is not None and not df_importance.empty:
             st.markdown("### 🧠 AIが重視したポイント (特徴量重要度)")
     
-            feature_name_map = {
-                '累計ゲーム': '前日: 累計ゲーム数', 'REG確率': '前日: REG確率', 'BIG確率': '前日: BIG確率',
-                '差枚': '前日: 差枚数', '末尾番号': '台番号: 末尾', 'target_weekday': '予測日: 曜日',
-                'target_date_end_digit': '予測日: 日付末尾 (7のつく日等)', 'weekday_avg_diff': '店舗: 曜日平均差枚', 'weekday_high_rate': '店舗: 曜日高設定率',
-                'mean_7days_reg_prob': '台: 直近7日平均REG確率',
-                'mean_7days_diff': '台: 直近7日平均差枚', 'median_7days_diff': '台: 直近7日中央値差枚(平常ベース)', 'win_rate_7days': '台: 直近7日間高設定率 (一撃排除用)', 'plus_rate_7days': '台: 直近7日間勝率 (プラス差枚割合)', 'mean_7days_games': '台: 直近7日平均G数', 'is_prev_no_play': '前日: 稼働なし',
-                '連続マイナス日数': '台: 連続実質マイナス日数(+500枚未満)', '連続低稼働日数': '台: 連続低稼働日数(1500G未満)',
-                'machine_code': '機種', 'shop_code': '店舗',
-                'reg_ratio': '前日: REG比率', 'is_corner': '配置: 角台', 'is_main_corner': '配置: メイン通路側 角台', 'is_main_island': '島: メイン通路沿い(目立つ)', 'is_wall_island': '島: 壁側(目立たない)',
-                'neighbor_avg_diff': '配置: 両隣の平均差枚 (※片側の大爆発によるフェイク注意)',
-                'left_diff': '配置: 左隣の差枚', 'right_diff': '配置: 右隣の差枚', 'neighbor_positive_count': '配置: 両隣のプラス台数 (塊検知)',
-                'is_neighbor_high_reg': '両隣: REG高設定水準', 'neighbor_reg_reliability_score': '両隣: REG信頼度スコア', 'neighbor_high_setting_count': '両隣: 高設定示唆台数',
-                'event_avg_diff': 'イベント: 平均差枚', 'event_high_rate': 'イベント: 高設定率',
-                'event_code': 'イベント: 種類', 'event_rank_score': 'イベント: ランク', 'prev_差枚': '前々日: 差枚数',
-                'prev_event_rank_score': 'イベント: 前日(特日)のランク(据え置き/回収反動)',
-                'prev_REG確率': '前々日: REG確率', 'prev_累計ゲーム': '前々日: 累計ゲーム数',
-                'shop_avg_diff': '店舗: 当日平均差枚', 'island_avg_diff': '島: 当日平均差枚',
-                'shop_high_rate': '店舗: 当日高設定率', 'island_high_rate': '島: 当日高設定率',
-                'prev_island_reg_prob': '前日: 島全体のREG確率', 'shop_heavy_lose_rate': '店舗: 当日大負け率(-1000枚以下)',
-                'shop_play_rate': '店舗: 当日遊べる割合(±500枚以内)',
-                'relative_games_ratio': '台: 相対稼働率(店舗平均比)',
-                'is_new_machine': '台: 新台導入(導入後7日以内)',
-                'is_moved_machine': '台: 配置変更(移動後7日以内)',
-                'shop_7days_avg_diff': '店舗: 週間還元/回収モード(直近7日差枚)',
-                'prev_shop_daily_avg_diff': '店舗: 前日の平均差枚(日次ノルマ反動)',
-                'machine_30days_avg_diff': '機種: 機種ごとの扱い(直近30日差枚)', 'machine_30days_high_rate': '機種: 直近30日高設定率',
-                'machine_avg_diff': '機種: 当日平均差枚', 'machine_high_rate': '機種: 当日高設定率',
-                'machine_heavy_lose_rate': '機種: 当日大負け率(-1000枚以下)',
-                'machine_play_rate': '機種: 当日遊べる割合(±500枚以内)',
-                'prev_推定ぶどう確率': '前日: 推定ぶどう確率(小役)',
-                'shop_avg_games': '店舗: 平均稼働ゲーム数(客層レベル)',
-                'shop_abandon_rate': '店舗: 見切り台の割合(見切りスピード)',
-                'event_x_machine_avg_diff': '複合: イベント×機種の平均差枚', 'event_x_machine_high_rate': '複合: イベント×機種の高設定率',
-                'event_x_end_digit_avg_diff': '複合: イベント×末尾の平均差枚',
-                'cons_minus_total_diff': '台: 連続マイナス期間の合計吸い込み(枚)',
-                'machine_no_30days_avg_diff': '台番号: その場所の強さ(直近30日差枚)', 'machine_no_30days_high_rate': '台番号: 30日高設定率',
-                'is_beginning_of_month': '予測日: 月初(1-7日)', 'is_end_of_month': '予測日: 月末(25日-)',
-                'is_pension_day': '予測日: 年金支給日(14-16日)',
-                'shop_monthly_cumulative_diff': '店舗: 月間累計差枚(ノルマ進捗)',
-                'prev_bonus_balance': '前日: BIG・REGの偏り(REG-BIG)',
-                'prev_unlucky_gap': '前日: 不発度合い(REG回数と差枚のギャップ)',
-                'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG',
-                'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス',
-                'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
-                'is_low_play_high_reg': '複合: 前日低稼働(1000-3000G)＆高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜日＆週間大凹み',
-                'trend_v_recovery': '波: V字反発(負→勝)',
-                'trend_cont_lose': '波: 連続凹み(負→負)',
-                'trend_cont_win': '波: 連続据え(勝→勝)',
-                'trend_down_rebound': '波: 上げ戻し(勝→負)',
-                'predicted_diff': 'AI予測: 予測差枚数(ST)'
-            }
-    
             # 全店舗の重要度データを準備
             imp_all = df_importance[df_importance['shop_name'] == '全店舗'].copy()
             if not imp_all.empty:
-                imp_all['特徴量名'] = imp_all['feature'].map(lambda x: feature_name_map.get(x, x))
+                imp_all['特徴量名'] = imp_all['feature'].map(lambda x: backend.FEATURE_NAME_MAP.get(x, x))
                 imp_all = imp_all.sort_values('importance', ascending=False)
     
             # 店舗別の重要度データを準備
             imp_shop = df_importance[df_importance['shop_name'] == selected_shop].copy()
             if not imp_shop.empty:
-                imp_shop['特徴量名'] = imp_shop['feature'].map(lambda x: feature_name_map.get(x, x))
+                imp_shop['特徴量名'] = imp_shop['feature'].map(lambda x: backend.FEATURE_NAME_MAP.get(x, x))
                 imp_shop = imp_shop.sort_values('importance', ascending=False)
     
             st.info("💡 **グラフの見方**: バーの長さが「重要度（予測への影響力）」を、**色**が「影響の方向（プラスかマイナスか）」を表します。\n\n"

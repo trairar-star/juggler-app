@@ -367,6 +367,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df['結果_REG確率_val'] = np.where(pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) > 0, pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0) / pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0), 0)
     merged_df['valid_REG確率'] = np.where(merged_df['valid_play'], merged_df['結果_REG確率_val'], np.nan)
 
+    # 合算確率の計算を追加
+    merged_df['結果_合算確率_val'] = np.where(pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0) + pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)) / pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0), 0)
+    merged_df['valid_合算確率'] = np.where(merged_df['valid_play'], merged_df['結果_合算確率_val'], np.nan)
+
     # 保存されている予測ログはすでに「各店舗の上位10%」に絞られているため、そのまま使用する
     ai_recom_df = merged_df.copy()
 
@@ -943,12 +947,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     平均差枚=('valid_差枚_actual', 'mean'),
                     合計差枚=('差枚_actual', 'sum'),
                     平均期待度=('prediction_score', 'mean'),
-                    平均REG確率=('valid_REG確率', 'mean')
+                    平均REG確率=('valid_REG確率', 'mean'),
+                    平均合算確率=('valid_合算確率', 'mean')
                 ).reset_index()
                 r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
                 r_stats['高設定率'] = np.where(r_stats['高設定有効数'] > 0, r_stats['高設定数'] / r_stats['高設定有効数'] * 100, 0.0)
                 r_stats['平均期待度'] = r_stats['平均期待度'] * 100
                 r_stats['REG確率'] = r_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                r_stats['合算確率'] = r_stats['平均合算確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                 
                 rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                 r_stats['sort'] = r_stats['確率帯'].map(rank_order).fillna(99)
@@ -956,7 +962,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 
                 r_stats['信頼度'] = r_stats['台数'].apply(get_confidence_indicator)
                 st.dataframe(
-                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '信頼度']],
+                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                     column_config={
                         "確率帯": st.column_config.TextColumn("期待度"),
                         "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
@@ -967,6 +973,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                         "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                         "REG確率": st.column_config.TextColumn("平均REG確率"),
+                        "合算確率": st.column_config.TextColumn("平均合算確率"),
                         "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                     },
                     width="stretch",
@@ -1063,30 +1070,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         except ImportError:
                             st.error("Optunaがインストールされていません。ターミナル等で `pip install optuna` を実行してください。")
                             st.stop()
-                        import lightgbm as lgb
-                        base_features = [
-                            '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
-                            'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-                            'mean_7days_reg_prob',
-                            '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
-                            'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
-                            'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
-                            'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
-                            'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 
-                            'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
-                            'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound',
-                            'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
-                            'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 
-                            'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 
-                            'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 
-                            'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 
-                            'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 
-                            'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 
-                            'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 
-                            'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
-                            'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'event_high_rate', 'weekday_avg_diff'
-                        ]
-                        actual_features = [f for f in base_features if f in df_verify.columns]
+                        
+                        actual_features = [f for f in backend.BASE_FEATURES if f in df_verify.columns]
                         cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                         
                         progress_bar = st.progress(0)
@@ -1596,29 +1581,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if test_btn:
             with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
                 import lightgbm as lgb
-                base_features = [
-                    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
-                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-                    'mean_7days_reg_prob', 
-                    '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
-                    'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
-                    'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
-                    'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
-                    'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 
-                    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
-                            'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound',
-                    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
-                    'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 
-                    'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 
-                    'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 
-                    'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 
-                    'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 
-                    'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 
-                    'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 
-                    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
-                    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'event_high_rate', 'weekday_avg_diff'
-                ]
-                actual_features = [f for f in base_features if f in df_verify.columns]
+                actual_features = [f for f in backend.BASE_FEATURES if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                 
                 shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
@@ -1675,6 +1638,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_data['valid_high'] = test_data['valid_high_play'] & (test_data['target'] == 1)
                             test_data['valid_next_diff'] = np.where(test_data['valid_play'], test_data['next_diff'], np.nan)
                             
+                            # REG確率と合算確率の計算を追加
+                            test_data['結果_REG確率_val'] = np.where(pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) > 0, pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0) / pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0), 0)
+                            test_data['valid_REG確率'] = np.where(test_data['valid_play'], test_data['結果_REG確率_val'], np.nan)
+                            test_data['結果_合算確率_val'] = np.where(pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(test_data['next_BIG'], errors='coerce').fillna(0) + pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0)) / pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0), 0)
+                            test_data['valid_合算確率'] = np.where(test_data['valid_play'], test_data['結果_合算確率_val'], np.nan)
+                            
                             def get_prob_band(score):
                                 if score >= 0.50: return '50%以上'
                                 elif score >= 0.40: return '40%〜49%'
@@ -1693,11 +1662,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 勝数=('valid_win', 'sum'),
                                 平均差枚=('valid_next_diff', 'mean'),
                                 合計差枚=('next_diff', 'sum'),
-                                平均期待度=('pred_score', 'mean')
+                                平均期待度=('pred_score', 'mean'),
+                                平均REG確率=('valid_REG確率', 'mean'),
+                                平均合算確率=('valid_合算確率', 'mean')
                             ).reset_index()
                             test_stats['高設定率'] = np.where(test_stats['高設定有効数'] > 0, test_stats['高設定数'] / test_stats['高設定有効数'] * 100, 0.0)
                             test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
                             test_stats['平均期待度'] = test_stats['平均期待度'] * 100
+                            test_stats['REG確率'] = test_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                            test_stats['合算確率'] = test_stats['平均合算確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                             
                             rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                             test_stats['sort'] = test_stats['確率帯'].map(rank_order).fillna(99)
@@ -1712,7 +1685,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.success("✅ 直近1ヶ月のカンニングなしテスト結果")
             st.caption("現在設定されているパラメータで過去データのみを学習し、直近1ヶ月の結果を予測した「本物の実力」です。この表の上位の期待度帯（20%以上など）の勝率が高くなる設定を探してください。")
             st.dataframe(
-                st.session_state['backtest_result'][['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', '信頼度']],
+                st.session_state['backtest_result'][['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                 column_config={
                     "確率帯": st.column_config.TextColumn("期待度"),
                     "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
@@ -1722,6 +1695,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
                     "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                     "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
+                    "REG確率": st.column_config.TextColumn("平均REG確率"),
+                    "合算確率": st.column_config.TextColumn("平均合算確率"),
                     "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                 },
                 hide_index=True,
@@ -1731,29 +1706,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if auto_tune_btn:
             with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
                 import lightgbm as lgb
-                base_features = [
-                    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
-                    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-                    'mean_7days_reg_prob', 
-                    '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
-                    'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'prev_neighbor_reg_prob', 
-                    'prev_end_digit_reg_prob', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
-                    'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
-                    'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score', 
-                    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
-                    'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound',
-                    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
-                    'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 'left_diff', 'right_diff', 
-                    'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score', 
-                    'prev_差枚', 'prev_REG確率', 'prev_累計ゲーム', 'shop_avg_diff', 'shop_median_diff', 'shop_high_rate', 
-                    'shop_heavy_lose_rate', 'shop_play_rate', 'island_avg_diff', 'island_high_rate', 'prev_island_reg_prob', 
-                    'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate', 
-                    'machine_avg_diff', 'machine_median_diff', 'machine_high_rate', 'machine_heavy_lose_rate', 
-                    'machine_play_rate', 'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_high_rate', 
-                    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
-                    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'event_high_rate', 'weekday_avg_diff'
-                ]
-                actual_features = [f for f in base_features if f in df_verify.columns]
+                actual_features = [f for f in backend.BASE_FEATURES if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                 
                 shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
@@ -1862,6 +1815,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 sim_df['結果_REG確率_val'] = np.where(pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) > 0, pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0) / pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0), 0)
                 sim_df['valid_REG確率'] = np.where(sim_df['valid_play'], sim_df['結果_REG確率_val'], np.nan)
                 
+                # 合算確率の計算を追加
+                sim_df['結果_合算確率_val'] = np.where(pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(sim_df['next_BIG'], errors='coerce').fillna(0) + pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0)) / pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0), 0)
+                sim_df['valid_合算確率'] = np.where(sim_df['valid_play'], sim_df['結果_合算確率_val'], np.nan)
+                
                 # 予測営業区分の付与
                 if '対象日付' in sim_df.columns and '対象日付' in daily_avg_score_df.columns:
                     sim_df['対象日付_merge_key'] = pd.to_datetime(sim_df['対象日付']).dt.normalize()
@@ -1886,12 +1843,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         平均差枚=('valid_next_diff', 'mean'),
                         合計差枚=('next_diff', 'sum'),
                         平均期待度=('prediction_score', 'mean'),
-                        平均REG確率=('valid_REG確率', 'mean')
+                        平均REG確率=('valid_REG確率', 'mean'),
+                        平均合算確率=('valid_合算確率', 'mean')
                     ).reset_index()
                     s_stats['勝率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['勝数'] / s_stats['有効稼働数'] * 100, 0.0)
                     s_stats['高設定率'] = np.where(s_stats['高設定有効数'] > 0, s_stats['高設定数'] / s_stats['高設定有効数'] * 100, 0.0)
                     s_stats['平均期待度'] = s_stats['平均期待度'] * 100
                     s_stats['REG確率'] = s_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                    s_stats['合算確率'] = s_stats['平均合算確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                     
                     rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                     s_stats['sort'] = s_stats['確率帯'].map(rank_order).fillna(99)
@@ -1899,7 +1858,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     s_stats['信頼度'] = s_stats['台数'].apply(get_confidence_indicator)
                     
                     st.dataframe(
-                        s_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '信頼度']],
+                        s_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                         column_config={
                             "確率帯": st.column_config.TextColumn("期待度"),
                             "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
@@ -1910,6 +1869,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                             "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                             "REG確率": st.column_config.TextColumn("平均REG確率"),
+                            "合算確率": st.column_config.TextColumn("平均合算確率"),
                             "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度 (🔼高:30件~ / 🔸中:10件~ / 🔻低:~9件)")
                         },
                         width="stretch",
