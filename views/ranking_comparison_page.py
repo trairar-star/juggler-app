@@ -354,6 +354,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                 # --- 実際のランキング上位10%を事前に計算 (照合用) ---
                 actual_top_machines = []
+                diff_top_machines = []
                 if not actual_df_day.empty:
                     act_g = pd.to_numeric(actual_df_day['累計ゲーム'], errors='coerce').fillna(0)
                     act_b = pd.to_numeric(actual_df_day['BIG'], errors='coerce').fillna(0)
@@ -370,6 +371,9 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     
                     act_total_machines = len(actual_df_day)
                     act_top_k = max(3, int(act_total_machines * 0.10)) if act_total_machines > 0 else 10
+
+                    # 的中マーク用として、差枚の上位10%を常に保持しておく
+                    diff_top_machines = actual_df_day.sort_values('差枚', ascending=False).head(act_top_k)['台番号'].tolist()
 
                     if rank_metric == "差枚":
                         actual_df_day = actual_df_day.sort_values('差枚', ascending=False).head(act_top_k)
@@ -417,7 +421,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         pred_df_day['結果点数'] = pred_df_day.apply(lambda row: calculate_score(row, '結果_累計ゲーム', '結果_BIG', '結果_REG', '機種名', '差枚_actual'), axis=1)
 
                         # 上位10%ランクインのマーク
-                        pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in actual_top_machines else '')
+                        pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in diff_top_machines else '')
 
                         # 高設定挙動のマーク
                         specs = backend.get_machine_specs()
@@ -441,7 +445,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         st.dataframe(
                             styled_pred_df,
                             column_config={
-                                "的中": st.column_config.TextColumn("的中", width="small"),
+                                "的中": st.column_config.TextColumn("的中", width="small", help="差枚数が店舗上位10%に入った台"),
                                 "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
                                 "台番号": st.column_config.TextColumn("台番号"),
                                 "機種名": st.column_config.TextColumn("機種", width="small"),
@@ -461,8 +465,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                 # --- 下段: 実績ランキング ---
                 date_str_actual = actual_date.strftime('%Y-%m-%d') if pd.notna(actual_date) else "不明"
-                with st.expander(f"🎰 実績 上位10% (全体) - {date_str_actual}", expanded=True):
-                    st.caption(f"※稼働日: {date_str_actual} ({rank_metric}順)")
+                with st.expander(f"🎰 実績 上位10% ({rank_metric}順) - {date_str_actual}", expanded=True):
+                    st.caption(f"※稼働日: {date_str_actual}")
                         
                     if actual_df_day.empty:
                         st.info("条件を満たす結果データがありません。")
