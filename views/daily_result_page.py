@@ -175,11 +175,11 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     else: display_df['REG確率_str'] = "-"
     
     # 合算確率の計算とフォーマット
-    display_df['tmp_total_prob'] = (display_df.get('BIG', 0).fillna(0) + display_df.get('REG', 0).fillna(0)) / display_df['総回転'].replace(0, np.nan)
+    display_df['tmp_total_prob'] = (display_df['BIG'] + display_df['REG']) / display_df['総回転'].replace(0, np.nan)
     display_df['合算確率_str'] = display_df['tmp_total_prob'].apply(format_prob)
     
     # 並び替え
-    sort_options = ["AI期待度順", "差枚が多い順", "合算確率が良い順", "REG確率が良い順", "台番号順"]
+    sort_options = ["REG確率が良い順", "AI期待度順", "差枚が多い順", "合算確率が良い順", "台番号順"]
     sort_by = st.radio("並び替え", sort_options, horizontal=True)
     display_mode = st.radio("表示件数", ["厳選台 (上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True, index=3)
     

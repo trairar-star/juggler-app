@@ -315,6 +315,49 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             
                         context_data += pattern_str
             
+            # --- 1.9. 回収日に甘い機種ランキング ---
+            df_scores = backend.load_daily_shop_scores()
+            if not df_scores.empty and '予測対象日' in df_scores.columns and not shop_raw.empty:
+                df_scores['対象日付'] = pd.to_datetime(df_scores['予測対象日'], errors='coerce').dt.normalize()
+                score_shop_col = '店名' if '店名' in df_scores.columns else ('店舗名' if '店舗名' in df_scores.columns else None)
+                
+                if score_shop_col:
+                    shop_scores = df_scores[df_scores[score_shop_col] == selected_shop]
+                    cold_dates = shop_scores[shop_scores['店舗平均期待度'] < 0.10]['対象日付'].tolist()
+                    
+                    if cold_dates:
+                        cold_day_data = shop_raw[shop_raw['対象日付'].dt.normalize().isin(cold_dates)].copy()
+                        
+                        if not cold_day_data.empty:
+                            mac_df = cold_day_data
+                            mac_df['REG確率_raw'] = mac_df['REG'] / mac_df['累計ゲーム'].replace(0, np.nan)
+                            mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & ((mac_df['差枚'] <= -750) | (mac_df['差枚'] >= 750)))
+                            
+                            specs = backend.get_machine_specs()
+                            mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
+                            spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                            spec_tot = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                            spec_reg3 = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+                            
+                            mac_df['高設定挙動'] = ((mac_df['累計ゲーム'] >= 3000) & ((mac_df['REG確率_raw'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率_raw'] >= spec_reg3)))).astype(int)
+                            mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
+                            
+                            mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
+                            mac_df['REG確率_val'] = np.where(mac_df['累計ゲーム'] > 0, mac_df['REG'] / mac_df['累計ゲーム'], 0)
+                            mac_df['valid_REG確率'] = np.where(mac_df['valid_play'], mac_df['REG確率_val'], np.nan)
+
+                            cold_mac_stats = mac_df.groupby('機種名').agg(
+                                平均差枚=('valid_差枚', 'mean'), 高設定率=('高設定率', 'mean'), 平均REG確率=('valid_REG確率', 'mean'), サンプル数=('台番号', 'count')
+                            ).reset_index().sort_values('平均差枚', ascending=False)
+                            
+                            if not cold_mac_stats.empty:
+                                cold_mac_stats['REG確率'] = cold_mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if pd.notna(x) and x > 0 else "-")
+                                cold_mac_stats['平均差枚'] = cold_mac_stats['平均差枚'].apply(lambda x: f"{int(x):+d}" if pd.notna(x) else "-")
+                                cold_mac_stats['高設定率'] = cold_mac_stats['高設定率'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "-")
+                                
+                                context_data += f"\n【{selected_shop} の「回収日」に甘い機種ランキング (AIが回収日と予測した日の実績)】\n"
+                                context_data += cold_mac_stats[['機種名', '平均差枚', '高設定率', 'REG確率', 'サンプル数']].to_markdown(index=False) + "\n"
+
             if df_events is not None and not df_events.empty:
                 shop_events = df_events[(df_events['店名'] == selected_shop) & (df_events['イベント日付'].dt.strftime('%Y-%m-%d') == target_date_str)]
                 if not shop_events.empty:
@@ -894,6 +937,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
 - [還元日/回収日の判断]: 「店舗全体のAI評価（還元日予測など）」から総合的に判断し、回収日濃厚なら「全体的には回収傾向なので基本は勝負を避けるべき」と警告しつつも、もし提供データの中に期待度が高い台（20%〜30%以上など）があれば「ただ、この〇〇番台（機種名）は期待度が〇〇%あるので、これに絞って打ってみるのもありかもしれません」と少し前向きなフォローを入れてください。
 - [特定パターンの狙い目]: 提供されている「日替わり特定パターンの投入頻度」に基づき、末尾・機種・並び・角台の中で投入率が高い（目安として20〜30%以上）ものがあれば、「今日は〇〇を意識して立ち回るのが有効です」とアドバイスに組み込んでください。複数の傾向が強い場合は複合して狙う戦略（例：当たり機種の角台など）も提案してください。
+- [回収日の立ち回り]: お客様から「回収日に甘い機種」や「回収日でも打てる台」について質問された場合、提供されている「回収日に甘い機種ランキング」のデータを参照してください。平均差枚がプラスの機種や、高設定率・REG確率が比較的良い機種を「回収日でもワンチャンスある機種」として提案してください。
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が30%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
 - [スケジュール提案]: 「今後の予定」などを聞かれた場合、提供されている「向こう3日間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして立ち回りスケジュールを提案してください。
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。

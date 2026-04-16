@@ -164,7 +164,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
             compare_shop = selected_shop
             
             if compare_shop:
-                rank_metric = st.radio("📊 実際のランキング基準", ["差枚", "合算確率", "REG確率"], horizontal=True, help="合算確率とREG確率は、総ゲーム数3000G以上の台のみを対象とします。")
+                rank_metric = st.radio("📊 実際のランキング基準", ["REG確率", "差枚", "合算確率"], horizontal=True, help="合算確率とREG確率は、総ゲーム数3000G以上の台のみを対象とします。")
 
                 # --- 全体実績: ランキングトップ3獲得回数や通算差枚 (店舗別) ---
                 period_options = {"直近1週間": 7, "直近1ヶ月": 30, "直近3ヶ月": 90, "全期間": None}

@@ -90,20 +90,16 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     if df_recent.empty:
         st.warning("指定された期間のデータがありません。")
         return
-
-    df_recent['表示日'] = df_recent[date_col].dt.strftime('%m/%d')
     
     # 高設定フラグの計算 (機種ごとの合算やREGで判定)
     specs = backend.get_machine_specs()
     def is_high(row):
         g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
+        if g < 3000:
+            return np.nan
+        
         b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
         r = pd.to_numeric(row.get('REG', 0), errors='coerce')
-        diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
-        
-        valid_play = (g >= 3000)
-        if not valid_play:
-            return np.nan
         
         machine = row.get('機種名', '')
         matched_spec = backend.get_matched_spec_key(machine, specs)
@@ -113,24 +109,55 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         r_prob = r / g if g > 0 else 0
         t_prob = (b + r) / g if g > 0 else 0
         
-        if r_prob >= p_r_5 or t_prob >= p_t_5: return 1
-        return 0
+        return 1 if r_prob >= p_r_5 or t_prob >= p_t_5 else 0
         
     df_recent['is_high'] = df_recent.apply(is_high, axis=1)
 
-    metric_choice = st.radio("表示する指標", ["平均差枚", "高設定率"], horizontal=True)
+    df_recent['表示日'] = df_recent[date_col].dt.strftime('%m/%d')
+    
+    # --- UI: 指標と機種の選択 ---
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        metric_choice = st.radio("表示する指標", ["REG確率", "平均差枚", "高設定率"], horizontal=True)
+    with col_m2:
+        all_machines = ["(全機種平均)"] + sorted(list(df_recent['機種名'].dropna().unique()))
+        selected_machine = st.selectbox("機種で絞り込み (REG確率のみ)", all_machines)
+
+    # 機種が選択されている場合、指標は強制的にREG確率にする
+    if selected_machine != "(全機種平均)":
+        metric_choice = "REG確率"
+        st.caption(f"※機種「{selected_machine}」が選択されているため、指標はREG確率で表示されます。")
     
     if metric_choice == "平均差枚":
         pivot_df = df_recent.pivot_table(index=shop_col, columns='表示日', values='差枚', aggfunc='mean')
         fmt = "{:+.0f}"
         cmap = "RdYlBu_r" # 赤(プラス)〜青(マイナス)
         vmin, vmax = -300, 300
-    else:
+    elif metric_choice == "高設定率":
         pivot_df = df_recent.pivot_table(index=shop_col, columns='表示日', values='is_high', aggfunc='mean')
         pivot_df = pivot_df * 100 # %表記にするため
         fmt = "{:.1f}%"
         cmap = "Greens" # 緑が濃いほど高設定率が高い
         vmin, vmax = 0, 30
+    else: # REG確率
+        source_df = df_recent.copy()
+        if selected_machine != "(全機種平均)":
+            source_df = source_df[source_df['機種名'] == selected_machine]
+
+        source_df['REG確率分母'] = np.where(
+            pd.to_numeric(source_df['REG'], errors='coerce').fillna(0) > 0,
+            pd.to_numeric(source_df['累計ゲーム'], errors='coerce').fillna(0) / pd.to_numeric(source_df['REG'], errors='coerce').fillna(0),
+            np.nan
+        )
+        pivot_df = source_df.pivot_table(index=shop_col, columns='表示日', values='REG確率分母', aggfunc='mean')
+        
+        # 全店舗が表示されるように reindex を追加
+        all_shops_in_period = df_recent[shop_col].unique()
+        pivot_df = pivot_df.reindex(all_shops_in_period)
+
+        fmt = "1/{:.0f}"
+        cmap = "RdYlBu_r"
+        vmin, vmax = 200, 400
         
     # 日付順に列をソート
     pivot_df = pivot_df[sorted(pivot_df.columns)]
@@ -171,7 +198,9 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                     総台数=('台番号', 'count'),
                     高設定有効数=('is_high', 'count'),
                     高設定台数=('is_high', 'sum'),
-                    平均差枚=('差枚', 'mean')
+                    平均差枚=('差枚', 'mean'),
+                    合計REG=('REG', 'sum'),
+                    合計ゲーム数=('累計ゲーム', 'sum')
                 ).reset_index()
                 
                 merged_daily = pd.merge(
@@ -190,11 +219,14 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                         総台数=('総台数', 'sum'),
                         高設定有効数=('高設定有効数', 'sum'),
                         高設定台数=('高設定台数', 'sum'),
-                        回収日平均差枚=('平均差枚', 'mean')
+                        回収日平均差枚=('平均差枚', 'mean'),
+                        合計REG=('合計REG', 'sum'),
+                        合計ゲーム数=('合計ゲーム数', 'sum')
                     ).reset_index()
                     
                     cold_summary['回収日高設定率'] = np.where(cold_summary['高設定有効数'] > 0, (cold_summary['高設定台数'] / cold_summary['高設定有効数']) * 100, 0.0)
                     cold_summary['1日平均高設定台数'] = cold_summary['高設定台数'] / cold_summary['回収日数']
+                    cold_summary['回収日平均REG確率'] = cold_summary.apply(lambda r: f"1/{int(r['合計ゲーム数'] / r['合計REG'])}" if r['合計REG'] > 0 and r['合計ゲーム数'] > 0 else "-", axis=1)
                     
                     def get_betapin_badge(rate):
                         if rate >= 3.0: return "💎 優良 (見せ台あり)"
@@ -205,12 +237,13 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                     cold_summary = cold_summary.sort_values('回収日高設定率', ascending=False)
                     
                     st.dataframe(
-                        cold_summary[[shop_col, '回収日評価', '回収日数', '回収日平均差枚', '1日平均高設定台数', '回収日高設定率']],
+                        cold_summary[[shop_col, '回収日評価', '回収日数', '回収日平均差枚', '回収日平均REG確率', '1日平均高設定台数', '回収日高設定率']],
                         column_config={
                             shop_col: st.column_config.TextColumn("店舗名"),
                             "回収日評価": st.column_config.TextColumn("店舗評価", help="回収日における高設定率が3%以上なら優良店、1.5%未満は完全ベタピン店と判定します。"),
                             "回収日数": st.column_config.NumberColumn("ド回収日 発生数", format="%d日"),
                             "回収日平均差枚": st.column_config.NumberColumn("回収日 平均差枚", format="%+d 枚"),
+                            "回収日平均REG確率": st.column_config.TextColumn("回収日 REG確率"),
                             "1日平均高設定台数": st.column_config.NumberColumn("1日あたり高設定", format="%.1f 台", help="回収日1日あたり、平均して何台の高設定(設定5基準)が投入されていたか"),
                             "回収日高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=10.0)
                         },

@@ -8,8 +8,8 @@ import backend
 def _render_monthly_trend_analysis(viz_df, analysis_df=None):
     with st.expander("🗓️ 月間トレンド (月初・月末の傾向)", expanded=False):
         st.caption("過去データにおける、日付（1日〜31日）ごとの平均差枚数や高設定率です。")
-        
-        chart_metric_shop = st.radio("📊 グラフの表示指標", ["平均差枚", "高設定率", "REG確率"], horizontal=True, key="monthly_trend_metric")
+
+        chart_metric_shop = st.radio("📊 グラフの表示指標", ["REG確率", "平均差枚", "高設定率"], horizontal=True, key="monthly_trend_metric")
         
         trend_df = viz_df.copy()
         trend_df['REG確率_val'] = np.where(trend_df['累計ゲーム'] > 0, trend_df['REG'] / trend_df['累計ゲーム'], 0)
@@ -127,6 +127,108 @@ def _render_monthly_trend_analysis(viz_df, analysis_df=None):
                 width="stretch"
             )
 
+def _render_manager_personality_analysis(selected_shop, top_trends_df, analysis_df, df_raw_shop):
+    with st.expander(f"👨‍💼 {selected_shop} 店長 性格診断 (設定投入のクセ)", expanded=True):
+        st.caption("AIが発見した店癖や過去のデータから、店長がどのような台に設定を入れやすいかを性格診断風に分析します。")
+        
+        personality_traits = []
+        
+        # --- 1. AIが発見した店癖に基づく性格診断 (リファクタリング) ---
+        st.markdown("##### 💡 AIの分析による店癖")
+        st.caption("スマートな実装への改善提案：診断ロジックをデータ構造として定義し、ループ処理で簡潔に記述しました。")
+        if top_trends_df is not None and not top_trends_df.empty:
+            hot_conditions = top_trends_df['条件'].tolist()
+            
+            trend_definitions = {
+                "連続マイナス": "😇 **お詫び還元タイプ**: 負けが続いている台に救いの手を差し伸べる（上げリセットする）優しさを持っています。",
+                "連続プラス": "👑 **イケイケ据え置きタイプ**: 調子が良い台はそのまま据え置く自信家です。",
+                "角台": "✨ **見せびらかし屋タイプ**: 角台を出してアピールするのが好きなようです。",
+                "並び": "🤝 **仕掛け人タイプ**: 並びや塊で出玉を演出し、ホールの盛り上がりを画策するのが好きなようです。",
+                "隣": "🤝 **仕掛け人タイプ**: 並びや塊で出玉を演出し、ホールの盛り上がりを画策するのが好きなようです。",
+                "不発": "🧐 **テクニカルタイプ**: REGは引けているのに出玉が伴わなかった不発台を、翌日しっかり上げてくる几帳面さがあります。",
+            }
+            
+            # setを使って重複する性格診断を避ける
+            found_traits = set()
+            for keyword, trait in trend_definitions.items():
+                if any(keyword in c for c in hot_conditions):
+                    found_traits.add(trait)
+            personality_traits.extend(list(found_traits))
+
+        # --- 2. 据え置き vs 上げリセット の傾向 ---
+        if analysis_df is not None and not analysis_df.empty and '連続マイナス日数' in analysis_df.columns and '連続プラス日数' in analysis_df.columns:
+            sum_df = analysis_df.copy()
+            sum_df['valid_high_play'] = sum_df['next_累計ゲーム'] >= 3000
+            sum_df['target_rate'] = np.where(sum_df['valid_high_play'], sum_df['target'], np.nan) * 100
+            
+            minus_stats = sum_df[sum_df['連続マイナス日数'] >= 2].agg(上げ確率=('target_rate', 'mean'))
+            plus_stats = sum_df[sum_df['連続プラス日数'] >= 2].agg(据え置き確率=('target_rate', 'mean'))
+            
+            age_rate = minus_stats['上げ確率'] if not minus_stats.empty and not pd.isna(minus_stats['上げ確率']) else 0
+            sue_rate = plus_stats['据え置き確率'] if not plus_stats.empty and not pd.isna(plus_stats['据え置き確率']) else 0
+            
+            if age_rate > sue_rate and age_rate > 10:
+                 personality_traits.append("📈 **凹み台救済派**: 連日勝っている台よりも、連日凹んでいる台を救済する（上げる）傾向が強いです。")
+            elif sue_rate > age_rate and sue_rate > 10:
+                 personality_traits.append("🔁 **好調台キープ派**: 凹み台よりも、連日勝っている台をそのまま使う（据え置く）傾向が強いです。")
+
+        # --- 3. 並び・塊の投入頻度 ---
+        if not df_raw_shop.empty and '対象日付' in df_raw_shop.columns and '台番号' in df_raw_shop.columns and '差枚' in df_raw_shop.columns:
+            temp_df_n = df_raw_shop[['対象日付', '台番号', '差枚']].copy()
+            temp_df_n['台番号'] = pd.to_numeric(temp_df_n['台番号'], errors='coerce')
+            temp_df_n = temp_df_n.dropna(subset=['台番号']).sort_values(['対象日付', '台番号'])
+            narabi_hit_days = 0
+            narabi_total_days = temp_df_n['対象日付'].nunique()
+            if narabi_total_days > 0:
+                for date, group in temp_df_n.groupby('対象日付'):
+                    group = group.sort_values('台番号')
+                    group['is_hot'] = group['差枚'] >= 1000
+                    group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                    hot_blocks = group[group['is_hot']].groupby('block').size()
+                    if not hot_blocks.empty and hot_blocks.max() >= 3:
+                        narabi_hit_days += 1
+                narabi_hit_rate = (narabi_hit_days / narabi_total_days * 100)
+                if narabi_hit_rate >= 30:
+                    personality_traits.append("⛓️ **並び好き**: 3割以上の営業日で3台以上の並びを作っており、塊で設定を入れるのが好きなようです。")
+        
+        # --- 4. 月末のノルマ達成状況による設定の入れ方 ---
+        if analysis_df is not None and not analysis_df.empty and 'shop_monthly_cumulative_diff' in analysis_df.columns:
+            # 後の処理に影響を与えないように、この分析専用のDataFrameをコピーして使う
+            df_budget_analysis = analysis_df.copy()
+            # 月末ノルマ分析に必要なカラムを計算
+            df_budget_analysis['valid_play_next'] = (pd.to_numeric(df_budget_analysis['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                                       ((pd.to_numeric(df_budget_analysis['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                                        ((pd.to_numeric(df_budget_analysis['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(df_budget_analysis['next_diff'], errors='coerce').fillna(0) >= 750)))
+            df_budget_analysis['valid_next_diff'] = np.where(df_budget_analysis['valid_play_next'], df_budget_analysis['next_diff'], np.nan)
+
+            month_end_df = df_budget_analysis[df_budget_analysis['対象日付'].dt.day >= 25].copy()
+            if not month_end_df.empty:
+                # 差枚は客側。客がマイナス＝店が黒字
+                month_end_df['is_shop_winning'] = month_end_df['shop_monthly_cumulative_diff'] <= 0
+                
+                budget_stats = month_end_df.groupby('is_shop_winning').agg(
+                    avg_next_diff=('valid_next_diff', 'mean'),
+                    sample_days=('対象日付', 'nunique')
+                ).reset_index()
+                
+                shop_win_stats = budget_stats[budget_stats['is_shop_winning'] == True]
+                shop_lose_stats = budget_stats[budget_stats['is_shop_winning'] == False]
+                
+                if not shop_win_stats.empty and not shop_lose_stats.empty:
+                    shop_win_diff = shop_win_stats['avg_next_diff'].iloc[0]
+                    shop_lose_diff = shop_lose_stats['avg_next_diff'].iloc[0]
+                    
+                    if pd.notna(shop_win_diff) and pd.notna(shop_lose_diff):
+                        if shop_win_diff < -50 and shop_lose_diff > 50:
+                            personality_traits.append("💼 **ノルマ意識型マネージャー**: 月末に店の収支が黒字だと回収に走り、赤字だとお詫び還元する、典型的なサラリーマン店長です。")
+                        elif shop_win_diff > 50 and shop_lose_diff < -50:
+                            personality_traits.append("🃏 **あまのじゃく型ギャンブラー**: 月末に店の収支が黒字だとさらに放出し、赤字だと徹底的に回収する、予測不能なギャンブラー気質の店長です。")
+
+        if personality_traits:
+            st.info("\n\n".join([f"- {trait}" for trait in set(personality_traits)]))
+        else:
+            st.warning("この店長の性格を特定できるほどの明確なデータ傾向が見つかりませんでした。")
+
 def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events=None, analysis_df=None):
     with st.expander(f"📅 {selected_shop} の傾向分析", expanded=True):
         st.caption("過去データに基づく、この店舗の店癖やイベント日・曜日ごとの傾向です。")
@@ -134,10 +236,12 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
         # --- 店舗全体の還元日 / 回収日の傾向 ---
         if not df_raw_shop.empty and '対象日付' in df_raw_shop.columns:
             st.markdown(f"**💰 {selected_shop} の店舗全体 還元日 / 回収日 の傾向**")
-            st.caption("店舗全体の平均差枚から、どの日が甘く（還元）、どの日が辛い（回収）かを示します。")
+            st.caption("店舗全体の平均REG確率から、どの日が甘く（還元）、どの日が辛い（回収）かを示します。")
             
             shop_daily_df = df_raw_shop.groupby('対象日付').agg(
-                店舗平均差枚=('差枚', 'mean')
+                店舗平均差枚=('差枚', 'mean'),
+                合計REG=('REG', 'sum'),
+                合計ゲーム数=('累計ゲーム', 'sum')
             ).reset_index()
             
             shop_daily_df['曜日'] = shop_daily_df['対象日付'].dt.dayofweek
@@ -153,38 +257,43 @@ def _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst
                 shop_daily_df['イベント有無'] = '通常日'
                 shop_daily_df['イベントランク'] = '通常営業'
             
-            wd_shop_stats = shop_daily_df.groupby('曜日').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
-            digit_shop_stats = shop_daily_df.groupby('末尾').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
-            ev_shop_stats = shop_daily_df.groupby('イベント有無').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
-            rank_shop_stats = shop_daily_df.groupby('イベントランク').agg(平均差枚=('店舗平均差枚', 'mean')).reset_index()
+            wd_shop_stats = shop_daily_df.groupby('曜日').agg(合計REG=('合計REG', 'sum'), 合計ゲーム数=('合計ゲーム数', 'sum')).reset_index()
+            wd_shop_stats['REG確率分母'] = np.where(wd_shop_stats['合計REG'] > 0, wd_shop_stats['合計ゲーム数'] / wd_shop_stats['合計REG'], np.nan)
+            digit_shop_stats = shop_daily_df.groupby('末尾').agg(合計REG=('合計REG', 'sum'), 合計ゲーム数=('合計ゲーム数', 'sum')).reset_index()
+            digit_shop_stats['REG確率分母'] = np.where(digit_shop_stats['合計REG'] > 0, digit_shop_stats['合計ゲーム数'] / digit_shop_stats['合計REG'], np.nan)
+            ev_shop_stats = shop_daily_df.groupby('イベント有無').agg(合計REG=('合計REG', 'sum'), 合計ゲーム数=('合計ゲーム数', 'sum')).reset_index()
+            ev_shop_stats['REG確率分母'] = np.where(ev_shop_stats['合計REG'] > 0, ev_shop_stats['合計ゲーム数'] / ev_shop_stats['合計REG'], np.nan)
+            rank_shop_stats = shop_daily_df.groupby('イベントランク').agg(合計REG=('合計REG', 'sum'), 合計ゲーム数=('合計ゲーム数', 'sum')).reset_index()
+            rank_shop_stats['REG確率分母'] = np.where(rank_shop_stats['合計REG'] > 0, rank_shop_stats['合計ゲーム数'] / rank_shop_stats['合計REG'], np.nan)
             
             if not wd_shop_stats.empty and not digit_shop_stats.empty:
-                best_wd = wd_shop_stats.loc[wd_shop_stats['平均差枚'].idxmax()]
-                worst_wd = wd_shop_stats.loc[wd_shop_stats['平均差枚'].idxmin()]
+                best_wd = wd_shop_stats.loc[wd_shop_stats['REG確率分母'].idxmin()]
+                worst_wd = wd_shop_stats.loc[wd_shop_stats['REG確率分母'].idxmax()]
                 
-                best_digit = digit_shop_stats.loc[digit_shop_stats['平均差枚'].idxmax()]
-                worst_digit = digit_shop_stats.loc[digit_shop_stats['平均差枚'].idxmin()]
+                best_digit = digit_shop_stats.loc[digit_shop_stats['REG確率分母'].idxmin()]
+                worst_digit = digit_shop_stats.loc[digit_shop_stats['REG確率分母'].idxmax()]
                 
                 weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
                 
                 ev_hot_str = ""
                 ev_cold_str = ""
                 if not ev_shop_stats.empty and 'イベント日' in ev_shop_stats['イベント有無'].values and '通常日' in ev_shop_stats['イベント有無'].values:
-                    ev_diff = ev_shop_stats[ev_shop_stats['イベント有無']=='イベント日']['平均差枚'].iloc[0]
-                    norm_diff = ev_shop_stats[ev_shop_stats['イベント有無']=='通常日']['平均差枚'].iloc[0]
+                    ev_reg_prob = ev_shop_stats[ev_shop_stats['イベント有無']=='イベント日']['REG確率分母'].iloc[0]
+                    norm_reg_prob = ev_shop_stats[ev_shop_stats['イベント有無']=='通常日']['REG確率分母'].iloc[0]
                     
                     rank_str_list = []
-                    for _, r in rank_shop_stats[rank_shop_stats['イベントランク'] != '通常営業'].sort_values('平均差枚', ascending=False).iterrows():
-                        rank_str_list.append(f"{r['イベントランク']}: {int(r['平均差枚']):+d}枚")
+                    for _, r in rank_shop_stats[rank_shop_stats['イベントランク'] != '通常営業'].sort_values('REG確率分母', ascending=True).iterrows():
+                        if pd.notna(r['REG確率分母']):
+                            rank_str_list.append(f"{r['イベントランク']}: 1/{int(r['REG確率分母'])}")
                     rank_details = f" (ランク別: {', '.join(rank_str_list)})" if rank_str_list else ""
                     
-                    if ev_diff > norm_diff:
-                        ev_hot_str = f"\n- **イベント日** (店舗全体平均 {int(ev_diff):+d}枚 / 通常営業 {int(norm_diff):+d}枚){rank_details}"
+                    if pd.notna(ev_reg_prob) and pd.notna(norm_reg_prob) and ev_reg_prob < norm_reg_prob:
+                        ev_hot_str = f"\n- **イベント日** (店舗全体REG 1/{int(ev_reg_prob)} / 通常営業 1/{int(norm_reg_prob)}){rank_details}"
                     else:
-                        ev_cold_str = f"\n- **イベント日** (店舗全体平均 {int(ev_diff):+d}枚 / 通常営業 {int(norm_diff):+d}枚){rank_details} ※イベント回収傾向"
+                        ev_cold_str = f"\n- **イベント日** (店舗全体REG 1/{int(ev_reg_prob) if pd.notna(ev_reg_prob) else 999} / 通常営業 1/{int(norm_reg_prob) if pd.notna(norm_reg_prob) else 999}){rank_details} ※イベント回収傾向"
                 
-                st.info(f"🔥 **還元傾向が強い日 (甘い日)**\n- **{int(best_digit['末尾'])}のつく日** (店舗全体平均 {int(best_digit['平均差枚']):+d}枚)\n- **{weekdays_map[int(best_wd['曜日'])]}曜日** (店舗全体平均 {int(best_wd['平均差枚']):+d}枚){ev_hot_str}")
-                st.warning(f"🥶 **回収傾向が強い日 (辛い日)**\n- **{int(worst_digit['末尾'])}のつく日** (店舗全体平均 {int(worst_digit['平均差枚']):+d}枚)\n- **{weekdays_map[int(worst_wd['曜日'])]}曜日** (店舗全体平均 {int(worst_wd['平均差枚']):+d}枚){ev_cold_str}")
+                st.info(f"🔥 **還元傾向が強い日 (甘い日)**\n- **{int(best_digit['末尾'])}のつく日** (店舗全体REG 1/{int(best_digit['REG確率分母'])})\n- **{weekdays_map[int(best_wd['曜日'])]}曜日** (店舗全体REG 1/{int(best_wd['REG確率分母'])}){ev_hot_str}")
+                st.warning(f"🥶 **回収傾向が強い日 (辛い日)**\n- **{int(worst_digit['末尾'])}のつく日** (店舗全体REG 1/{int(worst_digit['REG確率分母'])})\n- **{weekdays_map[int(worst_wd['曜日'])]}曜日** (店舗全体REG 1/{int(worst_wd['REG確率分母'])}){ev_cold_str}")
 
             st.divider()
             st.markdown(f"**🔄 前日の営業結果（反動）による当日の傾向**")
@@ -399,6 +508,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
             
         viz_df = df_raw_shop.copy()
         if not viz_df.empty:
+            viz_df['REG確率'] = viz_df['REG'] / viz_df['累計ゲーム'].replace(0, np.nan)
             viz_df['合算確率'] = (viz_df['BIG'] + viz_df['REG']) / viz_df['累計ゲーム'].replace(0, np.nan)
             spec_reg = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
             spec_tot = viz_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
@@ -416,7 +526,67 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     with tab_summary:
         st.info("💡 **ここだけ見ればOK！** この店舗の基本的な設定配分のクセや、狙うべきポイントのまとめです。")
         if has_raw:
+            _render_manager_personality_analysis(selected_shop, top_trends_df, analysis_df, df_raw_shop)
+            
             _render_shop_trend_analysis(selected_shop, df_raw_shop, top_trends_df, worst_trends_df, base_win_rate, specs, df_events, analysis_df)
+
+            # --- 回収日に甘い機種ランキング ---
+            with st.expander(f"⚠️ {selected_shop} の「回収日」に甘い機種ランキング", expanded=True):
+                st.caption("AIが「回収日」と予測した厳しい日でも、比較的設定が入りやすい（または誤爆しやすい）機種を分析します。回収日の立ち回りの参考にしてください。")
+                
+                df_scores = backend.load_daily_shop_scores()
+                if not df_scores.empty and '予測対象日' in df_scores.columns:
+                    df_scores['対象日付'] = pd.to_datetime(df_scores['予測対象日'], errors='coerce').dt.normalize()
+                    score_shop_col = '店名' if '店名' in df_scores.columns else ('店舗名' if '店舗名' in df_scores.columns else None)
+                    
+                    if score_shop_col:
+                        shop_scores = df_scores[df_scores[score_shop_col] == selected_shop]
+                        cold_dates = shop_scores[shop_scores['店舗平均期待度'] < 0.10]['対象日付'].tolist()
+                        
+                        if cold_dates:
+                            cold_day_data = df_raw_shop[df_raw_shop['対象日付'].dt.normalize().isin(cold_dates)].copy()
+                            
+                            if not cold_day_data.empty:
+                                mac_df = cold_day_data
+                                mac_df['REG確率'] = mac_df['REG'] / mac_df['累計ゲーム'].replace(0, np.nan)
+                                mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & ((mac_df['差枚'] <= -750) | (mac_df['差枚'] >= 750)))
+                                
+                                shop_avg_g = mac_df['累計ゲーム'].mean() if not mac_df.empty else 4000
+                                
+                                def calc_score_for_mac(row):
+                                    return backend.calculate_setting_score(
+                                        g=row.get('累計ゲーム', 0), act_b=row.get('BIG', 0), act_r=row.get('REG', 0), machine_name=row.get('機種名', ''), diff=row.get('差枚', 0),
+                                        shop_avg_g=shop_avg_g, penalty_reg=15, penalty_big=5, low_g_penalty=30, use_strict_scoring=True, return_details=False
+                                    )
+                                
+                                mac_df['設定5近似度'] = mac_df.apply(calc_score_for_mac, axis=1)
+                                mac_df['REG確率_val'] = np.where(mac_df['累計ゲーム'] > 0, mac_df['REG'] / mac_df['累計ゲーム'], 0)
+                                
+                                mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
+                                spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                                spec_tot = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                                spec_reg3 = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+                                
+                                mac_df['高設定挙動'] = ((mac_df['累計ゲーム'] >= 3000) & ((mac_df['REG確率'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率'] >= spec_reg3)))).astype(int)
+                                mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
+                                
+                                mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
+                                mac_df['valid_REG確率'] = np.where(mac_df['valid_play'], mac_df['REG確率_val'], np.nan)
+
+                                cold_mac_stats = mac_df.groupby('機種名').agg(
+                                    平均差枚=('valid_差枚', 'mean'), 高設定率=('高設定率', 'mean'), 平均REG確率=('valid_REG確率', 'mean'), サンプル数=('台番号', 'count')
+                                ).reset_index().sort_values('平均差枚', ascending=False)
+                                
+                                cold_mac_stats['信頼度'] = cold_mac_stats['サンプル数'].apply(get_confidence_indicator)
+                                cold_mac_stats['REG確率'] = cold_mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                                
+                                st.dataframe(cold_mac_stats[['機種名', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']], column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("平均REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度")}, hide_index=True, use_container_width=True)
+                            else:
+                                st.info(f"過去の回収日に稼働データがありませんでした。（回収日: {len(cold_dates)}日）")
+                        else:
+                            st.info("AIが「回収日」と予測した日がまだありません。")
+                else:
+                    st.info("店舗の営業評価データ（daily_shop_scores.csv）が見つかりません。")
 
             # --- 当たり機種(全台系)の投入頻度 ---
             with st.expander(f"🎯 {selected_shop} の「全台系(当たり機種)」投入傾向", expanded=True):
@@ -424,6 +594,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 
                 if not df_raw_shop.empty:
                     mac_df = df_raw_shop.copy()
+                    mac_df['REG確率'] = mac_df['REG'] / mac_df['累計ゲーム'].replace(0, np.nan)
                     mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & ((mac_df['差枚'] <= -750) | (mac_df['差枚'] >= 750)))
                     
                     shop_avg_g = mac_df['累計ゲーム'].mean() if not mac_df.empty else 4000
@@ -435,6 +606,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         )
                     
                     mac_df['設定5近似度'] = mac_df.apply(calc_score_for_mac, axis=1)
+                    mac_df['REG確率_val'] = np.where(mac_df['累計ゲーム'] > 0, mac_df['REG'] / mac_df['累計ゲーム'], 0)
                     
                     mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
                     spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
@@ -449,17 +621,20 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
                     mac_df['valid_設定5近似度'] = np.where(mac_df['valid_play'], mac_df['設定5近似度'], np.nan)
+                    mac_df['valid_REG確率'] = np.where(mac_df['valid_play'], mac_df['REG確率_val'], np.nan)
                     mac_df['valid_累計ゲーム'] = np.where(mac_df['valid_play'], mac_df['累計ゲーム'], np.nan)
 
                     mac_stats = mac_df.groupby('機種名').agg(
                         平均差枚=('valid_差枚', 'mean'),
                         設定5近似度=('valid_設定5近似度', 'mean'),
                         高設定率=('高設定率', 'mean'),
+                        平均REG確率=('valid_REG確率', 'mean'),
                         平均回転数=('valid_累計ゲーム', 'mean'),
                         サンプル数=('台番号', 'count')
                     ).reset_index().sort_values('設定5近似度', ascending=False)
                     
                     mac_stats['信頼度'] = mac_stats['サンプル数'].apply(get_confidence_indicator)
+                    mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                     
                     col_m1, col_m2 = st.columns([1, 1.2])
                     with col_m1:
@@ -478,6 +653,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                                 "設定5近似度": st.column_config.NumberColumn("設定5近似度", format="%.1f点", help="100点満点での平均的な設定5近似度"),
                                 "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
+                                "REG確率": st.column_config.TextColumn("平均REG確率"),
                                 "平均回転数": st.column_config.NumberColumn("平均回転", format="%d G"),
                                 "サンプル数": st.column_config.NumberColumn("サンプル", format="%d 件"),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度"),
@@ -810,6 +986,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                 
                 if not df_raw_shop.empty:
                     mac_df = df_raw_shop.copy()
+                    mac_df['REG確率'] = mac_df['REG'] / mac_df['累計ゲーム'].replace(0, np.nan)
                     mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & ((mac_df['差枚'] <= -750) | (mac_df['差枚'] >= 750)))
                     
                     shop_avg_g = mac_df['累計ゲーム'].mean() if not mac_df.empty else 4000
@@ -821,6 +998,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         )
                     
                     mac_df['設定5近似度'] = mac_df.apply(calc_score_for_mac, axis=1)
+                    mac_df['REG確率_val'] = np.where(mac_df['累計ゲーム'] > 0, mac_df['REG'] / mac_df['累計ゲーム'], 0)
                     
                     mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
                     spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
@@ -835,17 +1013,20 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     
                     mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
                     mac_df['valid_設定5近似度'] = np.where(mac_df['valid_play'], mac_df['設定5近似度'], np.nan)
+                    mac_df['valid_REG確率'] = np.where(mac_df['valid_play'], mac_df['REG確率_val'], np.nan)
                     mac_df['valid_累計ゲーム'] = np.where(mac_df['valid_play'], mac_df['累計ゲーム'], np.nan)
 
                     mac_stats = mac_df.groupby('機種名').agg(
                         平均差枚=('valid_差枚', 'mean'),
                         設定5近似度=('valid_設定5近似度', 'mean'),
                         高設定率=('高設定率', 'mean'),
+                        平均REG確率=('valid_REG確率', 'mean'),
                         平均回転数=('valid_累計ゲーム', 'mean'),
                         サンプル数=('台番号', 'count')
                     ).reset_index().sort_values('設定5近似度', ascending=False)
                     
                     mac_stats['信頼度'] = mac_stats['サンプル数'].apply(get_confidence_indicator)
+                    mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                     
                     col_m1, col_m2 = st.columns([1, 1.2])
                     with col_m1:
@@ -864,6 +1045,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                                 "設定5近似度": st.column_config.NumberColumn("設定5近似度", format="%.1f点", help="100点満点での平均的な設定5近似度"),
                                 "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
                                 "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
+                                "REG確率": st.column_config.TextColumn("平均REG確率"),
                                 "平均回転数": st.column_config.NumberColumn("平均回転", format="%d G"),
                                 "サンプル数": st.column_config.NumberColumn("サンプル", format="%d 件"),
                                 "信頼度": st.column_config.TextColumn("信頼度", help="データのサンプル量に基づく信頼度"),
