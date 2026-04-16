@@ -64,37 +64,6 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     if df_importance is not None and not df_importance.empty:
         imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
         if not imp_shop.empty:
-            feature_name_map = {
-                '累計ゲーム': '前日 累計G数', 'REG確率': '前日 REG確率', 'BIG確率': '前日 BIG確率',
-                '差枚': '前日 差枚数', '末尾番号': '台番号末尾', 'target_weekday': '予測日 曜日',
-                'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
-                'mean_7days_diff': '台 直近7日平均', 'median_7days_diff': '台 7日中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
-                'mean_7days_games': '台 直近7日平均G数',
-                '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'is_prev_no_play': '前日 稼働なし',
-                'machine_code': '機種', 'shop_code': '店舗',
-                'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
-                'neighbor_avg_diff': '両隣 平均差枚', 'neighbor_positive_count': '両隣 プラス台数',
-                'is_neighbor_high_reg': '両隣 REG高設定水準', 'neighbor_reg_reliability_score': '両隣 REG信頼度スコア', 'neighbor_high_setting_count': '両隣 高設定示唆台数',
-                'event_avg_diff': 'イベント 平均差枚', 'event_high_rate': 'イベント 高設定率', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク',
-                'prev_event_rank_score': '前日(特日)ランク',
-                'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
-                'shop_7days_avg_diff': '店舗 直近7日平均',
-                'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
-                'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
-                'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_machine_high_rate': 'イベント×機種 高設定率', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚',
-                'cons_minus_total_diff': '連続凹み 吸込み量', 'machine_no_30days_avg_diff': '場所 30日平均', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
-                'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',
-                'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 BB/RB偏り', 'prev_unlucky_gap': '前日 不発度合い',
-                'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス',
-                'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
-                'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
-                'trend_v_recovery': '波 V字反発(負→勝)',
-                'trend_cont_lose': '波 連続凹み(負→負)',
-                'trend_cont_win': '波 連続据え(勝→勝)',
-                'trend_down_rebound': '波 上げ戻し(勝→負)',
-                'shop_pred_diff_7d_avg': '店舗 AI予測7日平均', 'predicted_diff': 'AI予測 差枚数'
-            }
-            
             st.markdown(f"**🌟 この店舗のAI評価 決定要因 (トップ10):**")
             st.caption("AIはこの店舗の傾向として、以下の10個の指標を特に重視しています。")
             
@@ -105,24 +74,11 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             
             for idx, (_, imp_row) in enumerate(top10.iterrows()):
                 f_key = imp_row['feature']
-                f_name = feature_name_map.get(f_key, f_key)
                 corr = imp_row.get('correlation', 0)
                 val = row.get(f_key, '-')
                 
-                # 特徴量の種類に応じて、直感的な表現に変える
-                if '確率' in f_name and '比率' not in f_name:
-                    corr_str = "🔼 確率が良いほど+" if corr >= 0 else "🔽 確率が悪いほど+"
-                elif '差枚' in f_name or '吸込み' in f_name:
-                    corr_str = "🔼 出ているほど+" if corr >= 0 else "🔽 凹んでいるほど+"
-                elif 'ゲーム' in f_name or 'G数' in f_name:
-                    corr_str = "🔼 回されているほど+" if corr >= 0 else "🔽 放置されているほど+"
-                elif '日数' in f_name:
-                    corr_str = "🔼 続くほど+" if corr >= 0 else "🔽 少ないほど+"
-                elif f_key.startswith('is_') or 'フラグ' in f_name or ('日' in f_name and isinstance(val, (int, float)) and val in [0,1]):
-                    corr_str = "🔼 該当すれば+" if corr >= 0 else "🔽 該当しない方が+"
-                else:
-                    corr_str = "🔼 大きいほど+" if corr >= 0 else "🔽 小さいほど+"
-                
+                f_name = backend.FEATURE_NAME_MAP.get(f_key, f_key)
+
                 if isinstance(val, (int, float)) and not pd.isna(val):
                     if f_key.startswith('is_') or 'フラグ' in f_name or ('日' in f_name and val in [0,1]):
                         val_str = "あり" if val == 1 else "なし"
@@ -134,9 +90,18 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 else: val_str = str(val)
                     
                 with all_cols[idx]:
-                    # 🔽はデフォルトで赤になるため、inverseを指定して緑色にする
-                    d_color = "normal" if corr >= 0 else "inverse"
-                    st.metric(f_name, val_str, delta=corr_str, delta_color=d_color)
+                    if corr >= 0:
+                        corr_icon, corr_color, corr_text = "🔼", "#25a25a", "高いほど高設定"
+                    else:
+                        corr_icon, corr_color, corr_text = "🔽", "#ff4b4b", "低いほど高設定"
+
+                    st.markdown(f"""
+                    <div style="padding: 5px; border-radius: 5px; background-color: #f0f2f6; height: 90px; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div style="font-size: 0.8rem; font-weight: bold; color: #4f4f4f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{f_name}">{f_name}</div>
+                        <div style="font-size: 1.2rem; font-weight: bold; text-align: center;">{val_str}</div>
+                        <div style="font-size: 0.75rem; color: {corr_color}; text-align: center; font-weight: bold;">{corr_icon} {corr_text}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
     # --- 新規追加: AI評価用 詳細特徴量データ ---
     st.markdown("**🔍 その他のサブ特徴量データ:**")
