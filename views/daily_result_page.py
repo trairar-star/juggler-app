@@ -8,6 +8,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     st.header("📅 日別 結果＆予測確認")
     st.caption("指定した日付の全台の結果と、「現在のAI設定」でその日を予測した場合のシミュレーション結果（期待度・信頼度）を照合できます。")
 
+    specs = backend.get_machine_specs()
+
     if df_raw.empty:
         st.warning("データがありません。")
         return
@@ -96,7 +98,10 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         if col in display_df.columns:
             display_df[col] = pd.to_numeric(display_df[col], errors='coerce').fillna(0).astype(int)
     
-    
+    # REG確率がなければ計算する
+    if 'REG確率' not in display_df.columns:
+        display_df['REG確率'] = display_df['REG'] / display_df['総回転'].replace(0, np.nan)
+
     # --- 結果点数（設定5近似度）の計算 ---
     shop_avg_g = display_df['総回転'].mean() if not display_df.empty else 4000
 
@@ -123,6 +128,18 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         display_df['ぶどう確率_str'] = display_df['推定ぶどう確率'].apply(lambda x: f"1/{x:.2f}" if pd.notna(x) else "-")
     else:
         display_df['ぶどう確率_str'] = "-"
+
+    # --- REG確率が設定5基準を上回るか判定 (ハイライト用) ---
+    def check_high_reg(row):
+        if '機種名' in row and 'REG確率' in row and pd.notna(row['REG確率']) and row['REG確率'] > 0:
+            machine_name = row['機種名']
+            matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
+            if matched_spec_key:
+                spec_reg5_prob = 1.0 / specs[matched_spec_key].get("設定5", {"REG": 260.0})["REG"]
+                if row['REG確率'] >= spec_reg5_prob:
+                    return True
+        return False
+    display_df['is_high_reg'] = display_df.apply(check_high_reg, axis=1)
 
     # --- 期待外れ台のフラグ計算 (ハイライト用) ---
     def check_bad_pred(row):
@@ -188,8 +205,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     elif sort_by == "合算確率が良い順":
         display_df = display_df.sort_values('tmp_total_prob', ascending=False)
     elif sort_by == "REG確率が良い順":
-        display_df['tmp_reg_prob'] = display_df.get('REG', 0).fillna(0) / display_df['総回転'].replace(0, np.nan)
-        display_df = display_df.sort_values('tmp_reg_prob', ascending=False)
+        display_df = display_df.sort_values('REG確率', ascending=False)
     elif sort_by == "AI期待度順":
         if 'prediction_score' in display_df.columns:
             display_df = display_df.sort_values('prediction_score', ascending=False)
@@ -247,7 +263,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
                 win_c = (valid_target_df['差枚'] > 0).sum()
                 win_rate_str = f"{win_c / total_target:.1%} ({win_c}/{total_target}台)"
                 
-                st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} のうち有効稼働した **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台")
+                st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} のうち有効稼働した **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台 / 🟩緑背景=REG確率が設定5基準以上の優秀台")
             else:
                 st.info(f"⚪ **本日のAI予測精度: データなし** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} の中で有効稼働（3000G以上等）した台がありませんでした。")
 
@@ -278,6 +294,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             return ['background-color: rgba(255, 75, 75, 0.2)'] * len(available_cols)
         elif row_data.get('結果点数', 0) >= 80:
             return ['background-color: rgba(255, 215, 0, 0.2)'] * len(available_cols)
+        elif row_data.get('is_high_reg', False):
+            return ['background-color: rgba(102, 187, 106, 0.3)'] * len(available_cols)
         return [''] * len(available_cols)
         
     styled_display_df = display_df[available_cols].style.apply(apply_row_style, axis=1)

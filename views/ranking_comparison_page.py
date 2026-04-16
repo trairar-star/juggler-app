@@ -376,15 +376,15 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     diff_top_machines = actual_df_day.sort_values('差枚', ascending=False).head(act_top_k)['台番号'].tolist()
 
                     if rank_metric == "差枚":
-                        actual_df_day = actual_df_day.sort_values('差枚', ascending=False).head(act_top_k)
+                        actual_top_df = actual_df_day.sort_values('差枚', ascending=False).head(act_top_k)
                     else:
-                        actual_df_day = actual_df_day[actual_df_day['累計ゲーム'] >= 3000]
+                        actual_top_df = actual_df_day[actual_df_day['累計ゲーム'] >= 3000]
                         if rank_metric == "合算確率":
-                            actual_df_day = actual_df_day[actual_df_day['合算確率分母'] > 0].sort_values('合算確率分母', ascending=True).head(act_top_k)
+                            actual_top_df = actual_top_df[actual_top_df['合算確率分母'] > 0].sort_values('合算確率分母', ascending=True).head(act_top_k)
                         else:
-                            actual_df_day = actual_df_day[actual_df_day['REG確率分母'] > 0].sort_values('REG確率分母', ascending=True).head(act_top_k)
+                            actual_top_df = actual_top_df[actual_top_df['REG確率分母'] > 0].sort_values('REG確率分母', ascending=True).head(act_top_k)
                             
-                    actual_top_machines = actual_df_day['台番号'].tolist()
+                    actual_top_machines = actual_top_df['台番号'].tolist()
                     
                 # 当日の店舗全体の答え合わせサマリー
                 avg_pred_score = pred_df_day['prediction_score'].mean() if not pred_df_day.empty and 'prediction_score' in pred_df_day.columns else np.nan
@@ -413,6 +413,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     if pred_df_day.empty:
                         st.info("この日の予測ログがありません。")
                     else:
+                        show_complete_victory_only = st.checkbox("「完全勝利」(的中🎯 & 高挙動🌟)のみ表示", key="complete_victory_filter")
+
                         if 'prediction_score' in pred_df_day.columns:
                             pred_df_day['予想設定5以上確率'] = (pred_df_day['prediction_score'] * 100).astype(int)
                         else:
@@ -420,7 +422,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                         pred_df_day['結果点数'] = pred_df_day.apply(lambda row: calculate_score(row, '結果_累計ゲーム', '結果_BIG', '結果_REG', '機種名', '差枚_actual'), axis=1)
 
-                        # 上位10%ランクインのマーク
+                        # 的中マーク
                         pred_df_day['的中'] = pred_df_day['台番号'].apply(lambda x: '🎯' if x in diff_top_machines else '')
 
                         # 高設定挙動のマーク
@@ -429,95 +431,123 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         spec_tot_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
                         pred_df_day['高設定'] = (((pred_df_day['結果_REG確率分母'] > 0) & (pred_df_day['結果_REG確率分母'] <= spec_reg_val_pred)) | ((pred_df_day['結果_合算確率分母'] > 0) & (pred_df_day['結果_合算確率分母'] <= spec_tot_val_pred))).apply(lambda x: '🌟' if x else '')
 
-                        display_cols_pred = ['的中', '高設定', '台番号', '機種名', '予想設定5以上確率', '結果点数', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
+                        if show_complete_victory_only:
+                            pred_df_day = pred_df_day[(pred_df_day['的中'] == '🎯') & (pred_df_day['高設定'] == '🌟')]
                         
-                        def highlight_positive(row):
-                            if row.get('的中', '') == '🎯':
-                                return ['background-color: rgba(255, 215, 0, 0.3)'] * len(row) # 的中なら少し強めの黄色
-                            elif pd.notna(row['差枚_actual']) and row['差枚_actual'] > 0:
-                                return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
-                            return [''] * len(row)
+                        if pred_df_day.empty:
+                            st.info("表示対象の台はありません。")
+                        else:
+                            display_cols_pred = ['的中', '高設定', '台番号', '機種名', '予想設定5以上確率', '結果点数', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
                             
-                        styled_pred_df = pred_df_day[display_cols_pred].style.apply(highlight_positive, axis=1)
-                        if '差枚_actual' in display_cols_pred:
-                            styled_pred_df = styled_pred_df.bar(subset=['差枚_actual'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
+                            def highlight_positive(row):
+                                if row.get('的中', '') == '🎯':
+                                    return ['background-color: rgba(255, 215, 0, 0.3)'] * len(row) # 的中なら少し強めの黄色
+                                elif pd.notna(row['差枚_actual']) and row['差枚_actual'] > 0:
+                                    return ['background-color: rgba(255, 75, 75, 0.2)'] * len(row)
+                                return [''] * len(row)
+                                
+                            styled_pred_df = pred_df_day[display_cols_pred].style.apply(highlight_positive, axis=1)
+                            if '差枚_actual' in display_cols_pred:
+                                styled_pred_df = styled_pred_df.bar(subset=['差枚_actual'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
 
-                        st.dataframe(
-                            styled_pred_df,
-                            column_config={
-                                "的中": st.column_config.TextColumn("的中", width="small", help="差枚数が店舗上位10%に入った台"),
-                                "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
-                                "台番号": st.column_config.TextColumn("台番号"),
-                                "機種名": st.column_config.TextColumn("機種", width="small"),
-                                "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100),
-                                "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
-                                "差枚_actual": st.column_config.NumberColumn("結果差枚", format="%+d"),
-                                "結果_累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
-                                "結果_BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
-                                "結果_REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
-                                "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
-                            },
-                            hide_index=True,
-                            width="stretch"
-                        )
+                            st.dataframe(
+                                styled_pred_df,
+                                column_config={
+                                    "的中": st.column_config.TextColumn("的中", width="small", help="差枚数が店舗上位10%に入った台"),
+                                    "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
+                                    "台番号": st.column_config.TextColumn("台番号"),
+                                    "機種名": st.column_config.TextColumn("機種", width="small"),
+                                    "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100),
+                                    "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
+                                    "差枚_actual": st.column_config.NumberColumn("結果差枚", format="%+d"),
+                                    "結果_累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
+                                    "結果_BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
+                                    "結果_REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
+                                    "結果_合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
+                                },
+                                hide_index=True,
+                                width="stretch"
+                            )
 
                 st.divider()
 
                 # --- 下段: 実績ランキング ---
                 date_str_actual = actual_date.strftime('%Y-%m-%d') if pd.notna(actual_date) else "不明"
-                with st.expander(f"🎰 実績 上位10% ({rank_metric}順) - {date_str_actual}", expanded=True):
-                    st.caption(f"※稼働日: {date_str_actual}")
+                with st.expander(f"🎰 実績 上位10% - {date_str_actual}", expanded=True):
+                    st.caption(f"※稼働日: {date_str_actual} ｜ REG確率と合算確率は総ゲーム数3000G以上の台のみ対象")
                         
                     if actual_df_day.empty:
                         st.info("条件を満たす結果データがありません。")
                     else:
-                        actual_df_day = actual_df_day.reset_index(drop=True)
-                        actual_df_day.index = actual_df_day.index + 1
+                        tab_diff, tab_reg, tab_tot = st.tabs(["💰 差枚順", "📉 REG確率順", "🎰 合算確率順"])
                         
-                        def get_rank_medal(rank):
-                            if rank == 1: return '🥇 1位'
-                            elif rank == 2: return '🥈 2位'
-                            elif rank == 3: return '🥉 3位'
-                            else: return f'{rank}位'
+                        def render_actual_ranking_tab(df_base, metric, top_k, pred_macs):
+                            df = df_base.copy()
+                            if metric == "差枚":
+                                df = df.sort_values('差枚', ascending=False).head(top_k)
+                            elif metric == "REG確率":
+                                df = df[(df['累計ゲーム'] >= 3000) & (df['REG確率分母'] > 0)].sort_values('REG確率分母', ascending=True).head(top_k)
+                            elif metric == "合算確率":
+                                df = df[(df['累計ゲーム'] >= 3000) & (df['合算確率分母'] > 0)].sort_values('合算確率分母', ascending=True).head(top_k)
+                                
+                            if df.empty:
+                                st.info("条件を満たす結果データがありません。")
+                                return
+                                
+                            df = df.reset_index(drop=True)
+                            df.index = df.index + 1
                             
-                        actual_df_day['順位'] = actual_df_day.index.map(get_rank_medal)
-                        
-                        actual_df_day['結果点数'] = actual_df_day.apply(lambda row: calculate_score(row, '累計ゲーム', 'BIG', 'REG', '機種名', '差枚'), axis=1)
+                            def get_rank_medal(rank):
+                                if rank == 1: return '🥇 1位'
+                                elif rank == 2: return '🥈 2位'
+                                elif rank == 3: return '🥉 3位'
+                                else: return f'{rank}位'
+                                
+                            df['順位'] = df.index.map(get_rank_medal)
+                            df['結果点数'] = df.apply(lambda row: calculate_score(row, '累計ゲーム', 'BIG', 'REG', '機種名', '差枚'), axis=1)
 
-                        # AIが推奨していた台にはマークをつける
-                        pred_machines = pred_df_day['台番号'].tolist()
-                        actual_df_day['AI推奨'] = actual_df_day['台番号'].apply(lambda x: '🎯' if x in pred_machines else '')
-                        
-                        display_cols = ['AI推奨', '高設定', '順位', '台番号', '機種名', '結果点数', '差枚', '累計ゲーム', 'BIG確率分母', 'REG確率分母', '合算確率分母']
-                        
-                        def highlight_top3(row):
-                            if '1位' in row['順位']:
-                                return ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
-                            elif '2位' in row['順位']:
-                                return ['background-color: rgba(192, 192, 192, 0.2)'] * len(row)
-                            elif '3位' in row['順位']:
-                                return ['background-color: rgba(205, 127, 50, 0.2)'] * len(row)
-                            return [''] * len(row)
+                            # AIが推奨していた台にはマークをつける
+                            df['AI推奨'] = df['台番号'].apply(lambda x: '🎯' if x in pred_macs else '')
                             
-                        styled_df = actual_df_day[display_cols].style.apply(highlight_top3, axis=1)
-                        if '差枚' in display_cols:
-                            styled_df = styled_df.bar(subset=['差枚'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
+                            display_cols = ['AI推奨', '高設定', '順位', '台番号', '機種名', '結果点数', '差枚', '累計ゲーム', 'BIG確率分母', 'REG確率分母', '合算確率分母']
+                            
+                            def highlight_top3(row):
+                                if '1位' in row['順位']:
+                                    return ['background-color: rgba(255, 215, 0, 0.2)'] * len(row)
+                                elif '2位' in row['順位']:
+                                    return ['background-color: rgba(192, 192, 192, 0.2)'] * len(row)
+                                elif '3位' in row['順位']:
+                                    return ['background-color: rgba(205, 127, 50, 0.2)'] * len(row)
+                                return [''] * len(row)
+                                
+                            styled_df = df[display_cols].style.apply(highlight_top3, axis=1)
+                            if '差枚' in display_cols:
+                                styled_df = styled_df.bar(subset=['差枚'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
+                            
+                            st.dataframe(
+                                styled_df,
+                                column_config={
+                                    "AI推奨": st.column_config.TextColumn("予測", width="small"),
+                                    "高設定": st.column_config.TextColumn("挙落", width="small", help="設定5以上の確率(REGか合算)の台"),
+                                    "順位": st.column_config.TextColumn("順位"),
+                                    "台番号": st.column_config.TextColumn("台番号"),
+                                    "機種名": st.column_config.TextColumn("機種", width="small"),
+                                    "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
+                                    "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
+                                    "累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
+                                    "BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
+                                    "REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
+                                    "合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
+                                },
+                                hide_index=True,
+                                use_container_width=True
+                            )
+
+                        pred_machines = pred_df_day['台番号'].tolist()
                         
-                        st.dataframe(
-                            styled_df,
-                            column_config={
-                                "AI推奨": st.column_config.TextColumn("予測", width="small"),
-                                "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
-                                "順位": st.column_config.TextColumn("順位"),
-                                "台番号": st.column_config.TextColumn("台番号"),
-                                "機種名": st.column_config.TextColumn("機種", width="small"),
-                                "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
-                                "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
-                                "累計ゲーム": st.column_config.NumberColumn("総G", format="%d"),
-                                "BIG確率分母": st.column_config.NumberColumn("BB", format="1/%d"),
-                                "REG確率分母": st.column_config.NumberColumn("RB", format="1/%d"),
-                                "合算確率分母": st.column_config.NumberColumn("合算", format="1/%d"),
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
+                        with tab_diff:
+                            render_actual_ranking_tab(actual_df_day, "差枚", act_top_k, pred_machines)
+                        with tab_reg:
+                            render_actual_ranking_tab(actual_df_day, "REG確率", act_top_k, pred_machines)
+                        with tab_tot:
+                            render_actual_ranking_tab(actual_df_day, "合算確率", act_top_k, pred_machines)
