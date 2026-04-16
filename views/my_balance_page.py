@@ -295,6 +295,10 @@ def render_my_balance_page(df_raw):
     # 日付ソート
     df_balance = df_balance.sort_values('日付', ascending=False)
 
+    for col in ['収支', '投資', '回収']:
+        if col in df_balance.columns:
+            df_balance[col] = pd.to_numeric(df_balance[col], errors='coerce').fillna(0).astype(int)
+
     # KPI 計算
     total_balance = df_balance['収支'].sum()
     total_invest = df_balance['投資'].sum()

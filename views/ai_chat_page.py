@@ -818,6 +818,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # --- マイ収支データをAIに読み込ませる ---
         df_balance = backend.load_my_balance()
         if not df_balance.empty:
+            if '収支' in df_balance.columns:
+                df_balance['収支'] = pd.to_numeric(df_balance['収支'], errors='coerce').fillna(0).astype(int)
+                
             # 通算成績のサマリーを追加
             total_balance = df_balance['収支'].sum()
             win_count = (df_balance['収支'] > 0).sum()

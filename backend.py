@@ -1139,8 +1139,14 @@ def load_my_balance():
         if not data or len(data) < 2: return pd.DataFrame()
         df = pd.DataFrame(data[1:], columns=data[0])
         
-        if not df.empty and '日付' in df.columns:
-            df['日付'] = pd.to_datetime(df['日付'])
+        if not df.empty:
+            if '日付' in df.columns:
+                df['日付'] = pd.to_datetime(df['日付'])
+            for col in ['投資', '回収', '収支']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+            if '稼働時間' in df.columns:
+                df['稼働時間'] = pd.to_numeric(df['稼働時間'], errors='coerce').fillna(0.0)
         return df
     except: return pd.DataFrame()
 
