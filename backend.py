@@ -9,6 +9,7 @@ import hashlib
 import pickle
 import glob
 from google.oauth2.service_account import Credentials
+import time
 
 # 定数定義
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,7 +20,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.25.0" 
+APP_VERSION = "v4.26.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -419,11 +420,23 @@ def load_data():
     """Googleスプレッドシートから生の稼働データを読み込む"""
     try:
         gc = _get_gspread_client()
-        sh = gc.open_by_key(SPREADSHEET_KEY)
-        worksheet = sh.worksheet(SHEET_NAME)
         
-        # 速度改善: get_all_records() はパースが重いため get_all_values() で取得する
-        data = worksheet.get_all_values()
+        # 500 Internal Error 等の一時的なAPIエラー対策としてリトライ処理を追加
+        max_retries = 3
+        data = None
+        for attempt in range(max_retries):
+            try:
+                sh = gc.open_by_key(SPREADSHEET_KEY)
+                worksheet = sh.worksheet(SHEET_NAME)
+                data = worksheet.get_all_values()
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt) # 1秒、2秒と待機して再試行
+                    continue
+                else:
+                    raise e
+                    
         if not data or len(data) < 2: return pd.DataFrame()
         raw_df = pd.DataFrame(data[1:], columns=data[0])
         
