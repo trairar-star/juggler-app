@@ -1236,8 +1236,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             'mean_7days_diff': "台: 過去7日平均差枚",
             'win_rate_7days': "台: 過去7日高設定率",
             '連続マイナス日数': "台: 連続マイナス日数",
-            'neighbor_avg_diff': "配置: 両隣の平均差枚",
             'is_corner': "配置: 角台の割合",
+            'neighbor_reg_reliability_score': "配置: 隣台のREG信頼度",
             'event_rank_score': "イベント: ランクスコア"
         }
         

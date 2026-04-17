@@ -109,17 +109,16 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     c_f1, c_f2, c_f3, c_f4 = st.columns(4)
     with c_f1:
         st.metric("前々日差枚", f"{int(row.get('prev_差枚', 0)):+d}枚" if pd.notna(row.get('prev_差枚')) else "-")
-        st.metric("両隣平均差枚", f"{int(row.get('neighbor_avg_diff', 0)):+d}枚" if pd.notna(row.get('neighbor_avg_diff')) else "-")
+        st.metric("島平均差枚", f"{int(row.get('island_avg_diff', 0)):+d}枚" if pd.notna(row.get('island_avg_diff')) else "-")
     with c_f2:
         prev_r = row.get('prev_REG確率', 0)
         st.metric("前々日REG", f"1/{int(1/prev_r)}" if pd.notna(prev_r) and prev_r > 0 else "-")
-        st.metric("島平均差枚", f"{int(row.get('island_avg_diff', 0)):+d}枚" if pd.notna(row.get('island_avg_diff')) else "-")
+        st.metric("店舗7日平均", f"{int(row.get('shop_7days_avg_diff', 0)):+d}枚" if pd.notna(row.get('shop_7days_avg_diff')) else "-")
     with c_f3:
         st.metric("連続凹み日数", f"{int(row.get('連続マイナス日数', 0))}日" if pd.notna(row.get('連続マイナス日数')) else "-")
         st.metric("機種30日平均", f"{int(row.get('machine_30days_avg_diff', 0)):+d}枚" if pd.notna(row.get('machine_30days_avg_diff')) else "-")
     with c_f4:
         st.metric("相対稼働率", f"{row.get('relative_games_ratio', 1.0):.2f}倍" if pd.notna(row.get('relative_games_ratio')) else "-")
-        st.metric("店舗7日平均", f"{int(row.get('shop_7days_avg_diff', 0)):+d}枚" if pd.notna(row.get('shop_7days_avg_diff')) else "-")
 
     matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
     
@@ -579,8 +578,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         else:
                             advice_list.append(f"⚠️ **末尾の重要度 (低)**: AI分析において「末尾番号」は全{total_features}指標中 **第{end_digit_rank}位** とあまり重視されていません。この店舗では安易な末尾狙いは危険なため、他の要素を優先してください。")
 
-                    if 'neighbor_avg_diff' in top_features:
-                        advice_list.append("🤝 **並び・塊に注意**: AIの分析上、この店は「両隣の差枚（並び）」が設定予測に強く影響しています。自分の台が良くても両隣が死んでいればフェイクの可能性があり、逆に両隣が強ければ「3台並び」などの対象になっている可能性があります。")
+                    if 'neighbor_reg_reliability_score' in top_features or 'is_neighbor_high_reg' in top_features:
+                        advice_list.append("🤝 **並び・塊に注意**: AIの分析上、この店は「隣台のREG確率（並び）」が設定予測に強く影響しています。自分の台が良くても隣が死んでいればフェイクの可能性があり、逆に隣が強ければ「3台並び」などの対象になっている可能性があります。")
                     if 'island_avg_diff' in top_features:
                         advice_list.append("🏝️ **全台系・列に注意**: 「島（列）全体の差枚」の重要度が高いため、列単位での全台系や半ヅキなどをやってくる可能性があります。周囲の活気をよく観察してください。")
                     if 'machine_no_30days_avg_diff' in top_features:

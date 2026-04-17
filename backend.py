@@ -20,7 +20,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
 APP_VERSION = "v4.16.0" 
-APP_VERSION = "v4.17.0" 
+APP_VERSION = "v4.18.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -34,9 +34,8 @@ BASE_FEATURES = [
     'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score',
     'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
     'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound',
-    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner', 
-    'is_main_island', 'is_wall_island', 'neighbor_avg_diff', 
-    'neighbor_positive_count', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score',
+    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner',
+    'is_main_island', 'is_wall_island', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score',
     'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate',
     'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff',
     'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
@@ -52,8 +51,7 @@ FEATURE_NAME_MAP = {
     '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'is_prev_no_play': '前日 稼働なし',
     'machine_code': '機種', 'shop_code': '店舗',
     'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
-    'neighbor_avg_diff': '両隣 平均差枚', 'neighbor_positive_count': '両隣 プラス台数',
-    'is_neighbor_high_reg': '両隣 REG高設定水準', 'neighbor_reg_reliability_score': '両隣 REG信頼度スコア', 'neighbor_high_setting_count': '両隣 高設定示唆台数',
+    'is_neighbor_high_reg': '隣台(並び) REG高設定水準', 'neighbor_reg_reliability_score': '隣台(並び) REG信頼度スコア', 'neighbor_high_setting_count': '隣台(並び) 高設定示唆台数',
     'event_avg_diff': 'イベント 平均差枚', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク',
     'prev_event_rank_score': '前日(特日)ランク',
     'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
@@ -2897,14 +2895,12 @@ def _postprocess_predictions(predict_df, train_df):
                 reasons.append(f"【当たり末尾】過去の{ev_label}において、末尾『{end_digit}』は対象になりやすい強い傾向があります(平均+{int(evt_end_avg)}枚)。")
 
         if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
-        n_avg = row.get('neighbor_avg_diff', 0)
-        if n_avg > 300: reasons.append(f"両隣が好調(平均+{int(n_avg)}枚)で、並びや全台系の可能性があります。")
         
         neighbor_high_count = row.get('neighbor_high_setting_count', 0)
         if neighbor_high_count > 0:
-            reasons.append(f"【🤝並び・塊】両隣のうち{int(neighbor_high_count)}台が高設定挙動を示しており、並びの対象になっている可能性が高いです。")
+            reasons.append(f"【🤝並び・塊】隣台のうち{int(neighbor_high_count)}台が高設定挙動を示しており、並びの対象になっている可能性が高いです。")
         elif row.get('is_neighbor_high_reg', 0) == 1:
-            reasons.append("【🤝並び・塊】両隣の合算REG確率が高設定水準であり、強い「並び」の根拠となっています。")
+            reasons.append("【🤝並び・塊】隣台の合算REG確率が高設定水準であり、強い「並び」の根拠となっています。")
             
         i_avg = row.get('island_avg_diff', 0)
         if i_avg > 400: reasons.append(f"所属する島全体が好調(平均+{int(i_avg)}枚)で、塊対象の可能性があります。")
