@@ -291,8 +291,8 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         
         st.altair_chart(pie_chart, width="stretch")
 
-    # --- 過去の差枚推移グラフ ---
-    st.markdown("**📉 過去7日間の差枚推移:**")
+    # --- 過去の差枚・REG確率推移グラフ ---
+    st.markdown("**📉 過去7日間の差枚・REG確率推移:**")
     
     if not df_raw.empty and shop_col in df_raw.columns:
         history_df = df_raw[
@@ -302,6 +302,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
         
         if not history_df.empty:
             history_df['DisplayDate'] = history_df['対象日付'].dt.strftime('%m-%d')
+            history_df['REG確率分母'] = np.where(history_df['REG'] > 0, history_df['累計ゲーム'] / history_df['REG'], np.nan)
             
             # イベント情報を結合
             if df_events is not None and not df_events.empty:
@@ -311,23 +312,47 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             else:
                 history_df['イベント情報'] = "なし"
             
-            base = alt.Chart(history_df).encode(
-                x=alt.X('DisplayDate', title='日付', sort=None),
-                y=alt.Y('差枚', title='差枚数'),
-                tooltip=[
-                    alt.Tooltip('DisplayDate', title='日付'),
-                    alt.Tooltip('差枚', title='差枚'),
-                    alt.Tooltip('イベント情報', title='イベント'),
-                    alt.Tooltip('BIG', title='BIG回数'),
-                    alt.Tooltip('REG', title='REG回数'),
-                    alt.Tooltip('累計ゲーム', title='総回転数')
-                ]
-            )
+            tab_diff, tab_reg = st.tabs(["💰 差枚推移", "📉 REG確率推移"])
             
-            line_chart = base.mark_line(point=True)
-            event_points = base.transform_filter(alt.datum.イベント情報 != 'なし').mark_point(color='#FF4B4B', size=150, filled=True)
-            
-            st.altair_chart((line_chart + event_points).interactive(), use_container_width=True)
+            with tab_diff:
+                base_diff = alt.Chart(history_df).encode(
+                    x=alt.X('DisplayDate', title='日付', sort=None),
+                    y=alt.Y('差枚', title='差枚数'),
+                    tooltip=[
+                        alt.Tooltip('DisplayDate', title='日付'),
+                        alt.Tooltip('差枚', title='差枚'),
+                        alt.Tooltip('イベント情報', title='イベント'),
+                        alt.Tooltip('BIG', title='BIG回数'),
+                        alt.Tooltip('REG', title='REG回数'),
+                        alt.Tooltip('累計ゲーム', title='総回転数')
+                    ]
+                )
+                
+                line_diff = base_diff.mark_line(point=True)
+                event_points_diff = base_diff.transform_filter(alt.datum.イベント情報 != 'なし').mark_point(color='#FF4B4B', size=150, filled=True)
+                
+                st.altair_chart((line_diff + event_points_diff).interactive(), use_container_width=True)
+                
+            with tab_reg:
+                reg_df = history_df.dropna(subset=['REG確率分母'])
+                if not reg_df.empty:
+                    base_reg = alt.Chart(reg_df).encode(
+                        x=alt.X('DisplayDate', title='日付', sort=None),
+                        y=alt.Y('REG確率分母', title='REG確率分母 (1/X)', scale=alt.Scale(reverse=True)),
+                        tooltip=[
+                            alt.Tooltip('DisplayDate', title='日付'),
+                            alt.Tooltip('REG確率分母', title='REG確率分母 (1/X)', format='.1f'),
+                            alt.Tooltip('イベント情報', title='イベント'),
+                            alt.Tooltip('BIG', title='BIG回数'),
+                            alt.Tooltip('REG', title='REG回数'),
+                            alt.Tooltip('累計ゲーム', title='総回転数')
+                        ]
+                    )
+                    line_reg = base_reg.mark_line(point=True, color='#FF9800')
+                    event_points_reg = base_reg.transform_filter(alt.datum.イベント情報 != 'なし').mark_point(color='#FF4B4B', size=150, filled=True)
+                    st.altair_chart((line_reg + event_points_reg).interactive(), use_container_width=True)
+                else:
+                    st.info("REG確率のデータがありません。")
         else:
             st.caption("過去データが見つかりませんでした。")
 

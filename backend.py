@@ -19,7 +19,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.23.0" 
+APP_VERSION = "v4.25.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -27,7 +27,7 @@ APP_VERSION = "v4.23.0"
 BASE_FEATURES = [
     '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
     'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
-    'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'is_new_machine', 'is_moved_machine', 
+    'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'cons_high_reg_days', 'is_new_machine', 'is_moved_machine', 
     'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
     'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
     'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score',
@@ -47,7 +47,7 @@ FEATURE_NAME_MAP = {
     'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均差枚', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
     'mean_7days_diff': '台 直近7日平均差枚', 'median_7days_diff': '台 7日差枚中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
     'mean_7days_games': '台 直近7日平均G数',
-    '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'is_prev_no_play': '前日 稼働なし',
+    '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'cons_high_reg_days': '連続高REG日数', 'is_prev_no_play': '前日 稼働なし',
     'machine_code': '機種', 'shop_code': '店舗',
     'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
     'is_neighbor_high_reg': '隣台(並び) REG高設定水準', 'neighbor_reg_reliability_score': '隣台(並び) REG確率×稼働量', 'neighbor_high_setting_count': '隣台(並び) 高設定示唆台数',
@@ -1955,6 +1955,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['連続低稼働日数'] = df.groupby(group_keys + ['low_util_reset_group'])['is_low_utilization'].cumsum()
     df = df.drop(columns=['is_low_utilization', 'is_active', 'low_util_reset_group'])
 
+    # --- 連続高REG日数のカウント（高設定の据え置き狙い） ---
+    df['is_high_reg_day'] = ((df['累計ゲーム'] >= 3000) & (df['REG確率'] >= df['spec_reg'])).astype(int)
+    df['is_not_high_reg_day'] = (df['is_high_reg_day'] == 0).astype(int)
+    df['high_reg_reset_group'] = df.groupby(group_keys)['is_not_high_reg_day'].cumsum()
+    df['cons_high_reg_days'] = df.groupby(group_keys + ['high_reg_reset_group'])['is_high_reg_day'].cumsum()
+    df = df.drop(columns=['is_high_reg_day', 'is_not_high_reg_day', 'high_reg_reset_group'])
+
     # 台ごとの過去データ件数（履歴の長さ）を計算し、信頼度の指標とする
     df['history_count'] = df.groupby(group_keys).cumcount() + 1
 
@@ -2297,6 +2304,9 @@ def _calculate_shop_trends(df_train, shop_col, specs):
         if '連続マイナス日数' in train_shop.columns:
             subset = train_shop[train_shop['連続マイナス日数'] >= 3]
             if len(subset) >= 5: trends.append({"id": "cons_minus", "条件": "3日以上連続凹み (上げリセット狙い)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'cons_high_reg_days' in train_shop.columns:
+            subset = train_shop[train_shop['cons_high_reg_days'] >= 2]
+            if len(subset) >= 5: trends.append({"id": "cons_high_reg", "条件": "連続高REG (2日以上高設定挙動の据え置き)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if '差枚' in train_shop.columns:
             subset = train_shop[train_shop['差枚'] <= -1000]
             if len(subset) >= 5: trends.append({"id": "prev_lose", "条件": "前日大負け (-1000枚以下) からの反発", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
@@ -2388,6 +2398,7 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         sp_r5 = 1.0 / specs[get_matched_spec_key(row.get('機種名', ''), specs)].get('設定5', {"REG": 260.0})["REG"]
         if b_d >= 400 and row.get('REG確率', 0) >= sp_r5: matched_hot.append("超不発"); matched_hot_ids.append("bb_deficit")
     if "cons_minus" in top_ids and row.get('連続マイナス日数', 0) >= 3: matched_hot.append("連凹"); matched_hot_ids.append("cons_minus")
+    if "cons_high_reg" in top_ids and row.get('cons_high_reg_days', 0) >= 2: matched_hot.append("連高REG"); matched_hot_ids.append("cons_high_reg")
     if "taco_lose" in top_ids and row.get('差枚', 0) <= -1000 and row.get('累計ゲーム', 0) >= 7000: matched_hot.append("タコ粘りお詫び"); matched_hot_ids.append("taco_lose")
     if "prev_lose" in top_ids and row.get('差枚', 0) <= -1000: matched_hot.append("負反発"); matched_hot_ids.append("prev_lose")
     if "prev_win" in top_ids and row.get('差枚', 0) >= 1000: matched_hot.append("勝据え"); matched_hot_ids.append("prev_win")
@@ -2412,6 +2423,7 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     matched_cold = []
     matched_cold_ids = []
     if "big_win_reaction" in worst_ids and row.get('差枚', 0) >= 2000 and row.get('REG確率', 1) < (1/350): matched_cold.append("大勝反動"); matched_cold_ids.append("big_win_reaction")
+    if "cons_high_reg" in worst_ids and row.get('cons_high_reg_days', 0) >= 2: matched_cold.append("連高REG反動"); matched_cold_ids.append("cons_high_reg")
     if "one_hit_reaction" in worst_ids and row.get('mean_7days_diff', 0) >= 500 and row.get('win_rate_7days', 1) < 0.5: matched_cold.append("一撃反動"); matched_cold_ids.append("one_hit_reaction")
     if "high_kado_reaction" in worst_ids and row.get('累計ゲーム', 0) >= 8000: matched_cold.append("高稼働反動"); matched_cold_ids.append("high_kado_reaction")
     if "cons_win_reaction" in worst_ids and row.get('prev_差枚', 0) >= 500 and row.get('差枚', 0) >= 500: matched_cold.append("連勝ストップ"); matched_cold_ids.append("cons_win_reaction")
@@ -2485,6 +2497,7 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         elif h == "BB欠損・不発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています {rate_str}。")
         elif h == "超不発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています {rate_str}。")
         elif h == "連凹": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています {rate_str}。")
+        elif h == "連高REG": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で高設定が連続しやすい『連続高REG台』に合致しています {rate_str}。")
         elif h == "タコ粘りお詫び": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています {rate_str}。")
         elif h == "負反発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています {rate_str}。")
         elif h == "勝据え": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています {rate_str}。")
@@ -2509,6 +2522,7 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         diff_rate = t_info['trend_diffs'].get(tid, 0)
         rate_str = f"(実績:高設定率{w_rate:.1f}% / 通常より{diff_rate:+.1f}%)"
         if c == "大勝反動": add_reasons.append(f"【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください {rate_str}。")
+        elif c == "連高REG反動": add_reasons.append(f"【⚠️警戒】連続で高REGを記録している台ですが、過去の傾向からこの店舗では連日据え置かれた翌日は回収される危険性が高いため注意してください {rate_str}。")
         elif c == "一撃反動": add_reasons.append(f"【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください {rate_str}。")
         elif c == "高稼働反動": add_reasons.append(f"【⚠️警戒】前日よく回された台ですが、過去の傾向からこの店舗ではタコ粘りされた翌日は設定が下げられる(回収される)危険性が高いため注意してください {rate_str}。")
         elif c == "高設定下げ": add_reasons.append(f"【⚠️警戒】前日は高設定挙動でしたが、過去の傾向からこの店舗では優秀台の据え置きが少なく、設定が下げられる危険性が高いため注意してください {rate_str}。")
@@ -2912,8 +2926,12 @@ def _postprocess_predictions(predict_df, train_df):
             comments.append(" ".join(reasons))
             
         if not has_strong_reason:
-            if score > 0.40: comments.append("目立った特徴はありませんが、全体バランスからAIが高く評価しました。")
-            else: comments.append("特筆すべき強い根拠はありません。")
+            if score >= 0.40: 
+                comments.append("目立った特徴（特定の店癖など）には合致していませんが、様々なデータの全体バランスからAIが非常に高く評価しています。")
+            elif score >= 0.20:
+                comments.append("目立った強い根拠はありませんが、複数の細かな要因（周りの状況や過去のわずかな傾向）の組み合わせにより、消去法的に期待度が底上げされています。")
+            else: 
+                comments.append("特筆すべき強い根拠はありません。")
             
         base_reason = " ".join(comments)
         if shop_reason and shop_reason != '-':
