@@ -68,9 +68,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
             st.caption("AIはこの店舗の傾向として、以下の10個の指標を特に重視しています。")
             
             top10 = imp_shop.head(10)
-            cols1 = st.columns(5)
-            cols2 = st.columns(5)
-            all_cols = cols1 + cols2
+            table_data = []
             
             for idx, (_, imp_row) in enumerate(top10.iterrows()):
                 f_key = imp_row['feature']
@@ -89,19 +87,19 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                     else: val_str = str(int(val)) if float(val).is_integer() else f"{val:.2f}"
                 else: val_str = str(val)
                     
-                with all_cols[idx]:
-                    if corr >= 0:
-                        corr_icon, corr_color, corr_text = "🔼", "#25a25a", "高いほど高設定"
-                    else:
-                        corr_icon, corr_color, corr_text = "🔽", "#ff4b4b", "低いほど高設定"
+                if corr >= 0:
+                    corr_text = "🔼 高いほど良い"
+                else:
+                    corr_text = "🔽 低いほど良い"
 
-                    st.markdown(f"""
-                    <div style="padding: 5px; border-radius: 5px; background-color: #f0f2f6; height: 90px; display: flex; flex-direction: column; justify-content: space-between;">
-                        <div style="font-size: 0.8rem; font-weight: bold; color: #4f4f4f; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{f_name}">{f_name}</div>
-                        <div style="font-size: 1.2rem; font-weight: bold; text-align: center;">{val_str}</div>
-                        <div style="font-size: 0.75rem; color: {corr_color}; text-align: center; font-weight: bold;">{corr_icon} {corr_text}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                table_data.append({
+                    "順位": idx + 1,
+                    "重視ポイント": f_name,
+                    "この台のデータ": val_str,
+                    "高設定の傾向": corr_text
+                })
+
+            st.dataframe(pd.DataFrame(table_data), hide_index=True, use_container_width=True)
 
     # --- 新規追加: AI評価用 詳細特徴量データ ---
     st.markdown("**🔍 その他のサブ特徴量データ:**")
