@@ -19,7 +19,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.20.0" 
+APP_VERSION = "v4.23.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -58,9 +58,9 @@ FEATURE_NAME_MAP = {
     'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
     'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚',
     'history_count': '台 履歴データ数',
-    'cons_minus_total_diff': '連続凹み 合計差枚', 'machine_no_30days_avg_diff': '場所 30日平均差枚', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
+    'cons_minus_total_diff': '前回放出からの累計差枚', 'machine_no_30days_avg_diff': '場所 30日平均差枚', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
     'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',
-    'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 BB/RB偏り', 'prev_unlucky_gap': '前日 不発度合い',
+    'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 REG先行度(REG-BIG)', 'prev_unlucky_gap': '前日 REG不発度(期待出玉-差枚)',
     'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス', 'prev_reg_reliability_score': '複合: 前日REG確率×稼働量',
     'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
     'trend_v_recovery': '波: V字反発(負→勝)', 'trend_cont_lose': '波: 連続凹み(負→負)', 'trend_cont_win': '波: 連続据え(勝→勝)', 'trend_down_rebound': '波: 上げ戻し(勝→負)',
