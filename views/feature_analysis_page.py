@@ -499,6 +499,17 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     has_raw = df_raw is not None and not df_raw.empty and shop_col in df_raw.columns
     if has_raw:
         df_raw_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
+        
+        # --- is_corner を base_analysis_df から結合して復元 ---
+        if 'is_corner' not in df_raw_shop.columns and 'is_corner' in base_analysis_df.columns:
+            corner_map = base_analysis_df[[shop_col, '台番号', 'is_corner']].copy()
+            df_raw_shop['tmp_no'] = df_raw_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+            corner_map['tmp_no'] = corner_map['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+            corner_map = corner_map.groupby([shop_col, 'tmp_no'])['is_corner'].max().reset_index()
+            df_raw_shop = pd.merge(df_raw_shop, corner_map, on=[shop_col, 'tmp_no'], how='left')
+            df_raw_shop['is_corner'] = df_raw_shop['is_corner'].fillna(0)
+            df_raw_shop = df_raw_shop.drop(columns=['tmp_no'])
+
         specs = backend.get_machine_specs()
         all_trends_dict = backend._calculate_shop_trends(base_analysis_df, shop_col, specs)
         base_win_rate = 0

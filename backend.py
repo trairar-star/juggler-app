@@ -19,8 +19,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.16.0" 
-APP_VERSION = "v4.18.0" 
+APP_VERSION = "v4.20.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -45,27 +44,27 @@ BASE_FEATURES = [
 FEATURE_NAME_MAP = {
     '累計ゲーム': '前日 累計G数', 'REG確率': '前日 REG確率', 'BIG確率': '前日 BIG確率',
     '差枚': '前日 差枚数', '末尾番号': '台番号末尾', 'target_weekday': '予測日 曜日',
-    'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
-    'mean_7days_diff': '台 直近7日平均', 'median_7days_diff': '台 7日中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
+    'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均差枚', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
+    'mean_7days_diff': '台 直近7日平均差枚', 'median_7days_diff': '台 7日差枚中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
     'mean_7days_games': '台 直近7日平均G数',
     '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'is_prev_no_play': '前日 稼働なし',
     'machine_code': '機種', 'shop_code': '店舗',
     'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
-    'is_neighbor_high_reg': '隣台(並び) REG高設定水準', 'neighbor_reg_reliability_score': '隣台(並び) REG信頼度スコア', 'neighbor_high_setting_count': '隣台(並び) 高設定示唆台数',
+    'is_neighbor_high_reg': '隣台(並び) REG高設定水準', 'neighbor_reg_reliability_score': '隣台(並び) REG確率×稼働量', 'neighbor_high_setting_count': '隣台(並び) 高設定示唆台数',
     'event_avg_diff': 'イベント 平均差枚', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク',
     'prev_event_rank_score': '前日(特日)ランク',
     'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
-    'shop_7days_avg_diff': '店舗 直近7日平均', 'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
+    'shop_7days_avg_diff': '店舗 直近7日平均差枚', 'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
     'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
     'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚',
     'history_count': '台 履歴データ数',
-    'cons_minus_total_diff': '連続凹み 吸込み量', 'machine_no_30days_avg_diff': '場所 30日平均', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
+    'cons_minus_total_diff': '連続凹み 合計差枚', 'machine_no_30days_avg_diff': '場所 30日平均差枚', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
     'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',
     'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 BB/RB偏り', 'prev_unlucky_gap': '前日 不発度合い',
-    'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス', 'prev_reg_reliability_score': '複合: 前日REG信頼度スコア',
+    'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス', 'prev_reg_reliability_score': '複合: 前日REG確率×稼働量',
     'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
     'trend_v_recovery': '波: V字反発(負→勝)', 'trend_cont_lose': '波: 連続凹み(負→負)', 'trend_cont_win': '波: 連続据え(勝→勝)', 'trend_down_rebound': '波: 上げ戻し(勝→負)',
-    'shop_pred_diff_7d_avg': '店舗 AI予測7日平均', 'predicted_diff': 'AI予測 差枚数'
+    'shop_pred_diff_7d_avg': '店舗 AI予測7日平均差枚', 'predicted_diff': 'AI予測 差枚数'
 }
 
 # ---------------------------------------------------------
@@ -1542,7 +1541,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     for col in ['差枚', 'REG確率', '累計ゲーム', '最終ゲーム']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
         
-    for col in ['end_digit_reg_prob']:
+    for col in ['neighbor_reg_prob', 'end_digit_reg_prob']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
         
     for col in ['neighbor_high_setting_count', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score']:
