@@ -953,7 +953,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # --- Gemini APIの呼び出し ---
         with st.chat_message("assistant"):
             with st.spinner("Geminiが分析中..."):
-                max_retries = 3
+                max_retries = 4
                 for attempt in range(max_retries):
                     try:
                         # 選択されたモデルで呼び出し
@@ -982,10 +982,13 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         error_msg = str(e)
                         if "503" in error_msg or "Service Unavailable" in error_msg or "Overloaded" in error_msg:
                             if attempt < max_retries - 1:
-                                wait_time = 2 ** attempt
-                                st.toast(f"⚠️ サーバーが混雑しています。{wait_time}秒後に自動で再試行します... ({attempt+1}/{max_retries})")
+                                wait_time = 5 * (attempt + 1)
+                                st.toast(f"⚠️ サーバーが混雑しています。{wait_time}秒後に自動で再試行します... ({attempt+1}/{max_retries-1})")
                                 time.sleep(wait_time)
                                 continue
+                            else:
+                                st.error("⚠️ AIサーバーが大変混雑しており、応答できませんでした。")
+                                st.warning("現在、GoogleのAIモデル（Gemini）に世界中からアクセスが集中しています。数分〜数十分ほど時間を置いてから、もう一度質問を送信してみてください。")
                                 
                         if "429" in error_msg or "Quota exceeded" in error_msg:
                             st.error("⚠️ AIの利用制限（APIリクエスト上限）に達しました。")
@@ -993,7 +996,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                         elif "404" in error_msg and "not found" in error_msg:
                             st.error(f"⚠️ 指定されたAIモデル（{target_model}）が見つかりません。")
                             st.warning("現在お使いのAPIキーではこのモデル名にアクセスできない可能性があります。プルダウンから別のモデルを選択してお試しください。")
-                        else:
+                        elif "503" not in error_msg and "Service Unavailable" not in error_msg and "Overloaded" not in error_msg:
                             st.error(f"APIリクエスト中にエラーが発生しました: {e}")
                         break # 503以外のエラー、または最大リトライ回数到達で終了
                     

@@ -1542,7 +1542,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     for col in ['差枚', 'REG確率', '累計ゲーム', '最終ゲーム']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
         
-    for col in ['neighbor_reg_prob', 'end_digit_reg_prob']:
+    for col in ['end_digit_reg_prob']:
         if col in df.columns: df[f'prev_{col}'] = df.groupby(group_keys)[col].shift(1)
         
     for col in ['neighbor_high_setting_count', 'is_neighbor_high_reg', 'neighbor_reg_reliability_score']:
