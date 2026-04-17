@@ -607,6 +607,18 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                                 
                             merged_acc['営業予測'] = merged_acc['店舗平均期待度'].apply(classify_day)
                             
+                            # 店舗全体の平均差枚を日別に計算して結合
+                            daily_shop_diff = df_raw_temp.groupby('対象日付')['差枚'].mean().reset_index()
+                            daily_shop_diff = daily_shop_diff.rename(columns={'対象日付': '予測対象日_merge', '差枚': '店舗全体平均差枚'})
+                            merged_acc = pd.merge(merged_acc, daily_shop_diff, on='予測対象日_merge', how='left')
+
+                            day_summary = merged_acc[['予測対象日_merge', '営業予測', '店舗全体平均差枚']].drop_duplicates()
+                            day_stats = day_summary.groupby('営業予測').agg(
+                                発生日数=('予測対象日_merge', 'count'),
+                                店舗平均差枚=('店舗全体平均差枚', 'mean')
+                            ).reset_index()
+                            day_stats_dict = day_stats.set_index('営業予測').to_dict('index')
+                            
                             merged_acc['daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
                             top_k = max(3, min(10, int(df_raw_temp['台番号'].nunique() * 0.10)))
                             
@@ -615,23 +627,50 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             if not high_expect_df.empty:
                                 act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)
                                 act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
+                                act_b = pd.to_numeric(high_expect_df['BIG'], errors='coerce').fillna(0)
+                                act_r = pd.to_numeric(high_expect_df['REG'], errors='coerce').fillna(0)
                                 
                                 high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
                                 high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
                                 
+                                specs = backend.get_machine_specs()
+                                spec_reg_val = high_expect_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                                spec_tot_val = high_expect_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                                
+                                reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
+                                tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
+                                
+                                high_expect_df['valid_high_play'] = (act_g >= 3000)
+                                high_expect_df['is_high_setting'] = (
+                                    (((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | 
+                                     ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val)))
+                                ).astype(int)
+                                high_expect_df['valid_high'] = high_expect_df['valid_high_play'] & (high_expect_df['is_high_setting'] == 1)
+
                                 valid_count = high_expect_df['valid_play'].sum()
                                 win_count = high_expect_df['valid_win'].sum()
                                 win_rate = (win_count / valid_count * 100) if valid_count > 0 else 0
                                 
-                                context_data += f"\n【{selected_shop} のAI予測実績 (直近1ヶ月)】\n"
-                                context_data += f"・全体: 勝率 {win_rate:.1f}% (有効稼働 {int(valid_count)}台中 {int(win_count)}台)\n"
+                                context_data += f"\n【{selected_shop} のAI予測実績と還元/回収日の傾向 (直近1ヶ月)】\n"
+                                context_data += f"・全体: 推奨台勝率 {win_rate:.1f}% (有効稼働 {int(valid_count)}台中 {int(win_count)}台)\n"
                                 
                                 for day_type in ["還元日", "通常営業", "回収日"]:
                                     type_df = high_expect_df[high_expect_df['営業予測'] == day_type]
                                     t_val = type_df['valid_play'].sum()
                                     t_win = type_df['valid_win'].sum()
-                                    if t_val > 0:
-                                        context_data += f"・{day_type}: 勝率 {(t_win/t_val*100):.1f}% (有効稼働 {int(t_val)}台中 {int(t_win)}台)\n"
+                                    t_high_val = type_df['valid_high_play'].sum()
+                                    t_high = type_df['valid_high'].sum()
+                                    
+                                    d_stats = day_stats_dict.get(day_type, {})
+                                    d_count = d_stats.get('発生日数', 0)
+                                    d_diff = d_stats.get('店舗平均差枚', np.nan)
+                                    
+                                    if d_count > 0:
+                                        diff_str = f"店舗全体平均 {int(d_diff):+d}枚" if pd.notna(d_diff) else "店舗差枚不明"
+                                        win_str = f"推奨台勝率 {(t_win/t_val*100):.1f}%" if t_val > 0 else "推奨台勝率 -%"
+                                        high_str = f"推奨台高設定率 {(t_high/t_high_val*100):.1f}%" if t_high_val > 0 else "推奨台高設定率 -%"
+                                        
+                                        context_data += f"・{day_type}予測 ({int(d_count)}日発生): {diff_str} / {win_str}, {high_str}\n"
                                 
                                 if valid_count < 30:
                                     context_data += "AI自己評価: まだ直近1ヶ月の検証台数（有効稼働）が少なく、たまたまのヒキでブレている可能性が高い状態です。設定は変更せずにもう少し様子を見てください。\n"

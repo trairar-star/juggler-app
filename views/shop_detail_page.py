@@ -7,7 +7,7 @@ import altair as alt # type: ignore
 import backend
 from utils import get_confidence_indicator
 
-def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw, df_events, specs, df_importance=None):
+def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw, df_events, specs, df_importance=None, df_target=None):
     """店舗別詳細ページで、ランキング上位台の詳細情報を表示するExpanderを描画する"""
     shop_name = row.get(shop_col, '')
     machine_name = row.get('機種名', '')
@@ -77,15 +77,36 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 
                 f_name = backend.FEATURE_NAME_MAP.get(f_key, f_key)
 
-                if isinstance(val, (int, float)) and not pd.isna(val):
-                    if f_key.startswith('is_') or 'フラグ' in f_name or ('日' in f_name and val in [0,1]):
-                        val_str = "あり" if val == 1 else "なし"
-                    elif '確率' in f_name and val > 0 and val < 1: val_str = f"1/{int(1/val)}"
-                    elif '差枚' in f_name or '吸込み' in f_name: val_str = f"{int(val):+d}枚"
-                    elif 'ゲーム' in f_name or 'G数' in f_name: val_str = f"{int(val)}G"
-                    elif '割合' in f_name or '率' in f_name: val_str = f"{val*100:.1f}%" if val <= 1.0 else f"{val:.1f}%"
-                    else: val_str = str(int(val)) if float(val).is_integer() else f"{val:.2f}"
-                else: val_str = str(val)
+                def format_feat(v, is_avg=False):
+                    if isinstance(v, (int, float)) and not pd.isna(v):
+                        is_bool_feature = f_key.startswith('is_') or 'フラグ' in f_name
+                        if not is_bool_feature and '日' in f_name:
+                            if df_target is not None and f_key in df_target.columns:
+                                unique_vals = df_target[f_key].dropna().unique()
+                                if set(unique_vals).issubset({0, 1}):
+                                    is_bool_feature = True
+                            elif not is_avg and v in [0, 1]:
+                                is_bool_feature = True
+                        
+                        if is_bool_feature:
+                            if is_avg:
+                                return f"{v*100:.1f}%"
+                            else:
+                                return "あり" if v >= 0.5 else "なし"
+                        elif '確率' in f_name and v > 0 and v < 1: return f"1/{int(1/v)}"
+                        elif '差枚' in f_name or '吸込み' in f_name: return f"{int(v):+d}枚"
+                        elif 'ゲーム' in f_name or 'G数' in f_name: return f"{int(v)}G"
+                        elif '割合' in f_name or '率' in f_name: return f"{v*100:.1f}%" if v <= 1.0 else f"{v:.1f}%"
+                        else: return str(int(v)) if float(v).is_integer() else f"{v:.2f}"
+                    return str(v)
+
+                val_str = format_feat(val)
+                
+                avg_str = "-"
+                if df_target is not None and f_key in df_target.columns:
+                    if pd.api.types.is_numeric_dtype(df_target[f_key]):
+                        avg_val = df_target[f_key].mean()
+                        avg_str = format_feat(avg_val, is_avg=True)
                     
                 if corr >= 0:
                     corr_text = "🔼 高いほど良い"
@@ -96,6 +117,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                     "順位": idx + 1,
                     "重視ポイント": f_name,
                     "この台のデータ": val_str,
+                    "店舗全体の平均": avg_str,
                     "高設定の傾向": corr_text
                 })
 
@@ -331,12 +353,14 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
         st.session_state["global_selected_shop"] = selected_shop
         
         if selected_shop != '全て':
+            df_shop_target = df[df[shop_col] == selected_shop].copy()
             df = df[df[shop_col] == selected_shop]
             if not df_raw.empty:
                 df_raw_shop = df_raw[df_raw[shop_col] == selected_shop]
             else:
                 df_raw_shop = pd.DataFrame()
         else:
+            df_shop_target = df.copy()
             df_raw_shop = df_raw.copy()
     
     # データがない場合のガード
@@ -980,7 +1004,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 label = f"{label_prefix}#{machine_no} {machine_name} ({prob_val}%)"
                 
                 with st.expander(label, expanded=(i == 0)):
-                    _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs, df_importance)
+                    _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs, df_importance, df_shop_target)
                     
             st.info("💡 **なぜこの台の期待度が高くなったか、もっと詳しく知りたいですか？**\nサイドバーの「🤖 AIチャット相談」を開き、データアナリストに「〇〇番台の評価理由を詳しく分析して」と質問すると、AIが全データをもとに論理的に解説してくれます！")
 
