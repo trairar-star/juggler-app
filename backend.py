@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.32.0" 
+APP_VERSION = "v4.33.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -82,23 +82,16 @@ def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
         return "⚖️ 通常営業予測" if is_prediction else "⚖️ 通常営業"
         
     if is_prediction:
-        # 予測値（回帰モデルの出力）は実際の差枚より振れ幅が非常に小さくなるため、
-        # 台数による標準偏差は使わず、絶対値の低いしきい値で敏感に判定する
-        hot_threshold = 20.0
-        cold_threshold = -20.0
-        suffix = "予測"
-        
-        if avg_diff >= hot_threshold:
-            return f"🔥 還元日{suffix}"
-        elif avg_diff <= cold_threshold:
-            return f"🥶 回収日{suffix}"
-        else:
-            return f"⚖️ 通常営業{suffix}"
-    else:
-        # 実際の結果はシンプルに、店舗全体の差枚が客側プラス(店の赤字)なら還元日、マイナスなら回収日と判定する
         if avg_diff > 0:
-            return "🔥 還元日"
+            return "🔥 還元日予測"
         elif avg_diff < 0:
+            return "🥶 回収日予測"
+        else:
+            return "⚖️ 通常営業予測"
+    else:
+        if avg_diff >= 100:
+            return "🔥 還元日"
+        elif avg_diff <= -100:
             return "🥶 回収日"
         else:
             return "⚖️ 通常営業"
