@@ -139,10 +139,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         df_pred_log['予測対象日'] = pd.to_datetime(df_pred_log['予測対象日'], errors='coerce')
     df_pred_log['対象日付'] = pd.to_datetime(df_pred_log['対象日付'], errors='coerce')
     
-    if '予測対象日' in df_pred_log.columns:
-        df_pred_log['予測対象日_merge'] = df_pred_log['予測対象日'].fillna(df_pred_log['対象日付'] + pd.Timedelta(days=1))
+    if '実行日時' in df_pred_log.columns:
+        df_pred_log['実行日時'] = pd.to_datetime(df_pred_log['実行日時'], errors='coerce')
+        # 同じタイミング（実行日）で保存された予測は、最も新しい日付の翌日にすべて統一する（日付の散らばり防止）
+        max_dates = df_pred_log.groupby(df_pred_log['実行日時'].dt.date)['対象日付'].transform('max')
+        fallback_pred_date = max_dates + pd.Timedelta(days=1)
     else:
-        df_pred_log['予測対象日_merge'] = df_pred_log['対象日付'] + pd.Timedelta(days=1)
+        fallback_pred_date = df_pred_log['対象日付'] + pd.Timedelta(days=1)
+        
+    if '予測対象日' in df_pred_log.columns:
+        df_pred_log['予測対象日_merge'] = df_pred_log['予測対象日'].fillna(fallback_pred_date)
+    else:
+        df_pred_log['予測対象日_merge'] = fallback_pred_date
         
     # 店舗カラム名の統一
     shop_col = '店名' if '店名' in df_verify.columns else ('店舗名' if '店舗名' in df_verify.columns else '店名')
