@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.33.0" 
+APP_VERSION = "v4.34.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -89,9 +89,9 @@ def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
         else:
             return "⚖️ 通常営業予測"
     else:
-        if avg_diff >= 100:
+        if avg_diff > 0:
             return "🔥 還元日"
-        elif avg_diff <= -100:
+        elif avg_diff < 0:
             return "🥶 回収日"
         else:
             return "⚖️ 通常営業"

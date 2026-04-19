@@ -481,6 +481,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         ai_recom_df['店舗平均期待度'] = np.nan
         ai_recom_df['予測平均差枚'] = np.nan
         
+    # --- 予測ログ自身から予測平均差枚を計算してフォールバック ---
+    if '予測差枚数' in ai_recom_df.columns:
+        fb_pred = ai_recom_df.groupby('日付キー')['予測差枚数'].mean().reset_index().rename(columns={'予測差枚数': 'fb_予測平均差枚'})
+        ai_recom_df = pd.merge(ai_recom_df, fb_pred, on='日付キー', how='left')
+        ai_recom_df['予測平均差枚'] = ai_recom_df['予測平均差枚'].fillna(ai_recom_df['fb_予測平均差枚'])
+        
     # --- 2. 店舗全体の実際の実績差枚を取得 ---
     if not df_raw_temp.empty:
         shop_raw_temp = df_raw_temp[df_raw_temp[shop_col] == selected_shop].copy()
@@ -511,8 +517,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     def determine_actual_shop_eval(row):
         actual_diff = row.get('店舗全体平均差枚')
         if pd.isna(actual_diff): return "⚖️ 通常営業"
-        if actual_diff >= 100: return "🔥 還元日"
-        elif actual_diff <= -100: return "🥶 回収日"
+        if actual_diff > 0: return "🔥 還元日"
+        elif actual_diff < 0: return "🥶 回収日"
         else: return "⚖️ 通常営業"
 
     ai_recom_df['実際営業区分'] = ai_recom_df.apply(determine_actual_shop_eval, axis=1)
