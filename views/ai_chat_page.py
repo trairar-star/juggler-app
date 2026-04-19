@@ -495,9 +495,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             temp_scores['予測対象日_str'] = pd.to_datetime(temp_scores['予測対象日'], errors='coerce').dt.strftime('%Y-%m-%d')
                             shop_daily = temp_scores[(temp_scores['店名'] == selected_shop) & (temp_scores['予測対象日_str'] == target_dt_str)]
                             if not shop_daily.empty and '予測平均差枚' in shop_daily.columns:
-                                avg_pred_diff = shop_daily['予測平均差枚'].dropna().iloc[0]
-                                if '店舗台数' in shop_daily.columns and pd.notna(shop_daily['店舗台数'].iloc[0]):
-                                    shop_machine_count = shop_daily['店舗台数'].dropna().iloc[0]
+                                avg_pred_diff = shop_daily['予測平均差枚'].dropna().iloc[-1]
+                                if '店舗台数' in shop_daily.columns and pd.notna(shop_daily['店舗台数'].iloc[-1]):
+                                    shop_machine_count = shop_daily['店舗台数'].dropna().iloc[-1]
                         except Exception: pass
                             
                     if avg_pred_diff is None or pd.isna(avg_pred_diff):
@@ -595,6 +595,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                             if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
                                 df_daily_scores['予測対象日_merge'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce')
                                 daily_scores_shop = df_daily_scores[df_daily_scores['店名'] == selected_shop].copy()
+                                daily_scores_shop = daily_scores_shop.drop_duplicates(subset=['予測対象日_merge'], keep='last')
                                 merged_acc = pd.merge(merged_acc, daily_scores_shop[['予測対象日_merge', '店舗平均期待度']], on='予測対象日_merge', how='left')
                             else:
                                 merged_acc['店舗平均期待度'] = np.nan

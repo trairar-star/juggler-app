@@ -684,9 +684,8 @@ def save_prediction_log(df):
                 
                 # 既存データの該当部分を削除
                 if not df_score_existing.empty:
-                    save_dates_score = df_score_new['予測対象日'].astype(str).unique()
-                    save_shops_score = df_score_new['店名'].astype(str).unique()
-                    mask = df_score_existing['予測対象日'].astype(str).isin(save_dates_score) & df_score_existing['店名'].astype(str).isin(save_shops_score)
+                    keys_to_remove = set(zip(df_score_new['予測対象日'].astype(str), df_score_new['店名'].astype(str)))
+                    mask = df_score_existing.apply(lambda x: (str(x.get('予測対象日')), str(x.get('店名'))) in keys_to_remove, axis=1)
                     df_score_existing = df_score_existing[~mask]
 
                 df_score_combined = pd.concat([df_score_existing, df_score_new], ignore_index=True)
@@ -794,8 +793,8 @@ def save_prediction_log(df):
             save_shop_col = '店名' if '店名' in save_df.columns else ('店舗名' if '店舗名' in save_df.columns else None)
             
             if existing_shop_col and save_shop_col:
-                save_shops = save_df[save_shop_col].astype(str).unique()
-                mask = df_existing['予測対象日'].astype(str).isin(save_dates) & df_existing[existing_shop_col].astype(str).isin(save_shops)
+                keys_to_remove = set(zip(save_df['予測対象日'].astype(str), save_df[save_shop_col].astype(str)))
+                mask = df_existing.apply(lambda x: (str(x.get('予測対象日')), str(x.get(existing_shop_col))) in keys_to_remove, axis=1)
                 df_existing = df_existing[~mask]
             else:
                 mask = df_existing['予測対象日'].astype(str).isin(save_dates)
@@ -863,7 +862,7 @@ def delete_old_prediction_logs(months):
         df = pd.DataFrame(data[1:], columns=header)
         df['実行日時'] = pd.to_datetime(df['実行日時'], errors='coerce')
         
-        cutoff_date = pd.Timestamp.now(tz='Asia/Tokyo') - pd.DateOffset(months=months)
+        cutoff_date = (pd.Timestamp.now(tz='Asia/Tokyo') - pd.DateOffset(months=months)).tz_localize(None)
         df_keep = df[df['実行日時'] >= cutoff_date].copy()
         
         if len(df) == len(df_keep): return 0
