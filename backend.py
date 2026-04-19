@@ -2397,7 +2397,20 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         row['店癖マッチ'] = ""
         return row
         
-    t_info = all_trends_dict[s]
+    status = row.get('営業状態', '⚖️ 通常営業')
+    t_info = all_trends_dict[s].get(status)
+    
+    # 該当ステータスの実績が全くない場合は「全体」にフォールバック
+    if not t_info or (not t_info['top_ids'] and not t_info['worst_ids']):
+        t_info = all_trends_dict[s].get("全体")
+        status_label = "全体"
+    else:
+        status_label = status.replace("🔥 ", "").replace("🥶 ", "").replace("⚖️ ", "")
+        
+    if not t_info:
+        row['店癖マッチ'] = ""
+        return row
+        
     top_ids = t_info['top_ids']
     worst_ids = t_info['worst_ids']
     
@@ -2493,8 +2506,26 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     match_str = f"{hot_str} {cold_str}".strip()
     row['店癖マッチ'] = match_str
     
-    # スコアの再計算
+    # スコアの再計算（AIの予測スコアと、強力な店癖の過去実績確率をブレンドする）
     score = row.get('prediction_score', 0)
+    
+    # 強い店癖（トップトレンド）の実績勝率を加味してスコアを底上げ
+    top_win_rates = [t_info['trend_win_rates'].get(tid, 0) for tid in matched_hot_ids]
+    if top_win_rates:
+        max_trend_prob = max(top_win_rates) / 100.0
+        # AIの評価が実績より低い場合、実績確率側に歩み寄らせる（中間の値をとる）
+        if score < max_trend_prob:
+            score = (score + max_trend_prob) / 2.0
+
+    # 悪い店癖（ワーストトレンド）の実績勝率を加味してスコアを引き下げ
+    worst_win_rates = [t_info['trend_win_rates'].get(tid, 0) for tid in matched_cold_ids]
+    if worst_win_rates:
+        min_trend_prob = min(worst_win_rates) / 100.0
+        # AIの評価が実績より高い場合、下方に歩み寄らせる
+        if score > min_trend_prob:
+            score = (score + min_trend_prob) / 2.0
+            
+    row['prediction_score'] = score
 
     # 根拠の追記
     reason = str(row.get('根拠', ''))
@@ -2504,27 +2535,30 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         diff_rate = t_info['trend_diffs'].get(tid, 0)
         rate_str = f"(実績:高設定率{w_rate:.1f}% / 通常より{diff_rate:+.1f}%)"
         
+        t_prefix_de = f"この店舗の{status_label}で" if status_label != "全体" else "この店舗で"
+        t_prefix_ha = f"この店舗の{status_label}は" if status_label != "全体" else "この店舗は"
+        
         if tid.startswith("end_") or tid.startswith("day_"): 
-            add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で『{h}』は高設定の期待度が大幅に上がります {rate_str}。")
-        elif h == "角": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で設定が入りやすい『角台』に合致しています {rate_str}。")
-        elif h == "BB欠損・不発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で上げられやすい『REG先行のBB欠損台（不発台）』に合致しています {rate_str}。")
-        elif h == "超不発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています {rate_str}。")
-        elif h == "連凹": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で上げリセットされやすい『連続凹み台』に合致しています {rate_str}。")
-        elif h == "連高REG": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で高設定が連続しやすい『連続高REG台』に合致しています {rate_str}。")
-        elif h == "タコ粘りお詫び": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗でしっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています {rate_str}。")
-        elif h == "負反発": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で反発（底上げ）されやすい『前日大負け台』に合致しています {rate_str}。")
-        elif h == "勝据え": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『前日大勝ち台』に合致しています {rate_str}。")
+            add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}『{h}』は高設定の期待度が大幅に上がります {rate_str}。")
+        elif h == "角": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}設定が入りやすい『角台』に合致しています {rate_str}。")
+        elif h == "BB欠損・不発": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}上げられやすい『REG先行のBB欠損台（不発台）』に合致しています {rate_str}。")
+        elif h == "超不発": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています {rate_str}。")
+        elif h == "連凹": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}上げリセットされやすい『連続凹み台』に合致しています {rate_str}。")
+        elif h == "連高REG": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}高設定が連続しやすい『連続高REG台』に合致しています {rate_str}。")
+        elif h == "タコ粘りお詫び": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}しっかりお詫び（上げ/据え置き）されやすい『タコ粘り大凹み台』に合致しています {rate_str}。")
+        elif h == "負反発": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}反発（底上げ）されやすい『前日大負け台』に合致しています {rate_str}。")
+        elif h == "勝据え": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}据え置かれやすい『前日大勝ち台』に合致しています {rate_str}。")
         elif h == "V字反発": add_reasons.append(f"【🎯店癖】過去の傾向から、好調ウェーブが継続しやすい『V字反発の波(前々日負け→前日勝ち)』に合致しています {rate_str}。")
         elif h == "連大凹み": add_reasons.append(f"【🎯店癖】過去の傾向から、強烈な底上げ（お詫び）が期待できる『2日連続大負けの波』に合致しています {rate_str}。")
-        elif h == "高設定据え": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗で据え置かれやすい『高設定挙動の大勝ち台』に合致しています {rate_str}。")
-        elif h == "高稼働据え置き": add_reasons.append(f"【🎯店癖(安心)】過去の傾向から、この店舗は『タコ粘りされた翌日でも高設定を据え置く(または入れ直す)』太っ腹な傾向があります {rate_str}。")
-        elif h == "高設定完全据え置き": add_reasons.append(f"【🎯店癖(安心)】過去の傾向から、この店舗は『前日高設定挙動の優秀台をそのまま据え置く』傾向が非常に強いです {rate_str}。")
-        elif h == "連勝据え置き": add_reasons.append(f"【🎯店癖(波乗り)】過去の傾向から、この店舗は『連勝中の台を回収せず、さらに出玉を伸ばさせる(据え置く)』傾向があります {rate_str}。")
-        elif h == "メイン角": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『メイン通路側の角台』にしっかり設定を入れてアピールする傾向があります {rate_str}。")
-        elif h == "目立つ島": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『メイン通路沿いの目立つ島』をベース高めに扱う傾向があります {rate_str}。")
-        elif h == "壁側・死に島": add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗はあえて『壁側の目立たない島』に当たりを隠すクセがあります {rate_str}。")
-        elif h.endswith("曜日"): add_reasons.append(f"【🎯店癖】過去の傾向から、この店舗は『{h}』に高設定を多く投入する還元傾向があります {rate_str}。")
-        elif h == "看板機種": add_reasons.append(f"【🎯店癖】過去の傾向から、この機種はこの店舗の看板機種として非常に甘く扱われています {rate_str}。")
+        elif h == "高設定据え": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}据え置かれやすい『高設定挙動の大勝ち台』に合致しています {rate_str}。")
+        elif h == "高稼働据え置き": add_reasons.append(f"【🎯店癖(安心)】過去の傾向から、{t_prefix_ha}『タコ粘りされた翌日でも高設定を据え置く(または入れ直す)』太っ腹な傾向があります {rate_str}。")
+        elif h == "高設定完全据え置き": add_reasons.append(f"【🎯店癖(安心)】過去の傾向から、{t_prefix_ha}『前日高設定挙動の優秀台をそのまま据え置く』傾向が非常に強いです {rate_str}。")
+        elif h == "連勝据え置き": add_reasons.append(f"【🎯店癖(波乗り)】過去の傾向から、{t_prefix_ha}『連勝中の台を回収せず、さらに出玉を伸ばさせる(据え置く)』傾向があります {rate_str}。")
+        elif h == "メイン角": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_ha}『メイン通路側の角台』にしっかり設定を入れてアピールする傾向があります {rate_str}。")
+        elif h == "目立つ島": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_ha}『メイン通路沿いの目立つ島』をベース高めに扱う傾向があります {rate_str}。")
+        elif h == "壁側・死に島": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_ha}あえて『壁側の目立たない島』に当たりを隠すクセがあります {rate_str}。")
+        elif h.endswith("曜日"): add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_ha}『{h}』に高設定を多く投入する還元傾向があります {rate_str}。")
+        elif h == "看板機種": add_reasons.append(f"【🎯店癖】過去の傾向から、この機種は{t_prefix_ha}看板機種として非常に甘く扱われています {rate_str}。")
 
     if "BB設定6以上" in fixed_hot: add_reasons.append("【🎯期待】5000G以上回ってBIG確率が設定6を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
     if "BB設定5以上" in fixed_hot: add_reasons.append("【🎯期待】5000G以上回ってBIG確率が設定5を上回っています。REGが引けていなくてもベースが高設定である期待が持てます。")
@@ -2534,19 +2568,23 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         w_rate = t_info['trend_win_rates'].get(tid, 0)
         diff_rate = t_info['trend_diffs'].get(tid, 0)
         rate_str = f"(実績:高設定率{w_rate:.1f}% / 通常より{diff_rate:+.1f}%)"
-        if c == "大勝反動": add_reasons.append(f"【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から反動（回収）の危険性が高いため注意してください {rate_str}。")
-        elif c == "連高REG反動": add_reasons.append(f"【⚠️警戒】連続で高REGを記録している台ですが、過去の傾向からこの店舗では連日据え置かれた翌日は回収される危険性が高いため注意してください {rate_str}。")
-        elif c == "一撃反動": add_reasons.append(f"【⚠️警戒】一撃で出た荒波台です。過去の傾向から据え置きされにくく回収される危険性が高いため注意してください {rate_str}。")
-        elif c == "高稼働反動": add_reasons.append(f"【⚠️警戒】前日よく回された台ですが、過去の傾向からこの店舗ではタコ粘りされた翌日は設定が下げられる(回収される)危険性が高いため注意してください {rate_str}。")
-        elif c == "高設定下げ": add_reasons.append(f"【⚠️警戒】前日は高設定挙動でしたが、過去の傾向からこの店舗では優秀台の据え置きが少なく、設定が下げられる危険性が高いため注意してください {rate_str}。")
-        elif c == "連勝ストップ": add_reasons.append(f"【⚠️警戒】連勝中の好調台ですが、過去の傾向からこの店舗では連続プラスの翌日は回収される危険性が高いため注意してください {rate_str}。")
-        elif c.startswith("メイン角"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗は『メイン通路側の角台』をフェイク（低設定の誤爆待ち）として使う傾向が強いため注意してください {rate_str}。")
-        elif c.startswith("目立つ島"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗は『メイン通路沿いの島』を回収用（黙っても客が座るため）に使う傾向が強いため注意してください {rate_str}。")
-        elif c.startswith("壁側"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗は『壁側の目立たない島』には設定を入れない傾向が強いため注意してください {rate_str}。")
-        elif c.endswith("のつく日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗で『{c.replace('(冷遇)', '')}』は回収日(高設定率が低い)の傾向が強いため注意してください {rate_str}。")
-        elif c.endswith("(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗で『{c.replace('(冷遇)', '')}』は高設定が入りにくい傾向が強いため注意してください {rate_str}。")
-        elif c.endswith("曜日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、この店舗で『{c.replace('(冷遇)', '')}』は回収傾向が強いため注意してください {rate_str}。")
-        elif c == "冷遇機種": add_reasons.append(f"【⚠️警戒】過去の傾向から、この機種はこの店舗で極めて辛く扱われている（冷遇されている）ため注意してください {rate_str}。")
+        
+        t_prefix_de = f"この店舗の{status_label}で" if status_label != "全体" else "この店舗で"
+        t_prefix_ha = f"この店舗の{status_label}は" if status_label != "全体" else "この店舗は"
+
+        if c == "大勝反動": add_reasons.append(f"【⚠️警戒】大勝後のREG確率が悪い台です。過去の傾向から{t_prefix_de}反動（回収）の危険性が高いため注意してください {rate_str}。")
+        elif c == "連高REG反動": add_reasons.append(f"【⚠️警戒】連続で高REGを記録している台ですが、過去の傾向から{t_prefix_de}連日据え置かれた翌日は回収される危険性が高いため注意してください {rate_str}。")
+        elif c == "一撃反動": add_reasons.append(f"【⚠️警戒】一撃で出た荒波台です。過去の傾向から{t_prefix_de}据え置きされにくく回収される危険性が高いため注意してください {rate_str}。")
+        elif c == "高稼働反動": add_reasons.append(f"【⚠️警戒】前日よく回された台ですが、過去の傾向から{t_prefix_de}タコ粘りされた翌日は設定が下げられる(回収される)危険性が高いため注意してください {rate_str}。")
+        elif c == "高設定下げ": add_reasons.append(f"【⚠️警戒】前日は高設定挙動でしたが、過去の傾向から{t_prefix_de}優秀台の据え置きが少なく、設定が下げられる危険性が高いため注意してください {rate_str}。")
+        elif c == "連勝ストップ": add_reasons.append(f"【⚠️警戒】連勝中の好調台ですが、過去の傾向から{t_prefix_de}連続プラスの翌日は回収される危険性が高いため注意してください {rate_str}。")
+        elif c.startswith("メイン角"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『メイン通路側の角台』をフェイク（低設定の誤爆待ち）として使う傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("目立つ島"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『メイン通路沿いの島』を回収用（黙っても客が座るため）に使う傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("壁側"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『壁側の目立たない島』には設定を入れない傾向が強いため注意してください {rate_str}。")
+        elif c.endswith("のつく日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_de}『{c.replace('(冷遇)', '')}』は回収日(高設定率が低い)の傾向が強いため注意してください {rate_str}。")
+        elif c.endswith("(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_de}『{c.replace('(冷遇)', '')}』は高設定が入りにくい傾向が強いため注意してください {rate_str}。")
+        elif c.endswith("曜日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_de}『{c.replace('(冷遇)', '')}』は回収傾向が強いため注意してください {rate_str}。")
+        elif c == "冷遇機種": add_reasons.append(f"【⚠️警戒】過去の傾向から、この機種は{t_prefix_de}極めて辛く扱われている（冷遇されている）ため注意してください {rate_str}。")
 
     if "中間設定濃厚" in fixed_cold: add_reasons.append("【⚠️警戒】BB確率が設定1より悪く、かつREG確率が設定6に届いていません。中間設定の誤爆やフェイクの可能性が高いため、高設定狙いとしては危険です。")
     
@@ -2610,9 +2648,28 @@ def _postprocess_predictions(predict_df, train_df):
     if not train_df.empty: 
         train_df['予測信頼度'] = train_df.apply(get_reliability_mark, axis=1)
         
-    # --- 店癖の適用 ---
+    # --- 営業状態（還元/通常/回収）の事前付与と店癖の適用 ---
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     if shop_col and not train_df.empty:
+        def _add_shop_status(df_target, is_actual=False):
+            if df_target.empty: return df_target
+            diff_col = 'next_diff' if is_actual and 'next_diff' in df_target.columns else '予測差枚数'
+            if diff_col not in df_target.columns:
+                df_target['営業状態'] = "⚖️ 通常営業"
+                return df_target
+                
+            shop_daily = df_target.groupby([shop_col, 'next_date']).agg(
+                avg_diff=(diff_col, 'mean'),
+                count=('台番号', 'nunique')
+            ).reset_index()
+            
+            shop_daily['営業状態'] = shop_daily.apply(lambda r: classify_shop_eval(r['avg_diff'], r['count'], is_prediction=False), axis=1)
+            return pd.merge(df_target, shop_daily[[shop_col, 'next_date', '営業状態']], on=[shop_col, 'next_date'], how='left')
+
+        train_df = _add_shop_status(train_df, is_actual=True)
+        if not predict_df.empty:
+            predict_df = _add_shop_status(predict_df, is_actual=False)
+
         all_trends_dict = _calculate_shop_trends(train_df, shop_col, specs)
         if not predict_df.empty:
             predict_df = predict_df.apply(lambda row: _apply_trends_to_row(row, all_trends_dict, shop_col, specs), axis=1)
