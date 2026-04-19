@@ -465,84 +465,59 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         else:
             st.caption("※有効稼働データなし")
 
-    # --- ai_recom_df にマージキーを作成 ---
-    ai_recom_df['予測対象日_merge_key'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
+    # ユーザーの要望通り、ごちゃごちゃした結合を廃止し、最もシンプルに「予測した日付」の「実績差枚」をぶつける
+    ai_recom_df['日付キー'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
 
-    # --- 1. 日別の店舗平均期待度 (還元/回収の予測目安) をスプレッドシートから取得 ---
+    # --- 1. 日別の店舗平均期待度 (予測スコア) を取得 ---
     df_daily_scores = backend.load_daily_shop_scores()
-    
-    has_daily_scores = False
-    shop_daily_scores = pd.DataFrame()
     if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
         df_daily_scores['予測対象日'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce').dt.normalize()
-        temp_scores = df_daily_scores[df_daily_scores['店名'] == selected_shop].copy()
-        
-        if not temp_scores.empty:
-            has_daily_scores = True
-            shop_daily_scores = temp_scores.drop_duplicates(subset=['予測対象日'], keep='last')
-            shop_daily_scores = shop_daily_scores.rename(columns={'予測対象日': '予測対象日_merge_key'})
-            for col in ['店舗平均期待度', '予測平均差枚', '店舗台数']:
-                if col in shop_daily_scores.columns:
-                    shop_daily_scores[col] = pd.to_numeric(shop_daily_scores[col], errors='coerce')
-        
-    # --- 2. 実際の店舗全体の成績を計算 ---
-    shop_daily_actual = pd.DataFrame()
-    if not df_raw_temp.empty:
-        shop_raw_temp = df_raw_temp[df_raw_temp[shop_col] == selected_shop].copy()
-        shop_raw_temp['対象日付'] = pd.to_datetime(shop_raw_temp['対象日付']).dt.normalize()
-        shop_daily_actual = shop_raw_temp.groupby('対象日付').agg(
-            店舗全体平均差枚=('差枚', 'mean'),
-            実際店舗台数=('台番号', 'nunique')
-        ).reset_index()
-        shop_daily_actual = shop_daily_actual.rename(columns={'対象日付': '予測対象日_merge_key'})
-
-    # --- 3. ai_recom_df に各情報を結合 ---
-    if not shop_daily_scores.empty:
-        ai_recom_df = pd.merge(ai_recom_df, shop_daily_scores[['予測対象日_merge_key', '店舗平均期待度', '予測平均差枚', '店舗台数']], on='予測対象日_merge_key', how='left')
+        shop_daily_scores = df_daily_scores[df_daily_scores['店名'] == selected_shop].drop_duplicates(subset=['予測対象日'], keep='last')
+        for col in ['店舗平均期待度', '予測平均差枚']:
+            if col in shop_daily_scores.columns:
+                shop_daily_scores[col] = pd.to_numeric(shop_daily_scores[col], errors='coerce')
+        ai_recom_df = pd.merge(ai_recom_df, shop_daily_scores[['予測対象日', '店舗平均期待度', '予測平均差枚']], left_on='日付キー', right_on='予測対象日', how='left')
     else:
         ai_recom_df['店舗平均期待度'] = np.nan
         ai_recom_df['予測平均差枚'] = np.nan
-        ai_recom_df['店舗台数'] = np.nan
         
-    if not shop_daily_actual.empty:
-        ai_recom_df = pd.merge(ai_recom_df, shop_daily_actual[['予測対象日_merge_key', '店舗全体平均差枚', '実際店舗台数']], on='予測対象日_merge_key', how='left')
+    # --- 2. 店舗全体の実際の実績差枚を取得 ---
+    if not df_raw_temp.empty:
+        shop_raw_temp = df_raw_temp[df_raw_temp[shop_col] == selected_shop].copy()
+        shop_raw_temp['日付キー'] = pd.to_datetime(shop_raw_temp['対象日付']).dt.normalize()
+        shop_daily_actual = shop_raw_temp.groupby('日付キー').agg(
+            店舗全体平均差枚=('差枚', 'mean')
+        ).reset_index()
+        ai_recom_df = pd.merge(ai_recom_df, shop_daily_actual, on='日付キー', how='left')
     else:
         ai_recom_df['店舗全体平均差枚'] = np.nan
-        ai_recom_df['実際店舗台数'] = np.nan
         
-    # --- 4. フォールバック処理 (古いデータで daily_scores がない場合の期待度補完) ---
-    fallback_scores = ai_recom_df.groupby('予測対象日_merge_key').agg(
-        fb_店舗平均期待度=('prediction_score', 'mean')
-    ).reset_index()
-    ai_recom_df = pd.merge(ai_recom_df, fallback_scores, on='予測対象日_merge_key', how='left')
-    ai_recom_df['店舗平均期待度'] = ai_recom_df['店舗平均期待度'].fillna(ai_recom_df['fb_店舗平均期待度'])
-
-    # --- 5. 営業区分の判定 ---
-    def determine_shop_eval(row):
+    # --- 3. 営業区分の判定 (絶対値でシンプルに) ---
+    def determine_pred_shop_eval(row):
         pred_diff = row.get('予測平均差枚')
-        if pd.notna(pred_diff) and has_daily_scores:
-            return backend.classify_shop_eval(pred_diff, row.get('店舗台数') if pd.notna(row.get('店舗台数')) else 50, is_prediction=True)
-        
-        # 予測差枚がない場合は期待度ベースで判定
+        if pd.notna(pred_diff):
+            if pred_diff > 0: return "🔥 還元日予測"
+            elif pred_diff < 0: return "🥶 回収日予測"
+            else: return "⚖️ 通常営業予測"
+            
         score = row.get('店舗平均期待度', 0)
         if pd.isna(score): return "⚖️ 通常営業予測"
         if score >= 0.40: return "🔥 還元日予測"
         elif score < 0.20: return "🥶 回収日予測"
         else: return "⚖️ 通常営業予測"
 
-    ai_recom_df['予測営業区分'] = ai_recom_df.apply(determine_shop_eval, axis=1)
+    ai_recom_df['予測営業区分'] = ai_recom_df.apply(determine_pred_shop_eval, axis=1)
 
     def determine_actual_shop_eval(row):
         actual_diff = row.get('店舗全体平均差枚')
-        actual_count = row.get('実際店舗台数')
-        if pd.isna(actual_diff) or pd.isna(actual_count):
-            return "⚖️ 通常営業"
-        return backend.classify_shop_eval(actual_diff, actual_count, is_prediction=False)
+        if pd.isna(actual_diff): return "⚖️ 通常営業"
+        if actual_diff >= 100: return "🔥 還元日"
+        elif actual_diff <= -100: return "🥶 回収日"
+        else: return "⚖️ 通常営業"
 
     ai_recom_df['実際営業区分'] = ai_recom_df.apply(determine_actual_shop_eval, axis=1)
     
-    # 不要なマージキーの削除
-    ai_recom_df = ai_recom_df.drop(columns=['予測対象日_merge_key', 'fb_店舗平均期待度'], errors='ignore')
+    ai_recom_df = ai_recom_df.drop(columns=['日付キー', '予測対象日'], errors='ignore')
 
     # 日別推移データをAI評価より先に計算する
     daily_stats = ai_recom_df.groupby(['対象日付', '予測営業区分']).agg(
@@ -585,15 +560,17 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     day_eval_summary = ai_recom_df[['対象日付', group_col, '店舗全体平均差枚']].drop_duplicates().groupby(group_col).agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
     day_type_stats = pd.merge(day_type_stats, day_eval_summary, on=group_col, how='left')
     
+    day_order_pred = {"🔥 還元日予測": 1, "⚖️ 通常営業予測": 2, "🥶 回収日予測": 3}
     day_order_act = {"🔥 還元日": 1, "⚖️ 通常営業": 2, "🥶 回収日": 3}
+    day_order = day_order_pred if '予測' in eval_base else day_order_act
     
-    day_type_stats['sort'] = day_type_stats[group_col].map(day_order_act).fillna(99)
+    day_type_stats['sort'] = day_type_stats[group_col].map(day_order).fillna(99)
     day_type_stats = day_type_stats.sort_values('sort').drop('sort', axis=1)
     
     st.dataframe(
         day_type_stats[[group_col, '検証日数', '検証台数', '有効稼働数', '推奨台高設定率', '推奨台勝率', '推奨台平均差枚', '店舗全体平均差枚', '平均設定5近似度', 'REG確率']],
         column_config={
-            group_col: st.column_config.TextColumn("実際の営業区分"),
+            group_col: st.column_config.TextColumn("営業区分"),
             "検証日数": st.column_config.NumberColumn("日数", format="%d日"),
             "検証台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
             "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
