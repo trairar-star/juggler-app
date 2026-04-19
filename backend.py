@@ -21,8 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.29.0" 
-APP_VERSION = "v4.30.0" 
+APP_VERSION = "v4.32.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -82,32 +81,27 @@ def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
     if pd.isna(avg_diff) or pd.isna(machine_count) or machine_count <= 0:
         return "⚖️ 通常営業予測" if is_prediction else "⚖️ 通常営業"
         
-    # スロット1台あたりの1日の差枚標準偏差を約1500枚と仮定し、店舗平均のブレを計算
-    std_dev = 1500.0 / math.sqrt(machine_count)
-    
-    # 分散を考慮した閾値（最低でも±50枚は必要とする）
-    hot_threshold = max(50.0, std_dev * 0.5)
-    cold_threshold = min(-50.0, -std_dev * 0.5)
     if is_prediction:
-        # 予測は「期待値がプラスかマイナスか」の指標なので、微差でも敏感に反応させる
-        hot_threshold = max(50.0, std_dev * 0.5)
-        cold_threshold = min(-50.0, -std_dev * 0.5)
+        # 予測値（回帰モデルの出力）は実際の差枚より振れ幅が非常に小さくなるため、
+        # 台数による標準偏差は使わず、絶対値の低いしきい値で敏感に判定する
+        hot_threshold = 20.0
+        cold_threshold = -20.0
         suffix = "予測"
+        
+        if avg_diff >= hot_threshold:
+            return f"🔥 還元日{suffix}"
+        elif avg_diff <= cold_threshold:
+            return f"🥶 回収日{suffix}"
+        else:
+            return f"⚖️ 通常営業{suffix}"
     else:
-        # 実際の「結果」としての還元日は、客がしっかり体感できるレベル（平均+150枚以上）に厳格化
-        hot_threshold = max(150.0, std_dev * 1.5)
-        # 回収日も、単なる下振れ（微マイナス）と区別するため厳しくする（平均-100枚以下）
-        cold_threshold = min(-100.0, -std_dev * 1.0)
-        suffix = ""
-    
-    suffix = "予測" if is_prediction else ""
-    
-    if avg_diff >= hot_threshold:
-        return f"🔥 還元日{suffix}"
-    elif avg_diff <= cold_threshold:
-        return f"🥶 回収日{suffix}"
-    else:
-        return f"⚖️ 通常営業{suffix}"
+        # 実際の結果はシンプルに、店舗全体の差枚が客側プラス(店の赤字)なら還元日、マイナスなら回収日と判定する
+        if avg_diff > 0:
+            return "🔥 還元日"
+        elif avg_diff < 0:
+            return "🥶 回収日"
+        else:
+            return "⚖️ 通常営業"
 
 # ---------------------------------------------------------
 # 機種スペック情報

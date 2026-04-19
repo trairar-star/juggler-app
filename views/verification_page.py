@@ -465,8 +465,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         else:
             st.caption("※有効稼働データなし")
 
-    # --- ai_recom_df に対象日付キーを作成 ---
-    ai_recom_df['対象日付_merge_key'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
+    # --- ai_recom_df にマージキーを作成 ---
+    ai_recom_df['予測対象日_merge_key'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
+    ai_recom_df['実績稼働日_merge_key'] = pd.to_datetime(ai_recom_df['実際の稼働日']).dt.normalize()
 
     # --- 1. 日別の店舗平均期待度 (還元/回収の予測目安) をスプレッドシートから取得 ---
     df_daily_scores = backend.load_daily_shop_scores()
@@ -480,7 +481,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         if not temp_scores.empty:
             has_daily_scores = True
             shop_daily_scores = temp_scores.drop_duplicates(subset=['予測対象日'], keep='last')
-            shop_daily_scores = shop_daily_scores.rename(columns={'予測対象日': '対象日付_merge_key'})
+            shop_daily_scores = shop_daily_scores.rename(columns={'予測対象日': '予測対象日_merge_key'})
             for col in ['店舗平均期待度', '予測平均差枚', '店舗台数']:
                 if col in shop_daily_scores.columns:
                     shop_daily_scores[col] = pd.to_numeric(shop_daily_scores[col], errors='coerce')
@@ -494,27 +495,27 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             店舗全体平均差枚=('差枚', 'mean'),
             実際店舗台数=('台番号', 'nunique')
         ).reset_index()
-        shop_daily_actual = shop_daily_actual.rename(columns={'対象日付': '対象日付_merge_key'})
+        shop_daily_actual = shop_daily_actual.rename(columns={'対象日付': '実績稼働日_merge_key'})
 
     # --- 3. ai_recom_df に各情報を結合 ---
     if not shop_daily_scores.empty:
-        ai_recom_df = pd.merge(ai_recom_df, shop_daily_scores[['対象日付_merge_key', '店舗平均期待度', '予測平均差枚', '店舗台数']], on='対象日付_merge_key', how='left')
+        ai_recom_df = pd.merge(ai_recom_df, shop_daily_scores[['予測対象日_merge_key', '店舗平均期待度', '予測平均差枚', '店舗台数']], on='予測対象日_merge_key', how='left')
     else:
         ai_recom_df['店舗平均期待度'] = np.nan
         ai_recom_df['予測平均差枚'] = np.nan
         ai_recom_df['店舗台数'] = np.nan
         
     if not shop_daily_actual.empty:
-        ai_recom_df = pd.merge(ai_recom_df, shop_daily_actual[['対象日付_merge_key', '店舗全体平均差枚', '実際店舗台数']], on='対象日付_merge_key', how='left')
+        ai_recom_df = pd.merge(ai_recom_df, shop_daily_actual[['実績稼働日_merge_key', '店舗全体平均差枚', '実際店舗台数']], on='実績稼働日_merge_key', how='left')
     else:
         ai_recom_df['店舗全体平均差枚'] = np.nan
         ai_recom_df['実際店舗台数'] = np.nan
         
     # --- 4. フォールバック処理 (古いデータで daily_scores がない場合の期待度補完) ---
-    fallback_scores = ai_recom_df.groupby('対象日付_merge_key').agg(
+    fallback_scores = ai_recom_df.groupby('予測対象日_merge_key').agg(
         fb_店舗平均期待度=('prediction_score', 'mean')
     ).reset_index()
-    ai_recom_df = pd.merge(ai_recom_df, fallback_scores, on='対象日付_merge_key', how='left')
+    ai_recom_df = pd.merge(ai_recom_df, fallback_scores, on='予測対象日_merge_key', how='left')
     ai_recom_df['店舗平均期待度'] = ai_recom_df['店舗平均期待度'].fillna(ai_recom_df['fb_店舗平均期待度'])
 
     # --- 5. 営業区分の判定 ---
@@ -542,7 +543,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     ai_recom_df['実際営業区分'] = ai_recom_df.apply(determine_actual_shop_eval, axis=1)
     
     # 不要なマージキーの削除
-    ai_recom_df = ai_recom_df.drop(columns=['対象日付_merge_key', 'fb_店舗平均期待度'], errors='ignore')
+    ai_recom_df = ai_recom_df.drop(columns=['予測対象日_merge_key', '実績稼働日_merge_key', 'fb_店舗平均期待度'], errors='ignore')
 
     # 日別推移データをAI評価より先に計算する
     daily_stats = ai_recom_df.groupby(['対象日付', '予測営業区分']).agg(
