@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.28.0" 
+APP_VERSION = "v4.29.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -2099,7 +2099,13 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         reg_alpha=r_alpha, reg_lambda=r_lambda,
         subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
     )
-    model.fit(X_stacked, y, sample_weight=sample_weights, categorical_feature=cat_features)
+    
+    # 分類モデルは放置台を除外したデータ(valid_play_mask=True)のみで学習させる
+    train_df_common_cls = train_df_common[train_df_common['valid_play_mask']]
+    X_cls = X_stacked.loc[train_df_common_cls.index]
+    y_cls = y.loc[train_df_common_cls.index]
+    sw_cls = sample_weights.loc[train_df_common_cls.index] if sample_weights is not None else None
+    model.fit(X_cls, y_cls, sample_weight=sw_cls, categorical_feature=cat_features)
     
     if not predict_df.empty:
         predict_df['予測差枚数'] = reg_model.predict(predict_df[features]).astype(int)
@@ -2155,13 +2161,13 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
             else:
                 shop_train = shop_df_full.copy()
                 
-            y_shop_check = shop_train['target']
+            shop_train_cls = shop_train[shop_train['valid_play_mask']]
+            y_shop_check = shop_train_cls['target']
             
             # ノイズ過学習防止と、正例(当たり台)が少なすぎて確率が0%に張り付くバグを防ぐため、
             # 最低サンプル数150件 ＋ 正例が5件以上ある場合のみ専用モデルを構築する
-            if len(shop_train) >= 150 and y_shop_check.sum() >= 5:
+            if len(shop_train_cls) >= 150 and y_shop_check.sum() >= 5:
                 X_shop = shop_train[features]
-                y_shop = shop_train['target']
                 sw_shop = None
                 if '対象日付' in shop_train.columns:
                     s_max_date = shop_train['対象日付'].max()
@@ -2184,8 +2190,12 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 
                 try:
                     y_shop_reg = shop_train['next_diff'].clip(lower=-3000, upper=4000)
-                    shop_model.fit(X_shop, y_shop, sample_weight=sw_shop, categorical_feature=cat_features)
                     shop_reg.fit(X_shop, y_shop_reg, sample_weight=sw_shop, categorical_feature=cat_features)
+                    
+                    X_shop_cls = shop_train_cls[features]
+                    y_shop_cls = shop_train_cls['target']
+                    sw_shop_cls = sw_shop.loc[shop_train_cls.index] if sw_shop is not None else None
+                    shop_model.fit(X_shop_cls, y_shop_cls, sample_weight=sw_shop_cls, categorical_feature=cat_features)
                     corrs_shop = get_correlations(shop_train, features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': shop,
@@ -2214,10 +2224,10 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     if 'target_weekday' in train_df_common.columns:
         for wd in sorted(train_df_common['target_weekday'].unique()):
             wd_train = train_df_common[train_df_common['target_weekday'] == wd]
-            y_wd_check = wd_train['target']
-            if len(wd_train) >= 150 and y_wd_check.sum() >= 5:
+            wd_train_cls = wd_train[wd_train['valid_play_mask']]
+            y_wd_check = wd_train_cls['target']
+            if len(wd_train_cls) >= 150 and y_wd_check.sum() >= 5:
                 X_wd = wd_train[features]
-                y_wd = y_wd_check
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index).all() else None
                 
                 wd_reg = lgb.LGBMRegressor(
@@ -2238,7 +2248,11 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     wd_reg.fit(X_wd, y_wd_reg, sample_weight=sw_wd, categorical_feature=cat_features)
                     X_wd_stacked = X_wd.copy()
                     X_wd_stacked['predicted_diff'] = wd_reg.predict(X_wd)
-                    wd_model.fit(X_wd_stacked, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
+                    
+                    X_wd_cls = X_wd_stacked.loc[wd_train_cls.index]
+                    y_wd_cls = wd_train_cls['target']
+                    sw_wd_cls = sample_weights.loc[wd_train_cls.index] if sample_weights is not None and wd_train_cls.index.isin(sample_weights.index).all() else None
+                    wd_model.fit(X_wd_cls, y_wd_cls, sample_weight=sw_wd_cls, categorical_feature=cat_features)
                     corrs_wd = get_correlations(wd_train.assign(predicted_diff=X_wd_stacked['predicted_diff']), stacked_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': weekdays_map.get(wd, f"曜日{wd}"),
@@ -2255,10 +2269,10 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
         train_df_ev['is_event'] = train_df_ev['イベント名'].apply(lambda x: '通常日' if x == '通常' else 'イベント日')
         for ev_type in ['通常日', 'イベント日']:
             ev_train = train_df_ev[train_df_ev['is_event'] == ev_type]
-            y_ev_check = ev_train['target']
-            if len(ev_train) >= 150 and y_ev_check.sum() >= 5:
+            ev_train_cls = ev_train[ev_train['valid_play_mask']]
+            y_ev_check = ev_train_cls['target']
+            if len(ev_train_cls) >= 150 and y_ev_check.sum() >= 5:
                 X_ev = ev_train[features]
-                y_ev = y_ev_check
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index).all() else None
                 
                 ev_reg = lgb.LGBMRegressor(
@@ -2279,7 +2293,11 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     ev_reg.fit(X_ev, y_ev_reg, sample_weight=sw_ev, categorical_feature=cat_features)
                     X_ev_stacked = X_ev.copy()
                     X_ev_stacked['predicted_diff'] = ev_reg.predict(X_ev)
-                    ev_model.fit(X_ev_stacked, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
+                    
+                    X_ev_cls = X_ev_stacked.loc[ev_train_cls.index]
+                    y_ev_cls = ev_train_cls['target']
+                    sw_ev_cls = sample_weights.loc[ev_train_cls.index] if sample_weights is not None and ev_train_cls.index.isin(sample_weights.index).all() else None
+                    ev_model.fit(X_ev_cls, y_ev_cls, sample_weight=sw_ev_cls, categorical_feature=cat_features)
                     corrs_ev = get_correlations(ev_train.assign(predicted_diff=X_ev_stacked['predicted_diff']), stacked_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': ev_type,
@@ -3105,7 +3123,7 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
     # 3000G以上回った台、または3000G未満でも±750枚以上動いて見切られた(または誤爆した)台のみを学習対象とする
     # これにより、0G放置台などが分母から消え、純粋な「稼働した際の本物の高設定確率」が算出される
     valid_play_mask = (train_df['next_累計ゲーム'] >= 3000) | ((train_df['next_累計ゲーム'] < 3000) & ((train_df['next_diff'] <= -750) | (train_df['next_diff'] >= 750)))
-    train_df = train_df[valid_play_mask].copy()
+    train_df['valid_play_mask'] = valid_play_mask
     
     predict_df = df[df['next_diff'].isna()].copy()
     
@@ -3128,6 +3146,14 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
 
     # 6. 後処理 (スコア補正、根拠の自然言語生成)
     predict_df, train_df = _postprocess_predictions(predict_df, train_df)
+
+    # 外のUI（過去の実績検証など）が「稼働した台のみ」を前提としているため、返却前に元通りフィルタリングする
+    if 'valid_play_mask' in train_df.columns:
+        train_df = train_df[train_df['valid_play_mask']].copy()
+        train_df = train_df.drop(columns=['valid_play_mask'], errors='ignore')
+        
+    if 'valid_play_mask' in predict_df.columns:
+        predict_df = predict_df.drop(columns=['valid_play_mask'], errors='ignore')
 
     # --- 処理の最後に計算結果をキャッシュとして保存 ---
     try:
