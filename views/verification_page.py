@@ -490,6 +490,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     # --- 2. 実績データがない（未来の）予測ログは検証から除外する ---
     ai_recom_df = ai_recom_df.dropna(subset=['店舗全体平均差枚']).copy()
 
+    if ai_recom_df.empty:
+        st.info("対象期間の実績データ（店舗全体の差枚数）が見つかりません。")
+        return
+
     # --- 3. 営業区分の判定 (絶対値でシンプルに) ---
     def determine_actual_shop_eval(row):
         actual_diff = row.get('店舗全体平均差枚')
