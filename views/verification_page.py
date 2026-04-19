@@ -556,12 +556,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     daily_stats['high_setting_rate'] = np.where(daily_stats['high_valid_count'] > 0, daily_stats['high_setting_count'] / daily_stats['high_valid_count'], 0.0)
 
     # --- 還元日/回収日 予測別のAI成績 ---
+    # --- 還元日/回収日 別の成績 ---
     st.divider()
     st.subheader("🗓️ 還元日 / 回収日 別の成績")
     st.caption("AIが判断した「予測」ベースか、実際の店舗の差枚による「結果」ベースかで、推奨台の成績を振り分けて確認できます。")
+    st.caption("実際の店舗全体の平均差枚から「還元日」「通常営業」「回収日」と判定した日ごとの、AI推奨台の成績です。店舗が実際に還元している日にAIの推奨台がどれだけ勝てているかが確認できます。")
     
     eval_base = st.radio("集計の基準", ["🎯 予測ベース (AIが回収日を警戒できているかの確認用)", "📊 結果ベース (実際の還元日にどれだけ勝てたかの確認用)"], index=1, horizontal=True)
     group_col = '予測営業区分' if '予測' in eval_base else '実際営業区分'
+    group_col = '実際営業区分'
     
     day_type_stats = ai_recom_df.groupby(group_col).agg(
         検証日数=('対象日付', 'nunique'),
@@ -587,12 +590,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     day_order = day_order_pred if '予測' in eval_base else day_order_act
     
     day_type_stats['sort'] = day_type_stats[group_col].map(day_order).fillna(99)
+    day_type_stats['sort'] = day_type_stats[group_col].map(day_order_act).fillna(99)
     day_type_stats = day_type_stats.sort_values('sort').drop('sort', axis=1)
     
     st.dataframe(
         day_type_stats[[group_col, '検証日数', '検証台数', '有効稼働数', '推奨台高設定率', '推奨台勝率', '推奨台平均差枚', '店舗全体平均差枚', '平均設定5近似度', 'REG確率']],
         column_config={
             group_col: st.column_config.TextColumn("営業区分"),
+            group_col: st.column_config.TextColumn("実際の営業区分"),
             "検証日数": st.column_config.NumberColumn("日数", format="%d日"),
             "検証台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
             "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
@@ -600,6 +605,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             "推奨台勝率": st.column_config.ProgressColumn("推奨台 勝率", format="%.1f%%", min_value=0, max_value=100),
             "推奨台平均差枚": st.column_config.NumberColumn("推奨台 平均差枚", format="%+d枚"),
             "店舗全体平均差枚": st.column_config.NumberColumn("店舗全体 平均差枚", format="%+d枚", help="その日の店舗全体の実際の平均差枚。AIが還元日/回収日を正しく予測できていたかの答え合わせです。"),
+            "店舗全体平均差枚": st.column_config.NumberColumn("店舗全体 平均差枚", format="%+d枚", help="その日の店舗全体の実際の平均差枚です。"),
             "平均設定5近似度": st.column_config.NumberColumn("平均5近似度", format="%.1f点"),
             "REG確率": st.column_config.TextColumn("平均REG確率")
         },
@@ -1023,6 +1029,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             with tabs_1[1]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🔥 還元日予測"])
             with tabs_1[2]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['予測営業区分'] == "⚖️ 通常営業予測"])
             with tabs_1[3]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['予測営業区分'] == "🥶 回収日予測"])
+            with tabs_1[1]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['実際営業区分'] == "🔥 還元日"])
+            with tabs_1[2]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['実際営業区分'] == "⚖️ 通常営業"])
+            with tabs_1[3]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['実際営業区分'] == "🥶 回収日"])
 
             # --- 🤖 総合原因分析 (AIの自己診断レポート) ---
             total_eval_count = len(prob_analysis_df)
@@ -1030,6 +1039,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # 回収日を除外した「真っ当な営業日」のデータでAIの真の実力を測る
             fair_play_df = prob_analysis_df[prob_analysis_df['予測営業区分'] != "🥶 回収日予測"]
             if fair_play_df.empty: fair_play_df = prob_analysis_df # 全部回収日予測なら仕方なく全体を使う
+            fair_play_df = prob_analysis_df[prob_analysis_df['実際営業区分'] != "🥶 回収日"]
+            if fair_play_df.empty: fair_play_df = prob_analysis_df # 全部回収日なら仕方なく全体を使う
             
             period_high_setting_rate = fair_play_df['valid_high'].sum() / fair_play_df['valid_play'].sum() if fair_play_df['valid_play'].sum() > 0 else 0
             high_score_df = fair_play_df[fair_play_df['prediction_score'] >= 0.30]
@@ -1870,14 +1881,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 
                 # 予測営業区分の付与
                 if '対象日付' in sim_df.columns and not ai_recom_df.empty and '予測営業区分' in ai_recom_df.columns:
+                # 実際営業区分の付与
+                if '対象日付' in sim_df.columns and not ai_recom_df.empty and '実際営業区分' in ai_recom_df.columns:
                     sim_df['対象日付_merge_key'] = pd.to_datetime(sim_df['対象日付']).dt.normalize()
                     day_eval_map = ai_recom_df[['対象日付', '予測営業区分']].drop_duplicates()
+                    day_eval_map = ai_recom_df[['対象日付', '実際営業区分']].drop_duplicates()
                     day_eval_map['対象日付_merge_key'] = pd.to_datetime(day_eval_map['対象日付']).dt.normalize()
                     sim_df = pd.merge(sim_df, day_eval_map[['対象日付_merge_key', '予測営業区分']], on='対象日付_merge_key', how='left')
+                    sim_df = pd.merge(sim_df, day_eval_map[['対象日付_merge_key', '実際営業区分']], on='対象日付_merge_key', how='left')
                     sim_df = sim_df.drop(columns=['対象日付_merge_key'], errors='ignore')
                     sim_df['予測営業区分'] = sim_df['予測営業区分'].fillna("⚖️ 通常営業予測")
+                    sim_df['実際営業区分'] = sim_df['実際営業区分'].fillna("⚖️ 通常営業")
                 else:
                     sim_df['予測営業区分'] = "⚖️ 通常営業予測"
+                    sim_df['実際営業区分'] = "⚖️ 通常営業"
                     
                 tabs_sim = st.tabs(["全体", "🔥 還元日", "⚖️ 通常営業", "🥶 回収日"])
                 
@@ -1931,6 +1948,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 with tabs_sim[1]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🔥 還元日予測"])
                 with tabs_sim[2]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "⚖️ 通常営業予測"])
                 with tabs_sim[3]: render_sim_stats(sim_df[sim_df['予測営業区分'] == "🥶 回収日予測"])
+                with tabs_sim[1]: render_sim_stats(sim_df[sim_df['実際営業区分'] == "🔥 還元日"])
+                with tabs_sim[2]: render_sim_stats(sim_df[sim_df['実際営業区分'] == "⚖️ 通常営業"])
+                with tabs_sim[3]: render_sim_stats(sim_df[sim_df['実際営業区分'] == "🥶 回収日"])
                 
                 with st.expander("🔍 シミュレーション詳細データを確認", expanded=False):
                     st.caption("シミュレーションで各確率帯に分類された台の具体的な日付と結果を確認できます。")
