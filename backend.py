@@ -8,6 +8,7 @@ import unicodedata
 import hashlib
 import pickle
 import glob
+import re
 from google.oauth2.service_account import Credentials
 import time
 
@@ -20,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.26.0" 
+APP_VERSION = "v4.27.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -2588,6 +2589,20 @@ def _apply_trends_to_row(row, all_trends_dict, shop_col, specs):
 
     if "中間設定濃厚" in fixed_cold: add_reasons.append("【⚠️警戒】BB確率が設定1より悪く、かつREG確率が設定6に届いていません。中間設定の誤爆やフェイクの可能性が高いため、高設定狙いとしては危険です。")
     
+    # --- 店舗の「癖の強さ（掴みやすさ）」判定 ---
+    is_hard_to_predict = False
+    if not t_info:
+        is_hard_to_predict = True
+    else:
+        top_diffs = [t_info['trend_diffs'].get(tid, 0) for tid in t_info.get('top_ids', [])]
+        max_diff = max(top_diffs) if top_diffs else 0
+        if max_diff < 10.0:  # 一番強い癖でも、通常時より勝率が10%未満しか上がらない場合は「癖が弱い」と判定
+            is_hard_to_predict = True
+            
+    # 予測スコアが一定以上（AIが推奨している）台にのみ、注意書きとして添える
+    if is_hard_to_predict and score >= 0.40:
+        add_reasons.append(f"【💡店舗傾向】過去の実績から、{t_prefix_ha}特定の条件(角台や凹み台など)に偏って設定を入れる『分かりやすい癖』が少なく、的を絞りにくい（散らして入れている）傾向があります。")
+
     if add_reasons:
         row['根拠'] = (reason + " " + " ".join(add_reasons)).strip()
         
@@ -3018,6 +3033,30 @@ def _postprocess_predictions(predict_df, train_df):
     if not train_df.empty:
         train_df['根拠'] = train_df.apply(get_reason, axis=1)
         train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
+
+    def highlight_reasons(text):
+        if not isinstance(text, str): return text
+        # 1. まず全ての 【...】 を一律で太字にする
+        text = re.sub(r'(【[^】]+】)', r'**\1**', text)
+        
+        # 2. 特に強調したいタグをStreamlitのカラー構文で色付けする
+        text = text.replace('**【🎯激熱】**', '**:red[【🎯激熱】]**')
+        text = text.replace('**【激アツ】**', '**:red[【激アツ】]**')
+        text = text.replace('**【🚨極悪回収警戒】**', '**:blue[【🚨極悪回収警戒】]**')
+        text = text.replace('**【⚠️絶対回収】**', '**:blue[【⚠️絶対回収】]**')
+        text = text.replace('**【🔻大幅減点】**', '**:blue[【🔻大幅減点】]**')
+        text = text.replace('**【💎お宝台候補】**', '**:orange[【💎お宝台候補】]**')
+        text = text.replace('**【💎一点突破】**', '**:orange[【💎一点突破】]**')
+        text = text.replace('**【🌟高設定挙動】**', '**:orange[【🌟高設定挙動】]**')
+        text = text.replace('**【超不発】**', '**:orange[【超不発】]**')
+        text = text.replace('**【波・推移】**', '**:green[【波・推移】]**')
+        text = text.replace('**【AIリベンジ狙い】**', '**:orange[【AIリベンジ狙い】]**')
+        return text
+
+    if not predict_df.empty and '根拠' in predict_df.columns:
+        predict_df['根拠'] = predict_df['根拠'].apply(highlight_reasons)
+    if not train_df.empty and '根拠' in train_df.columns:
+        train_df['根拠'] = train_df['根拠'].apply(highlight_reasons)
 
     return predict_df, train_df
 
