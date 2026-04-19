@@ -1076,9 +1076,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         if cold_diff > hot_diff:
                             diag_eval = {"status": "🔴", "title": "店舗全体の還元/回収予測", "msg": f"AIが「回収日」と予測した日（実際 {int(cold_diff):+d}枚）のほうが、「還元日」と予測した日（実際 {int(hot_diff):+d}枚）よりも出ているという逆転現象が起きています。店舗の熱さを見誤っている可能性があります。"}
                         elif hot_diff < 0 and cold_diff < 0:
-                            diag_eval = {"status": "🟡", "title": "店舗全体の還元/回収予測", "msg": f"還元日予測（実際 {int(hot_diff):+d}枚）でも店舗全体がマイナスです。この店舗は全体的にかなり渋い（ベースが低い）可能性があります。"}
+                            diag_eval = {"status": "🟡", "title": "店舗全体の還元/回収予測", "msg": f"還元日と予測した日（実際 {int(hot_diff):+d}枚）でも店舗全体がマイナスで終わっています。フェイク（ガセイベント）が多いか、全体的にかなり渋い（ベースが低い）店舗の可能性があります。"}
                         elif hot_diff > 100 and cold_diff < 0:
                             diag_eval = {"status": "🌟", "title": "店舗全体の還元/回収予測", "msg": f"還元日（実際 {int(hot_diff):+d}枚）と回収日（実際 {int(cold_diff):+d}枚）を見事に予測・判別できています！"}
+                        elif hot_diff < 0 and cold_diff > 0:
+                            diag_eval = {"status": "🔴", "title": "店舗全体の還元/回収予測", "msg": f"還元日予測がマイナス（実際 {int(hot_diff):+d}枚）、回収日予測がプラス（実際 {int(cold_diff):+d}枚）と、予測が完全に逆ブレしています。"}
+                    # どちらか一方しかない場合の評価漏れを防ぐ
+                    elif pd.notna(hot_diff):
+                        if hot_diff < 0:
+                            diag_eval = {"status": "🟡", "title": "店舗全体の還元/回収予測", "msg": f"還元日と予測した日ですが、実際は店舗全体でマイナス（{int(hot_diff):+d}枚）に終わっています。フェイク（ガセイベント）に騙されているか、AIが期待度を過大評価している可能性があります。"}
+                    elif pd.notna(cold_diff):
+                        if cold_diff > 100:
+                            diag_eval = {"status": "🟡", "title": "店舗全体の還元/回収予測", "msg": f"回収日と予測した日ですが、実際は店舗全体で大きくプラス（{int(cold_diff):+d}枚）になっています。店舗の還元タイミングを見逃している可能性があります。"}
                 except Exception:
                     pass
 

@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.27.0" 
+APP_VERSION = "v4.28.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -2078,13 +2078,15 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in features]
 
     # --- 全店舗共通モデルの学習と推論 ---
+    y_reg_common = train_df_common['next_diff'].clip(lower=-3000, upper=4000)
     reg_model = lgb.LGBMRegressor(
+        objective='huber',
         random_state=42, verbose=-1, 
         n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
         reg_alpha=r_alpha, reg_lambda=r_lambda,
         subsample=0.8, subsample_freq=1, colsample_bytree=0.8
     )
-    reg_model.fit(X, train_df_common['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
+    reg_model.fit(X, y_reg_common, sample_weight=sample_weights, categorical_feature=cat_features)
     
     # 【スタッキング】回帰モデルの予測差枚数を特徴量に追加
     X_stacked = X.copy()
@@ -2173,6 +2175,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 shop_reg = lgb.LGBMRegressor(
+                    objective='huber',
                     random_state=42, verbose=-1, 
                     n_estimators=s_n_est, learning_rate=s_lr, num_leaves=s_nl, max_depth=s_md, min_child_samples=s_mcs,
                     reg_alpha=s_ra, reg_lambda=s_rl,
@@ -2180,8 +2183,9 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 )
                 
                 try:
+                    y_shop_reg = shop_train['next_diff'].clip(lower=-3000, upper=4000)
                     shop_model.fit(X_shop, y_shop, sample_weight=sw_shop, categorical_feature=cat_features)
-                    shop_reg.fit(X_shop, shop_train['next_diff'], sample_weight=sw_shop, categorical_feature=cat_features)
+                    shop_reg.fit(X_shop, y_shop_reg, sample_weight=sw_shop, categorical_feature=cat_features)
                     corrs_shop = get_correlations(shop_train, features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': shop,
@@ -2217,6 +2221,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 sw_wd = sample_weights.loc[wd_train.index] if sample_weights is not None and wd_train.index.isin(sample_weights.index).all() else None
                 
                 wd_reg = lgb.LGBMRegressor(
+                    objective='huber',
                     random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
@@ -2229,7 +2234,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 try:
-                    wd_reg.fit(X_wd, wd_train['next_diff'], sample_weight=sw_wd, categorical_feature=cat_features)
+                    y_wd_reg = wd_train['next_diff'].clip(lower=-3000, upper=4000)
+                    wd_reg.fit(X_wd, y_wd_reg, sample_weight=sw_wd, categorical_feature=cat_features)
                     X_wd_stacked = X_wd.copy()
                     X_wd_stacked['predicted_diff'] = wd_reg.predict(X_wd)
                     wd_model.fit(X_wd_stacked, y_wd, sample_weight=sw_wd, categorical_feature=cat_features)
@@ -2256,6 +2262,7 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                 sw_ev = sample_weights.loc[ev_train.index] if sample_weights is not None and ev_train.index.isin(sample_weights.index).all() else None
                 
                 ev_reg = lgb.LGBMRegressor(
+                    objective='huber',
                     random_state=42, verbose=-1, 
                     n_estimators=n_est, learning_rate=lr, num_leaves=nl, max_depth=md, min_child_samples=mcs,
                     reg_alpha=r_alpha, reg_lambda=r_lambda,
@@ -2268,7 +2275,8 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02
                 )
                 try:
-                    ev_reg.fit(X_ev, ev_train['next_diff'], sample_weight=sw_ev, categorical_feature=cat_features)
+                    y_ev_reg = ev_train['next_diff'].clip(lower=-3000, upper=4000)
+                    ev_reg.fit(X_ev, y_ev_reg, sample_weight=sw_ev, categorical_feature=cat_features)
                     X_ev_stacked = X_ev.copy()
                     X_ev_stacked['predicted_diff'] = ev_reg.predict(X_ev)
                     ev_model.fit(X_ev_stacked, y_ev, sample_weight=sw_ev, categorical_feature=cat_features)
