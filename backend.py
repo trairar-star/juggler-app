@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.34.0" 
+APP_VERSION = "v4.35.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -72,29 +72,22 @@ FEATURE_NAME_MAP = {
 # ---------------------------------------------------------
 # 共通判定ロジック
 # ---------------------------------------------------------
-def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
+def classify_shop_eval(avg_diff, machine_count=None, is_prediction=False):
     """
-    平均差枚と設置台数から、店舗の営業状態（還元/通常/回収）を判定する共通関数。
+    平均差枚から、店舗の営業状態（還元/通常/回収）を判定する共通関数。
     is_prediction=True の場合は「予測」のテキストを付加する。
     """
-    import math
-    if pd.isna(avg_diff) or pd.isna(machine_count) or machine_count <= 0:
+    if pd.isna(avg_diff):
         return "⚖️ 通常営業予測" if is_prediction else "⚖️ 通常営業"
         
-    if is_prediction:
-        if avg_diff > 0:
-            return "🔥 還元日予測"
-        elif avg_diff < 0:
-            return "🥶 回収日予測"
-        else:
-            return "⚖️ 通常営業予測"
+    suffix = "予測" if is_prediction else ""
+    
+    if avg_diff >= 100:
+        return f"🔥 還元日{suffix}"
+    elif avg_diff <= -100:
+        return f"🥶 回収日{suffix}"
     else:
-        if avg_diff > 0:
-            return "🔥 還元日"
-        elif avg_diff < 0:
-            return "🥶 回収日"
-        else:
-            return "⚖️ 通常営業"
+        return f"⚖️ 通常営業{suffix}"
 
 # ---------------------------------------------------------
 # 機種スペック情報
