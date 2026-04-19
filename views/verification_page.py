@@ -1869,10 +1869,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 sim_df['valid_合算確率'] = np.where(sim_df['valid_play'], sim_df['結果_合算確率_val'], np.nan)
                 
                 # 予測営業区分の付与
-                if '対象日付' in sim_df.columns and '対象日付' in daily_avg_score_df.columns:
+                if '対象日付' in sim_df.columns and not ai_recom_df.empty and '予測営業区分' in ai_recom_df.columns:
                     sim_df['対象日付_merge_key'] = pd.to_datetime(sim_df['対象日付']).dt.normalize()
-                    sim_df = pd.merge(sim_df, daily_avg_score_df[['対象日付', '予測営業区分']], left_on='対象日付_merge_key', right_on='対象日付', how='left', suffixes=('', '_drop'))
-                    sim_df = sim_df.drop(columns=['対象日付_merge_key', '対象日付_drop'], errors='ignore')
+                    day_eval_map = ai_recom_df[['対象日付', '予測営業区分']].drop_duplicates()
+                    day_eval_map['対象日付_merge_key'] = pd.to_datetime(day_eval_map['対象日付']).dt.normalize()
+                    sim_df = pd.merge(sim_df, day_eval_map[['対象日付_merge_key', '予測営業区分']], on='対象日付_merge_key', how='left')
+                    sim_df = sim_df.drop(columns=['対象日付_merge_key'], errors='ignore')
                     sim_df['予測営業区分'] = sim_df['予測営業区分'].fillna("⚖️ 通常営業予測")
                 else:
                     sim_df['予測営業区分'] = "⚖️ 通常営業予測"
