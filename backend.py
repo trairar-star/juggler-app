@@ -22,6 +22,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
 APP_VERSION = "v4.29.0" 
+APP_VERSION = "v4.30.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -87,6 +88,17 @@ def classify_shop_eval(avg_diff, machine_count, is_prediction=True):
     # 分散を考慮した閾値（最低でも±50枚は必要とする）
     hot_threshold = max(50.0, std_dev * 0.5)
     cold_threshold = min(-50.0, -std_dev * 0.5)
+    if is_prediction:
+        # 予測は「期待値がプラスかマイナスか」の指標なので、微差でも敏感に反応させる
+        hot_threshold = max(50.0, std_dev * 0.5)
+        cold_threshold = min(-50.0, -std_dev * 0.5)
+        suffix = "予測"
+    else:
+        # 実際の「結果」としての還元日は、客がしっかり体感できるレベル（平均+150枚以上）に厳格化
+        hot_threshold = max(150.0, std_dev * 1.5)
+        # 回収日も、単なる下振れ（微マイナス）と区別するため厳しくする（平均-100枚以下）
+        cold_threshold = min(-100.0, -std_dev * 1.0)
+        suffix = ""
     
     suffix = "予測" if is_prediction else ""
     
