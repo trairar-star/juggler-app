@@ -176,79 +176,66 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     # --- 新規追加: 回収日の一点突破（優良店）ランキング ---
     st.divider()
     st.subheader("💎 【優良店発掘】回収日の「一点突破」投入状況 (直近90日)")
-    st.caption("過去90日間で、AIが「回収日」と予測した厳しい営業日において、実際に高設定（設定5基準）がどれくらい投入されていたかを店舗ごとに比較します。回収日でもしっかり見せ台を用意してくれる優良店と、一切設定を使わない極悪店を見極めることができます。")
+    st.caption("過去90日間で、**実際に店舗全体が「回収日」だった日**（店舗全体の平均差枚から判定）において、高設定（設定5基準）がどれくらい投入されていたかを店舗ごとに比較します。回収日でもしっかり見せ台を用意してくれる優良店と、一切設定を使わない極悪店を見極めることができます。")
 
-    df_scores = backend.load_daily_shop_scores()
-    if not df_scores.empty and '予測対象日' in df_scores.columns:
-        df_scores['対象日付'] = pd.to_datetime(df_scores['予測対象日'], errors='coerce').dt.normalize()
-        score_shop_col = '店名' if '店名' in df_scores.columns else ('店舗名' if '店舗名' in df_scores.columns else None)
+    df_raw_eval = df_raw.copy()
+    df_raw_eval['対象日付'] = pd.to_datetime(df_raw_eval['対象日付'], errors='coerce').dt.normalize()
+    
+    max_d = df_raw_eval['対象日付'].max()
+    if pd.notna(max_d):
+        df_raw_eval = df_raw_eval[df_raw_eval['対象日付'] >= (max_d - pd.Timedelta(days=90))]
         
-        if score_shop_col:
-            df_raw_eval = df_raw.copy()
-            df_raw_eval['対象日付'] = pd.to_datetime(df_raw_eval['対象日付'], errors='coerce').dt.normalize()
+        # ヒートマップ用に使った高設定判定ロジック(is_high)を流用
+        df_raw_eval['is_high'] = df_raw_eval.apply(is_high, axis=1)
+        
+        daily_stats = df_raw_eval.groupby([shop_col, '対象日付']).agg(
+            総台数=('台番号', 'nunique'),
+            高設定有効数=('is_high', 'count'),
+            高設定台数=('is_high', 'sum'),
+            平均差枚=('差枚', 'mean'),
+            合計REG=('REG', 'sum'),
+            合計ゲーム数=('累計ゲーム', 'sum')
+        ).reset_index()
+        
+        daily_stats['営業状態'] = daily_stats.apply(lambda r: backend.classify_shop_eval(r['平均差枚'], r['総台数'], is_prediction=False), axis=1)
+        cold_days = daily_stats[daily_stats['営業状態'] == "🥶 回収日"].copy()
+        
+        if not cold_days.empty:
+            cold_summary = cold_days.groupby(shop_col).agg(
+                回収日数=('対象日付', 'count'),
+                総台数=('総台数', 'sum'),
+                高設定有効数=('高設定有効数', 'sum'),
+                高設定台数=('高設定台数', 'sum'),
+                回収日平均差枚=('平均差枚', 'mean'),
+                合計REG=('合計REG', 'sum'),
+                合計ゲーム数=('合計ゲーム数', 'sum')
+            ).reset_index()
             
-            max_d = df_raw_eval['対象日付'].max()
-            if pd.notna(max_d):
-                df_raw_eval = df_raw_eval[df_raw_eval['対象日付'] >= (max_d - pd.Timedelta(days=90))]
+            cold_summary['回収日高設定率'] = np.where(cold_summary['高設定有効数'] > 0, (cold_summary['高設定台数'] / cold_summary['高設定有効数']) * 100, 0.0)
+            cold_summary['1日平均高設定台数'] = cold_summary['高設定台数'] / cold_summary['回収日数']
+            cold_summary['回収日平均REG確率'] = cold_summary.apply(lambda r: f"1/{int(r['合計ゲーム数'] / r['合計REG'])}" if r['合計REG'] > 0 and r['合計ゲーム数'] > 0 else "-", axis=1)
+            
+            def get_betapin_badge(rate):
+                if rate >= 3.0: return "💎 優良 (見せ台あり)"
+                elif rate >= 1.5: return "🟡 普通 (マグレ混じり)"
+                else: return "⚠️ 完全ベタピン"
                 
-                # ヒートマップ用に使った高設定判定ロジック(is_high)を流用
-                df_raw_eval['is_high'] = df_raw_eval.apply(is_high, axis=1)
-                
-                daily_stats = df_raw_eval.groupby([shop_col, '対象日付']).agg(
-                    総台数=('台番号', 'count'),
-                    高設定有効数=('is_high', 'count'),
-                    高設定台数=('is_high', 'sum'),
-                    平均差枚=('差枚', 'mean'),
-                    合計REG=('REG', 'sum'),
-                    合計ゲーム数=('累計ゲーム', 'sum')
-                ).reset_index()
-                
-                merged_daily = pd.merge(
-                    daily_stats,
-                    df_scores[[score_shop_col, '対象日付', '店舗平均期待度']],
-                    left_on=[shop_col, '対象日付'],
-                    right_on=[score_shop_col, '対象日付'],
-                    how='inner'
-                )
-                
-                cold_days = merged_daily[merged_daily['店舗平均期待度'] < 0.10].copy()
-                
-                if not cold_days.empty:
-                    cold_summary = cold_days.groupby(shop_col).agg(
-                        回収日数=('対象日付', 'count'),
-                        総台数=('総台数', 'sum'),
-                        高設定有効数=('高設定有効数', 'sum'),
-                        高設定台数=('高設定台数', 'sum'),
-                        回収日平均差枚=('平均差枚', 'mean'),
-                        合計REG=('合計REG', 'sum'),
-                        合計ゲーム数=('合計ゲーム数', 'sum')
-                    ).reset_index()
-                    
-                    cold_summary['回収日高設定率'] = np.where(cold_summary['高設定有効数'] > 0, (cold_summary['高設定台数'] / cold_summary['高設定有効数']) * 100, 0.0)
-                    cold_summary['1日平均高設定台数'] = cold_summary['高設定台数'] / cold_summary['回収日数']
-                    cold_summary['回収日平均REG確率'] = cold_summary.apply(lambda r: f"1/{int(r['合計ゲーム数'] / r['合計REG'])}" if r['合計REG'] > 0 and r['合計ゲーム数'] > 0 else "-", axis=1)
-                    
-                    def get_betapin_badge(rate):
-                        if rate >= 3.0: return "💎 優良 (見せ台あり)"
-                        elif rate >= 1.5: return "🟡 普通 (マグレ混じり)"
-                        else: return "⚠️ 完全ベタピン"
-                        
-                    cold_summary['回収日評価'] = cold_summary['回収日高設定率'].apply(get_betapin_badge)
-                    cold_summary = cold_summary.sort_values('回収日高設定率', ascending=False)
-                    
-                    st.dataframe(
-                        cold_summary[[shop_col, '回収日評価', '回収日数', '回収日平均差枚', '回収日平均REG確率', '1日平均高設定台数', '回収日高設定率']],
-                        column_config={
-                            shop_col: st.column_config.TextColumn("店舗名"),
-                            "回収日評価": st.column_config.TextColumn("店舗評価", help="回収日における高設定率が3%以上なら優良店、1.5%未満は完全ベタピン店と判定します。"),
-                            "回収日数": st.column_config.NumberColumn("ド回収日 発生数", format="%d日"),
-                            "回収日平均差枚": st.column_config.NumberColumn("回収日 平均差枚", format="%+d 枚"),
-                            "回収日平均REG確率": st.column_config.TextColumn("回収日 REG確率"),
-                            "1日平均高設定台数": st.column_config.NumberColumn("1日あたり高設定", format="%.1f 台", help="回収日1日あたり、平均して何台の高設定(設定5基準)が投入されていたか"),
-                            "回収日高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=10.0)
-                        },
-                        width="stretch",
-                        hide_index=True
-                    )
-                else:
-                    st.info("過去90日間にAIが「回収日」と判定した営業日がありません。")
+            cold_summary['回収日評価'] = cold_summary['回収日高設定率'].apply(get_betapin_badge)
+            cold_summary = cold_summary.sort_values('回収日高設定率', ascending=False)
+            
+            st.dataframe(
+                cold_summary[[shop_col, '回収日評価', '回収日数', '回収日平均差枚', '回収日平均REG確率', '1日平均高設定台数', '回収日高設定率']],
+                column_config={
+                    shop_col: st.column_config.TextColumn("店舗名"),
+                    "回収日評価": st.column_config.TextColumn("店舗評価", help="回収日における高設定率が3%以上なら優良店、1.5%未満は完全ベタピン店と判定します。"),
+                    "回収日数": st.column_config.NumberColumn("ド回収日 発生数", format="%d日"),
+                    "回収日平均差枚": st.column_config.NumberColumn("回収日 平均差枚", format="%+d 枚"),
+                    "回収日平均REG確率": st.column_config.TextColumn("回収日 REG確率"),
+                    "1日平均高設定台数": st.column_config.NumberColumn("1日あたり高設定", format="%.1f 台", help="回収日1日あたり、平均して何台の高設定(設定5基準)が投入されていたか"),
+                    "回収日高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=10.0)
+                },
+                width="stretch",
+                hide_index=True
+            )
+        else:
+            st.info("過去90日間にAIが「回収日」と判定した営業日がありません。")

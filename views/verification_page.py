@@ -509,18 +509,18 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         daily_avg_score_df['実際店舗台数'] = np.nan
 
     def determine_shop_eval(row):
-        pred_diff = row.get('予測平均差枚')
-        if pd.notna(pred_diff) and has_daily_scores:
-            return backend.classify_shop_eval(pred_diff, row.get('店舗台数') if pd.notna(row.get('店舗台数')) else 50, is_prediction=True)
-        elif pd.notna(pred_diff) and not has_daily_scores:
-            actual_count = row.get('実際店舗台数') if pd.notna(row.get('実際店舗台数')) else 50
-            return backend.classify_shop_eval(pred_diff, actual_count, is_prediction=True)
-        else:
-            score = row.get('店舗平均期待度', 0)
-            if pd.isna(score): return "⚖️ 通常営業予測"
-            if score >= 0.40: return "🔥 還元日予測"
-            elif score < 0.20: return "🥶 回収日予測"
-            else: return "⚖️ 通常営業予測"
+        if has_daily_scores:
+            pred_diff = row.get('予測平均差枚')
+            if pd.notna(pred_diff):
+                return backend.classify_shop_eval(pred_diff, row.get('店舗台数') if pd.notna(row.get('店舗台数')) else 50, is_prediction=True)
+        
+        # 過去データ(daily_scoresがない場合)のフォールバック
+        # 推奨台の予測差枚を店舗全体の差枚として計算してしまうのを防ぐため、期待度ベースで判定する
+        score = row.get('店舗平均期待度', 0)
+        if pd.isna(score): return "⚖️ 通常営業予測"
+        if score >= 0.40: return "🔥 還元日予測"
+        elif score < 0.20: return "🥶 回収日予測"
+        else: return "⚖️ 通常営業予測"
 
     daily_avg_score_df['予測営業区分'] = daily_avg_score_df.apply(determine_shop_eval, axis=1)
 
@@ -582,8 +582,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     day_type_stats['推奨台高設定率'] = np.where(day_type_stats['高設定有効数'] > 0, day_type_stats['高設定数'] / day_type_stats['高設定有効数'] * 100, 0.0)
     day_type_stats['REG確率'] = day_type_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
     
-    # 店舗全体の実際の平均差枚を集計して結合
-    day_eval_summary = daily_avg_score_df.groupby(group_col).agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
+    # 店舗全体の実際の平均差枚を集計して結合 (表示期間の絞り込みを反映するため ai_recom_df から日別にユニーク化して計算)
+    day_eval_summary = ai_recom_df[['対象日付', group_col, '店舗全体平均差枚']].drop_duplicates().groupby(group_col).agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
     day_type_stats = pd.merge(day_type_stats, day_eval_summary, on=group_col, how='left')
     
     day_order_pred = {"🔥 還元日予測": 1, "⚖️ 通常営業予測": 2, "🥶 回収日予測": 3}
@@ -1084,9 +1084,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
 
             # 要因6: 還元/回収予測の精度
             diag_eval = {"status": "🟢", "title": "店舗全体の還元/回収予測", "msg": "店舗全体の還元日・回収日をある程度正しく予測できています。"}
-            if 'daily_avg_score_df' in locals() and not daily_avg_score_df.empty and '店舗全体平均差枚' in daily_avg_score_df.columns:
+            if not ai_recom_df.empty and '店舗全体平均差枚' in ai_recom_df.columns:
                 try:
-                    diag_eval_summary = daily_avg_score_df.groupby('予測営業区分').agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
+                    diag_eval_summary = ai_recom_df[['対象日付', '予測営業区分', '店舗全体平均差枚']].drop_duplicates().groupby('予測営業区分').agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
                     diag_day_type_stats_dict = diag_eval_summary.set_index('予測営業区分')['店舗全体平均差枚'].to_dict()
                     hot_diff = diag_day_type_stats_dict.get("🔥 還元日予測", np.nan)
                     cold_diff = diag_day_type_stats_dict.get("🥶 回収日予測", np.nan)
