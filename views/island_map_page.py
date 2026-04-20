@@ -200,21 +200,19 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     shop_order_key = f"island_order_{selected_shop}"
     if shop_order_key not in st.session_state:
         st.session_state[shop_order_key] = island_names
-        
-    saved_order = [n for n in st.session_state[shop_order_key] if n in island_names]
-    for n in island_names:
-        if n not in saved_order:
-            saved_order.append(n)
+    else:
+        saved_order = [n for n in st.session_state[shop_order_key] if n in island_names]
+        for n in island_names:
+            if n not in saved_order:
+                saved_order.append(n)
+        st.session_state[shop_order_key] = saved_order
 
     selected_island_names = st.multiselect(
-        "🛠️ 表示する島と順番（ドラッグ操作や再選択で並び替えできます）", 
+        "🛠️ 表示する島と順番（×で消して選び直すことで順番を変更できます）", 
         options=island_names, 
-        default=saved_order,
+        key=shop_order_key,
         help="ここで選択した順番通りに島が配置されます。並び順は店舗ごとに自動で記憶されます。"
     )
-    
-    if selected_island_names != st.session_state[shop_order_key]:
-        st.session_state[shop_order_key] = selected_island_names
 
     with st.expander("🔍 絞り込みフィルター (条件に合わない台をグレーアウト)", expanded=False):
         st.caption("条件に合致しない台を目立たなくし、目的の台（凹み台や高稼働台など）を浮き彫りにします。")
