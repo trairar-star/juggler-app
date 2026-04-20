@@ -539,13 +539,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             return "⚖️ 通常営業"
         return backend.classify_shop_eval(actual_diff, actual_count, is_prediction=False)
 
-    ai_recom_df['実際営業区分'] = ai_recom_df.apply(determine_actual_shop_eval, axis=1)
+    ai_recom_df['営業区分'] = ai_recom_df.apply(determine_actual_shop_eval, axis=1)
     
     # 不要なマージキーの削除
     ai_recom_df = ai_recom_df.drop(columns=['対象日付_merge_key', 'fb_店舗平均期待度'], errors='ignore')
 
     # 日別推移データをAI評価より先に計算する
-    daily_stats = ai_recom_df.groupby(['対象日付', '予測営業区分']).agg(
+    daily_stats = ai_recom_df.groupby(['対象日付', '営業区分']).agg(
         high_setting_count=('valid_high', 'sum'),
         high_valid_count=('valid_high_play', 'sum'),
         valid_count=('valid_play', 'sum'),
