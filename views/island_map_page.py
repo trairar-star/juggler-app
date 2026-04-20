@@ -73,6 +73,30 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
                         log_shop = log_shop.sort_values('実行日時', ascending=False).drop_duplicates('台番号')
                     df_target = pd.merge(df_target, log_shop[['台番号', 'prediction_score']], on='台番号', how='left')
 
+    # 結果点数の計算
+    shop_avg_g = df_target['累計ゲーム'].mean() if not df_target.empty else 4000
+    def calc_score(row):
+        g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
+        act_b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
+        act_r = pd.to_numeric(row.get('REG', 0), errors='coerce')
+        diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
+        machine = row.get('機種名', '')
+        
+        penalty_reg = st.session_state.get('penalty_reg', 15)
+        penalty_big = st.session_state.get('penalty_big', 5)
+        low_g_penalty = st.session_state.get('low_g_penalty', 30)
+        
+        return backend.calculate_setting_score(
+            g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
+            shop_avg_g=shop_avg_g, penalty_reg=penalty_reg, penalty_big=penalty_big,
+            low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
+        )
+
+    if not df_target.empty:
+        df_target['結果点数'] = df_target.apply(calc_score, axis=1)
+    else:
+        df_target['結果点数'] = np.nan
+
     st.divider()
 
     # 島のパース
@@ -116,7 +140,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     # コントロールパネル
     col_c1, col_c2 = st.columns([1.5, 1])
     with col_c1:
-        map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)"], horizontal=True)
+        map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"], horizontal=True)
     with col_c2:
         layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み)", "すべて横一列に繋げる"], horizontal=True)
 
@@ -155,7 +179,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         mac_data_dict[mac_num] = {
             'g': row.get('累計ゲーム', 0), 'b': row.get('BIG', 0), 'r': row.get('REG', 0), 
             'diff': row.get('差枚', 0), 'pred': row.get('prediction_score', np.nan), 'mac_name': row.get('機種名', ''),
-            'prev_diff': row.get('prev_差枚', np.nan)
+            'prev_diff': row.get('prev_差枚', np.nan),
+            'result_score': row.get('結果点数', np.nan)
         }
 
     if layout_mode == "すべて横一列に繋げる":
@@ -165,7 +190,46 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         container_style = "display: flex; flex-direction: column; gap: 20px;"
         island_style = "display: flex; flex-wrap: wrap; gap: 6px;"
 
-    html_parts = [f"<div style='{container_style} font-family: sans-serif;'>"]
+    # --- ツールチップ(ホバー表示)用 CSS ---
+    html_parts = [f"""
+    <style>
+    .machine-box {{
+        position: relative;
+        cursor: crosshair;
+        transition: transform 0.1s ease-in-out;
+    }}
+    .machine-box:hover {{
+        z-index: 1000;
+        transform: scale(1.05);
+    }}
+    .tooltip-text {{
+        visibility: hidden;
+        width: max-content;
+        min-width: 140px;
+        background-color: rgba(20, 20, 20, 0.95);
+        color: #fff;
+        text-align: left;
+        border-radius: 6px;
+        padding: 10px;
+        position: absolute;
+        bottom: calc(100% + 8px);
+        left: 50%;
+        transform: translateX(-50%);
+        opacity: 0;
+        transition: opacity 0.2s;
+        font-size: 11px;
+        line-height: 1.5;
+        pointer-events: none;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+    }}
+    .machine-box:hover .tooltip-text {{
+        visibility: visible;
+        opacity: 1;
+    }}
+    </style>
+    <div style='{container_style} font-family: sans-serif; padding-top: 150px;'>
+    """]
+    
     for island in display_islands:
         html_parts.append(f"<div style='border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; min-width: max-content;'>")
         html_parts.append(f"<h4 style='margin-top: 0; margin-bottom: 12px; color: #444; font-size: 16px;'>🏝️ {island['name']} <span style='font-size:12px; font-weight:normal; color:#888;'>({island['type']})</span></h4>")
@@ -173,9 +237,12 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         for m_num in island['machines']:
             data = mac_data_dict.get(str(m_num))
             bg_color, text_color, main_text, sub_text, border_color, opacity, prev_diff_str = "#f5f5f5", "#aaa", "-", "データなし", "#e0e0e0", "1.0", ""
+            tooltip_html = ""
+            
             if data:
                 g, b, r, diff, pred, m_name = int(pd.to_numeric(data['g'], errors='coerce') or 0), int(pd.to_numeric(data['b'], errors='coerce') or 0), int(pd.to_numeric(data['r'], errors='coerce') or 0), int(pd.to_numeric(data['diff'], errors='coerce') or 0), float(pd.to_numeric(data['pred'], errors='coerce') or np.nan), str(data['mac_name'])
                 prev_diff_val = data.get('prev_diff')
+                result_score = float(pd.to_numeric(data.get('result_score', np.nan), errors='coerce'))
                 matched_key = backend.get_matched_spec_key(m_name, specs)
                 spec_r5 = specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 260.0
                 spec_t5 = specs[matched_key].get('設定5', {"合算": 128.0})["合算"] if matched_key in specs else 128.0
@@ -209,6 +276,17 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
                         elif pred >= 0.15: bg_color, text_color, border_color = "#ffcdd2", "#d32f2f", "#ef5350"
                         else: bg_color, text_color, border_color = "#eceff1", "#546e7a", "#cfd8dc"
                     else: bg_color, text_color = "#f5f5f5", "#9e9e9e"
+                elif map_metric == "結果点数(設定5近似度)":
+                    if pd.notna(result_score):
+                        main_text = f"{result_score:.1f}点"
+                        if g < 1000: bg_color, text_color, border_color = "#f5f5f5", "#9e9e9e", "#e0e0e0"
+                        elif result_score >= 80: bg_color, text_color, border_color = "#d32f2f", "#fff", "#b71c1c"
+                        elif result_score >= 60: bg_color, text_color, border_color = "#ef5350", "#fff", "#c62828"
+                        elif result_score >= 40: bg_color, text_color, border_color = "#ffcdd2", "#d32f2f", "#ef5350"
+                        else: bg_color, text_color, border_color = "#eceff1", "#546e7a", "#cfd8dc"
+                    else:
+                        main_text = "-"
+                        bg_color, text_color = "#f5f5f5", "#9e9e9e"
                 if pd.notna(prev_diff_val):
                     p_diff = int(prev_diff_val)
                     p_color = "#d32f2f" if p_diff > 0 else "#1565c0" if p_diff < 0 else "#9e9e9e"
@@ -216,7 +294,41 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
                 if g < filter_min_g or diff > filter_max_diff or diff < filter_min_diff: bg_color, text_color, border_color, opacity = "#fafafa", "#ccc", "#eee", "0.2"
             else:
                 if filter_min_g > 0: opacity = "0.2"
-            html_parts.append(f"<div style='width: 72px; height: 66px; flex-shrink: 0; background-color: {bg_color}; border: 2px solid {border_color}; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; padding: 2px; box-sizing: border-box; opacity: {opacity};'><div style='position: absolute; top: 1px; left: 3px; font-size: 10px; font-weight: bold; color: #555;'>{'✨' if str(m_num) == island['corner'] else ''}#{m_num}</div>{prev_diff_str}<div style='font-size: 15px; font-weight: bold; color: {text_color}; margin-top: 10px; line-height: 1;'>{main_text}</div><div style='font-size: 9px; color: #666; margin-top: 3px; width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>{sub_text}</div></div>")
+                
+            if data:
+                b_prob_str = f"1/{int(g/b)}" if b > 0 else "-"
+                r_prob_str = f"1/{int(g/r)}" if r > 0 else "-"
+                t_prob_str = f"1/{int(g/(b+r))}" if (b+r) > 0 else "-"
+                p_diff_str = f"{int(prev_diff_val):+d}枚" if pd.notna(prev_diff_val) else "-"
+                pred_str = f"{pred*100:.1f}%" if pd.notna(pred) else "-"
+                result_score_str = f"{result_score:.1f}点" if pd.notna(result_score) else "-"
+                diff_color = "#EF5350" if diff > 0 else "#64B5F6" if diff < 0 else "#fff"
+                
+                tooltip_html = f"""
+                <div class='tooltip-text'>
+                    <div style='font-size:13px; color:#64B5F6; font-weight:bold; margin-bottom:4px;'>#{m_num} <span style='font-size:11px; color:#ccc; font-weight:normal;'>{m_name}</span></div>
+                    <div style='display:flex; justify-content:space-between;'><span>総回転:</span><b>{g}G</b></div>
+                    <div style='display:flex; justify-content:space-between;'><span>差枚数:</span><b style='color:{diff_color};'>{diff:+d}枚</b></div>
+                    <div style='display:flex; justify-content:space-between; font-size:9px; color:#aaa; margin-top:-2px;'><span>(前日差枚:</span><span>{p_diff_str})</span></div>
+                    <hr style='margin:6px 0; border:none; border-top:1px dashed #666;'>
+                    <div style='display:flex; justify-content:space-between;'><span>BIG:</span><span>{b}回 ({b_prob_str})</span></div>
+                    <div style='display:flex; justify-content:space-between;'><span>REG:</span><span>{r}回 ({r_prob_str})</span></div>
+                    <div style='display:flex; justify-content:space-between;'><span>合算:</span><span>{t_prob_str}</span></div>
+                    <hr style='margin:6px 0; border:none; border-top:1px dashed #666;'>
+                    <div style='display:flex; justify-content:space-between;'><span>AI事前期待度:</span><b style='color:#FFCA28;'>{pred_str}</b></div>
+                    <div style='display:flex; justify-content:space-between;'><span>当日結果点数:</span><b style='color:#FFCA28;'>{result_score_str}</b></div>
+                </div>
+                """
+                
+            html_parts.append(f"""
+                <div class='machine-box' style='width: 72px; height: 66px; flex-shrink: 0; background-color: {bg_color}; border: 2px solid {border_color}; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 2px; box-sizing: border-box; opacity: {opacity};'>
+                    <div style='position: absolute; top: 1px; left: 3px; font-size: 10px; font-weight: bold; color: #555;'>{'✨' if str(m_num) == island['corner'] else ''}#{m_num}</div>
+                    {prev_diff_str}
+                    <div style='font-size: 15px; font-weight: bold; color: {text_color}; margin-top: 10px; line-height: 1;'>{main_text}</div>
+                    <div style='font-size: 9px; color: #666; margin-top: 3px; width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>{sub_text}</div>
+                    {tooltip_html}
+                </div>
+            """)
         html_parts.append("</div></div>")
     html_parts.append("</div>")
     st.components.v1.html("".join(html_parts), height=800, scrolling=True)
