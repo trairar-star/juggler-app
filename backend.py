@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.35.0" 
+APP_VERSION = "v4.36.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -3139,9 +3139,7 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
     # 6. 後処理 (スコア補正、根拠の自然言語生成)
     predict_df, train_df = _postprocess_predictions(predict_df, train_df)
 
-    # 外のUI（過去の実績検証など）が「稼働した台のみ」を前提としているため、返却前に元通りフィルタリングする
     if 'valid_play_mask' in train_df.columns:
-        train_df = train_df[train_df['valid_play_mask']].copy()
         train_df = train_df.drop(columns=['valid_play_mask'], errors='ignore')
         
     if 'valid_play_mask' in predict_df.columns:

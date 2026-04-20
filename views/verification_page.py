@@ -485,8 +485,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         else:
             st.caption("※有効稼働データなし")
 
-    # ユーザーの要望通り、ごちゃごちゃした結合を廃止し、最もシンプルに「予測した日付」の「実績差枚」をぶつける
-    ai_recom_df['日付キー'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
+    # ユーザーの要望通り、最もシンプルに「その台の実際の稼働日」の「店舗全体実績差枚」をぶつける
+    # (対象日付を使うと休業日ズレなどで実績と結合できず、データがごっそり消える原因になるため)
+    ai_recom_df['日付キー'] = pd.to_datetime(ai_recom_df['実際の稼働日']).dt.normalize()
 
     # --- 1. 店舗全体の実際の実績差枚と営業区分を取得 ---
     if not shop_daily_actual_all.empty:
