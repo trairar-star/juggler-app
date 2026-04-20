@@ -259,42 +259,30 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         shop_daily_actual_all['営業区分'] = shop_daily_actual_all.apply(determine_eval_all, axis=1)
         shop_daily_eval_map = shop_daily_actual_all[['日付キー', '営業区分']].copy()
 
-    def get_actual_result(row):
-        shop = row.get(shop_col)
-        target_date = row.get('対象日付') # 予測対象日に上書き済み
-        base_date = row.get('予測ベース日') # 古いログのフォールバック用
-        machine_no = row.get('台番号')
+    # prediction_log の「予測対象日」と juggler_raw の「対象日付」をイコールで直接結合する
+    if not df_raw_temp.empty:
+        df_raw_subset = df_raw_temp[[shop_col, '対象日付', '台番号', '差枚', 'BIG', 'REG', '累計ゲーム']].copy()
+        df_raw_subset['予測対象日_merge'] = pd.to_datetime(df_raw_subset['対象日付']).dt.normalize()
+        df_raw_subset = df_raw_subset.rename(columns={
+            '差枚': '差枚_actual', 'BIG': '結果_BIG', 'REG': '結果_REG', '累計ゲーム': '結果_累計ゲーム'
+        })
+        df_raw_subset['実際の稼働日'] = df_raw_subset['対象日付']
+        df_raw_subset = df_raw_subset.drop(columns=['対象日付'])
         
-        actual_date = pd.NaT
-        if pd.notna(target_date) and shop in shop_operating_dates:
-            for d in shop_operating_dates[shop]:
-                if d >= target_date:
-                    actual_date = d
-                    break
-        elif pd.notna(base_date) and shop in shop_operating_dates:
-            for d in shop_operating_dates[shop]:
-                if d > base_date:
-                    actual_date = d
-                    break
-                    
-        if pd.isna(actual_date) or df_raw_temp.empty:
-            return pd.Series([np.nan, np.nan, np.nan, np.nan, pd.NaT])
-            
-        target_row = df_raw_temp[
-            (df_raw_temp[shop_col] == shop) & 
-            (df_raw_temp['対象日付'] == actual_date) & 
-            (df_raw_temp['台番号'] == machine_no)
-        ]
+        base_df = pd.merge(base_df, df_raw_subset, on=[shop_col, '予測対象日_merge', '台番号'], how='left')
+    else:
+        base_df['差枚_actual'] = np.nan
+        base_df['結果_BIG'] = np.nan
+        base_df['結果_REG'] = np.nan
+        base_df['結果_累計ゲーム'] = np.nan
+        base_df['実際の稼働日'] = pd.NaT
         
-        if not target_row.empty:
-            tr = target_row.iloc[0]
-            return pd.Series([tr.get('差枚', 0), tr.get('BIG', 0), tr.get('REG', 0), tr.get('累計ゲーム', 0), actual_date])
-        else:
-            # 営業日だが該当台のデータがない = 未稼働(0G)とみなす
-            return pd.Series([0, 0, 0, 0, actual_date])
-            
-    results = base_df.apply(get_actual_result, axis=1)
-    base_df[['差枚_actual', '結果_BIG', '結果_REG', '結果_累計ゲーム', '実際の稼働日']] = results
+    # 稼働しなかった台は0G・0枚扱いとする
+    base_df['差枚_actual'] = base_df['差枚_actual'].fillna(0)
+    base_df['結果_BIG'] = base_df['結果_BIG'].fillna(0)
+    base_df['結果_REG'] = base_df['結果_REG'].fillna(0)
+    base_df['結果_累計ゲーム'] = base_df['結果_累計ゲーム'].fillna(0)
+    base_df['実際の稼働日'] = base_df['実際の稼働日'].fillna(base_df['予測対象日_merge'])
     
     # --- BIG/REG確率分母の計算 ---
     cum_g = pd.to_numeric(base_df['結果_累計ゲーム'], errors='coerce').fillna(0)
@@ -485,9 +473,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         else:
             st.caption("※有効稼働データなし")
 
-    # ユーザーの要望通り、最もシンプルに「その台の実際の稼働日」の「店舗全体実績差枚」をぶつける
-    # (対象日付を使うと休業日ズレなどで実績と結合できず、データがごっそり消える原因になるため)
-    ai_recom_df['日付キー'] = pd.to_datetime(ai_recom_df['実際の稼働日']).dt.normalize()
+    # ユーザーの要望通り、prediction_log の「予測対象日」と juggler_raw の「対象日付」をイコールでぶつける
+    ai_recom_df['日付キー'] = pd.to_datetime(ai_recom_df['対象日付']).dt.normalize()
 
     # --- 1. 店舗全体の実際の実績差枚と営業区分を取得 ---
     if not shop_daily_actual_all.empty:
