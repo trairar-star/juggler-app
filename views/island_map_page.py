@@ -60,8 +60,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         log_temp = df_pred_log.copy()
         if '予測対象日' in log_temp.columns:
             log_temp['予測対象日_dt'] = pd.to_datetime(log_temp['予測対象日'], errors='coerce').dt.date
-            shop_col_log = '店名' if '店名' in log_day.columns else '店舗名'
-            if shop_col_log in log_day.columns:
+            shop_col_log = '店名' if '店名' in log_temp.columns else '店舗名'
+            if shop_col_log in log_temp.columns:
                 log_shop = log_temp[log_temp[shop_col_log] == selected_shop].copy()
                 if not log_shop.empty:
                     log_shop['台番号'] = log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
