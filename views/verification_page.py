@@ -880,7 +880,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             # 営業区分の付与
             if '対象日付' in prob_analysis_df.columns and not shop_daily_eval_map.empty:
                 prob_analysis_df['日付キー'] = pd.to_datetime(prob_analysis_df['対象日付']).dt.normalize()
-                prob_analysis_df = pd.merge(prob_analysis_df, shop_daily_eval_map, on='日付キー', how='left')
+                prob_analysis_df = pd.merge(prob_analysis_df, shop_daily_eval_map.drop_duplicates(subset=['日付キー']), on='日付キー', how='left')
                 prob_analysis_df = prob_analysis_df.drop(columns=['日付キー'], errors='ignore')
                 prob_analysis_df['営業区分'] = prob_analysis_df['営業区分'].fillna("⚖️ 通常営業")
             else:
@@ -1787,7 +1787,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 # 営業区分の付与
                 if 'next_date' in sim_df.columns and not shop_daily_eval_map.empty:
                     sim_df['日付キー'] = pd.to_datetime(sim_df['next_date']).dt.normalize()
-                    sim_df = pd.merge(sim_df, shop_daily_eval_map, on='日付キー', how='left')
+                    sim_df = pd.merge(sim_df, shop_daily_eval_map.drop_duplicates(subset=['日付キー']), on='日付キー', how='left')
                     sim_df = sim_df.drop(columns=['日付キー'], errors='ignore')
                     sim_df['営業区分'] = sim_df['営業区分'].fillna("⚖️ 通常営業")
                 else:

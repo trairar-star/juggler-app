@@ -54,28 +54,30 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     shop_all_df = temp_df[temp_df[shop_col] == selected_shop].copy()
     shop_all_df['台番号'] = shop_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
     shop_all_df = shop_all_df.sort_values(['台番号', date_col])
-    shop_all_df['prev_差枚'] = shop_all_df.groupby('台番号')['差枚'].shift(1)
-    df_target = shop_all_df[shop_all_df[date_col].dt.date == selected_date].copy()
 
-    # AI期待度の結合
+    # --- 1. AI期待度の結合 (全日程) ---
     if not df_pred_log.empty:
         log_temp = df_pred_log.copy()
         if '予測対象日' in log_temp.columns:
             log_temp['予測対象日_dt'] = pd.to_datetime(log_temp['予測対象日'], errors='coerce').dt.date
-            log_day = log_temp[log_temp['予測対象日_dt'] == selected_date].copy()
             shop_col_log = '店名' if '店名' in log_day.columns else '店舗名'
             if shop_col_log in log_day.columns:
-                log_shop = log_day[log_day[shop_col_log] == selected_shop].copy()
+                log_shop = log_temp[log_temp[shop_col_log] == selected_shop].copy()
                 if not log_shop.empty:
                     log_shop['台番号'] = log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
                     log_shop['prediction_score'] = pd.to_numeric(log_shop['prediction_score'], errors='coerce')
                     if '実行日時' in log_shop.columns:
-                        log_shop = log_shop.sort_values('実行日時', ascending=False).drop_duplicates('台番号')
-                    df_target = pd.merge(df_target, log_shop[['台番号', 'prediction_score']], on='台番号', how='left')
+                        log_shop = log_shop.sort_values('実行日時', ascending=False).drop_duplicates(['台番号', '予測対象日_dt'])
+                    shop_all_df['対象日付_dt'] = shop_all_df[date_col].dt.date
+                    shop_all_df = pd.merge(shop_all_df, log_shop[['台番号', '予測対象日_dt', 'prediction_score']], left_on=['台番号', '対象日付_dt'], right_on=['台番号', '予測対象日_dt'], how='left')
+                    shop_all_df = shop_all_df.drop(columns=['対象日付_dt', '予測対象日_dt'], errors='ignore')
 
-    # 結果点数の計算
-    shop_avg_g = df_target['累計ゲーム'].mean() if not df_target.empty else 4000
-    def calc_score(row):
+    # --- 2. 結果点数の計算 (全日程) ---
+    shop_avg_g = shop_all_df['累計ゲーム'].mean() if not shop_all_df.empty else 4000
+    if pd.isna(shop_avg_g):
+        shop_avg_g = 4000
+        
+    def calc_score_all(row):
         g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
         act_b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
         act_r = pd.to_numeric(row.get('REG', 0), errors='coerce')
@@ -92,10 +94,24 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
         )
 
-    if not df_target.empty:
-        df_target['結果点数'] = df_target.apply(calc_score, axis=1)
+    if not shop_all_df.empty:
+        shop_all_df['結果点数'] = shop_all_df.apply(calc_score_all, axis=1)
     else:
-        df_target['結果点数'] = np.nan
+        shop_all_df['結果点数'] = np.nan
+        
+    # --- 3. 前日データの計算と比較用シフト ---
+    shop_all_df = shop_all_df.sort_values(['台番号', date_col])
+    shop_all_df['prev_差枚'] = shop_all_df.groupby('台番号')['差枚'].shift(1)
+    shop_all_df['prev_累計ゲーム'] = shop_all_df.groupby('台番号')['累計ゲーム'].shift(1)
+    shop_all_df['prev_BIG'] = shop_all_df.groupby('台番号')['BIG'].shift(1)
+    shop_all_df['prev_REG'] = shop_all_df.groupby('台番号')['REG'].shift(1)
+    if 'prediction_score' in shop_all_df.columns:
+        shop_all_df['prev_pred'] = shop_all_df.groupby('台番号')['prediction_score'].shift(1)
+    if '結果点数' in shop_all_df.columns:
+        shop_all_df['prev_score'] = shop_all_df.groupby('台番号')['結果点数'].shift(1)
+
+    # 当日データに絞り込み
+    df_target = shop_all_df[shop_all_df[date_col].dt.date == selected_date].copy()
 
     st.divider()
 
@@ -138,25 +154,53 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         return
 
     # コントロールパネル
-    col_c1, col_c2 = st.columns([1.5, 1])
+    col_fs, col_c1, col_c2 = st.columns([1, 2.5, 2])
+    with col_fs:
+        st.components.v1.html("""
+            <button onclick="
+                const doc = window.parent.document;
+                if (!doc.fullscreenElement) {
+                    doc.documentElement.requestFullscreen().catch(err => {
+                        console.log('フルスクリーン化に失敗しました:', err);
+                    });
+                } else {
+                    doc.exitFullscreen();
+                }
+            " style="width: 100%; height: 40px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; margin-top: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                🖥️ 画面最大化
+            </button>
+        """, height=75)
     with col_c1:
         map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"], horizontal=True)
     with col_c2:
-        layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み)", "すべて横一列に繋げる"], horizontal=True)
+        layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み・島内横スクロール)", "すべて横一列に繋げる", "島内で折り返す (コンパクト)"], horizontal=True)
 
     island_names = [isl['name'] for isl in parsed_islands]
+    
+    shop_order_key = f"island_order_{selected_shop}"
+    if shop_order_key not in st.session_state:
+        st.session_state[shop_order_key] = island_names
+        
+    saved_order = [n for n in st.session_state[shop_order_key] if n in island_names]
+    for n in island_names:
+        if n not in saved_order:
+            saved_order.append(n)
+
     selected_island_names = st.multiselect(
         "🛠️ 表示する島と順番（ドラッグ操作や再選択で並び替えできます）", 
         options=island_names, 
-        default=island_names,
-        help="ここで選択した順番通りに島が配置されます。特定列だけを見たい場合や、背中合わせの島を隣同士に並べ替えたい場合に便利です。"
+        default=saved_order,
+        help="ここで選択した順番通りに島が配置されます。並び順は店舗ごとに自動で記憶されます。"
     )
+    
+    if selected_island_names != st.session_state[shop_order_key]:
+        st.session_state[shop_order_key] = selected_island_names
 
     with st.expander("🔍 絞り込みフィルター (条件に合わない台をグレーアウト)", expanded=False):
         st.caption("条件に合致しない台を目立たなくし、目的の台（凹み台や高稼働台など）を浮き彫りにします。")
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=0, step=500)
+            filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=3000, step=500)
         with col_f2:
             filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
         filter_min_diff, filter_max_diff = filter_diff_range
@@ -180,19 +224,44 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             'g': row.get('累計ゲーム', 0), 'b': row.get('BIG', 0), 'r': row.get('REG', 0), 
             'diff': row.get('差枚', 0), 'pred': row.get('prediction_score', np.nan), 'mac_name': row.get('機種名', ''),
             'prev_diff': row.get('prev_差枚', np.nan),
+            'prev_g': row.get('prev_累計ゲーム', 0),
+            'prev_b': row.get('prev_BIG', 0),
+            'prev_r': row.get('prev_REG', 0),
+            'prev_pred': row.get('prev_pred', np.nan),
+            'prev_score': row.get('prev_score', np.nan),
             'result_score': row.get('結果点数', np.nan)
         }
 
     if layout_mode == "すべて横一列に繋げる":
         container_style = "display: flex; flex-direction: row; gap: 20px; overflow-x: auto; padding-bottom: 20px; white-space: nowrap; width: 100%;"
         island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px;"
+        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; min-width: max-content;"
+    elif layout_mode == "島ごとに改行 (縦積み・島内横スクロール)":
+        container_style = "display: flex; flex-direction: column; gap: 20px; width: 100%;"
+        island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding-bottom: 10px;"
+        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; box-sizing: border-box;"
     else:
         container_style = "display: flex; flex-direction: column; gap: 20px;"
         island_style = "display: flex; flex-wrap: wrap; gap: 6px;"
+        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; box-sizing: border-box;"
 
     # --- ツールチップ(ホバー表示)用 CSS ---
     html_parts = [f"""
     <style>
+    .island-container::-webkit-scrollbar {{
+        height: 6px;
+    }}
+    .island-container::-webkit-scrollbar-track {{
+        background: #f1f1f1;
+        border-radius: 4px;
+    }}
+    .island-container::-webkit-scrollbar-thumb {{
+        background: #ccc;
+        border-radius: 4px;
+    }}
+    .island-container::-webkit-scrollbar-thumb:hover {{
+        background: #aaa;
+    }}
     .machine-box {{
         position: relative;
         cursor: crosshair;
@@ -240,9 +309,23 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             tooltip_html = ""
             
             if data:
-                g, b, r, diff, pred, m_name = int(pd.to_numeric(data['g'], errors='coerce') or 0), int(pd.to_numeric(data['b'], errors='coerce') or 0), int(pd.to_numeric(data['r'], errors='coerce') or 0), int(pd.to_numeric(data['diff'], errors='coerce') or 0), float(pd.to_numeric(data['pred'], errors='coerce') or np.nan), str(data['mac_name'])
+                g_val = pd.to_numeric(data['g'], errors='coerce')
+                b_val = pd.to_numeric(data['b'], errors='coerce')
+                r_val = pd.to_numeric(data['r'], errors='coerce')
+                diff_val = pd.to_numeric(data['diff'], errors='coerce')
+                pred_val = pd.to_numeric(data['pred'], errors='coerce')
+                
+                g = int(g_val) if pd.notna(g_val) else 0
+                b = int(b_val) if pd.notna(b_val) else 0
+                r = int(r_val) if pd.notna(r_val) else 0
+                diff = int(diff_val) if pd.notna(diff_val) else 0
+                pred = float(pred_val) if pd.notna(pred_val) else np.nan
+                m_name = str(data['mac_name']).replace('nan', '')
+
                 prev_diff_val = data.get('prev_diff')
-                result_score = float(pd.to_numeric(data.get('result_score', np.nan), errors='coerce'))
+                rs_val = pd.to_numeric(data.get('result_score', np.nan), errors='coerce')
+                result_score = float(rs_val) if pd.notna(rs_val) else np.nan
+                
                 matched_key = backend.get_matched_spec_key(m_name, specs)
                 spec_r5 = specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 260.0
                 spec_t5 = specs[matched_key].get('設定5', {"合算": 128.0})["合算"] if matched_key in specs else 128.0
