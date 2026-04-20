@@ -157,18 +157,38 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     col_fs, col_c1, col_c2 = st.columns([1, 2.5, 2])
     with col_fs:
         st.components.v1.html("""
-            <button onclick="
-                const doc = window.parent.document;
-                if (!doc.fullscreenElement) {
-                    doc.documentElement.requestFullscreen().catch(err => {
-                        console.log('フルスクリーン化に失敗しました:', err);
-                    });
-                } else {
-                    doc.exitFullscreen();
-                }
-            " style="width: 100%; height: 40px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; margin-top: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-                🖥️ 画面最大化
+            <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 40px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; margin-top: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                🖥️ 領域を最大化
             </button>
+            <script>
+            function toggleFullscreen() {
+                const doc = window.parent.document;
+                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                const btn = document.getElementById('fs-btn');
+                
+                if (!doc.fullscreenElement) {
+                    if (mainBlock) {
+                        mainBlock.requestFullscreen().then(() => {
+                            mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
+                            mainBlock.style.maxWidth = '100%';
+                            mainBlock.style.padding = '2rem';
+                            mainBlock.style.overflowY = 'auto';
+                            btn.innerHTML = '↙️ 元に戻す';
+                        }).catch(err => { console.log('Error:', err); });
+                    }
+                } else { doc.exitFullscreen(); }
+            }
+            
+            window.parent.document.addEventListener('fullscreenchange', () => {
+                const doc = window.parent.document;
+                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                const btn = document.getElementById('fs-btn');
+                if (!doc.fullscreenElement) {
+                    if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
+                    if (btn) btn.innerHTML = '🖥️ 領域を最大化';
+                }
+            });
+            </script>
         """, height=75)
     with col_c1:
         map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"], horizontal=True)
