@@ -517,6 +517,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     ai_recom_df = pd.merge(ai_recom_df, fallback_scores, on='対象日付_merge_key', how='left')
     ai_recom_df['店舗平均期待度'] = ai_recom_df['店舗平均期待度'].fillna(ai_recom_df['fb_店舗平均期待度'])
 
+    # データが空の場合に新しい列が作成されず KeyError になるのを防ぐ
+    if ai_recom_df.empty:
+        st.info("検証対象のデータが見つかりません。")
+        return
+
     # --- 5. 営業区分の判定 ---
     def determine_shop_eval(row):
         pred_diff = row.get('予測平均差枚')

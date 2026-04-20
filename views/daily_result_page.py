@@ -267,60 +267,230 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             else:
                 st.info(f"⚪ **本日のAI予測精度: データなし** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} の中で有効稼働（3000G以上等）した台がありませんでした。")
 
-    # --- 表示件数の絞り込み ---
-    if display_mode == "厳選台 (上位10%)":
-        limit = max(3, int(len(display_df) * 0.10))
-        display_df = display_df.head(limit)
-    elif display_mode == "Top 10":
-        display_df = display_df.head(10)
-    elif display_mode == "Top 20":
-        display_df = display_df.head(20)
+    tab_list, tab_map = st.tabs(["📋 台データ一覧", "🗺️ 島マップ (神視点)"])
 
-    cols = ['AI順位', '台番号', '機種名']
-    if '期待度' in display_df.columns: cols.append('期待度')
-    if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
-    cols.append('結果点数')
-    cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
-    
-    if '根拠' in display_df.columns:
-        cols.append('根拠')
+    with tab_list:
+        # --- 表示件数の絞り込み ---
+        if display_mode == "厳選台 (上位10%)":
+            limit = max(3, int(len(display_df) * 0.10))
+            display_df = display_df.head(limit)
+        elif display_mode == "Top 10":
+            display_df = display_df.head(10)
+        elif display_mode == "Top 20":
+            display_df = display_df.head(20)
+
+        cols = ['AI順位', '台番号', '機種名']
+        if '期待度' in display_df.columns: cols.append('期待度')
+        if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
+        cols.append('結果点数')
+        cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
         
-    available_cols = [c for c in cols if c in display_df.columns]
+        if '根拠' in display_df.columns:
+            cols.append('根拠')
+            
+        available_cols = [c for c in cols if c in display_df.columns]
 
-    # Pandas Stylerを使って期待外れ台を赤くハイライト
-    def apply_row_style(row):
-        row_data = display_df.loc[row.name]
-        if row_data.get('is_bad_pred', False): 
-            return ['background-color: rgba(255, 75, 75, 0.2)'] * len(available_cols)
-        elif row_data.get('結果点数', 0) >= 80:
-            return ['background-color: rgba(255, 215, 0, 0.2)'] * len(available_cols)
-        elif row_data.get('is_high_reg', False):
-            return ['background-color: rgba(102, 187, 106, 0.3)'] * len(available_cols)
-        return [''] * len(available_cols)
+        # Pandas Stylerを使って期待外れ台を赤くハイライト
+        def apply_row_style(row):
+            row_data = display_df.loc[row.name]
+            if row_data.get('is_bad_pred', False): 
+                return ['background-color: rgba(255, 75, 75, 0.2)'] * len(available_cols)
+            elif row_data.get('結果点数', 0) >= 80:
+                return ['background-color: rgba(255, 215, 0, 0.2)'] * len(available_cols)
+            elif row_data.get('is_high_reg', False):
+                return ['background-color: rgba(102, 187, 106, 0.3)'] * len(available_cols)
+            return [''] * len(available_cols)
+            
+        styled_display_df = display_df[available_cols].style.apply(apply_row_style, axis=1)
+        if '差枚' in available_cols:
+            styled_display_df = styled_display_df.bar(subset=['差枚'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
+
+        st.dataframe(
+            styled_display_df,
+            column_config={
+                "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は実際の事後確率順位との変動（🔼:予測より好結果 / 🔻:予測より悪結果）を示します。"),
+                "台番号": st.column_config.TextColumn("No.", width="small"),
+                "機種名": st.column_config.TextColumn("機種", width="small"),
+                "期待度": st.column_config.TextColumn("AI期待度", width="small", help="AIが前日時点で予測していた設定5以上の確率です。"),
+                "予測信頼度": st.column_config.TextColumn("信頼度", width="small"),
+                "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
+                "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
+                "総回転": st.column_config.NumberColumn("総回転", format="%d"),
+                "BIG": st.column_config.NumberColumn("BIG", format="%d"),
+                "REG": st.column_config.NumberColumn("REG", format="%d"),
+                "合算確率_str": st.column_config.TextColumn("合算確率", width="small"),
+                "BIG確率_str": st.column_config.TextColumn("BIG確率", width="small"),
+                "REG確率_str": st.column_config.TextColumn("REG確率", width="small"),
+                "ぶどう確率_str": st.column_config.TextColumn("🍇確率", width="small", help="差枚数から逆算した推定ぶどう確率 (ステータスOKの台のみ)"),
+                "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
+            },
+            width="stretch",
+            hide_index=True
+        )
+
+    with tab_map:
+        st.subheader("🗺️ 島マップ (神視点ビュー)")
+        st.caption("島マスターに登録された情報に基づき、各島（列）の出玉状況を上から見た図で直感的に確認できます。塊や並びの投入箇所が一目で分かります。")
         
-    styled_display_df = display_df[available_cols].style.apply(apply_row_style, axis=1)
-    if '差枚' in available_cols:
-        styled_display_df = styled_display_df.bar(subset=['差枚'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-3000, vmax=3000)
-
-    st.dataframe(
-        styled_display_df,
-        column_config={
-            "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は実際の事後確率順位との変動（🔼:予測より好結果 / 🔻:予測より悪結果）を示します。"),
-            "台番号": st.column_config.TextColumn("No.", width="small"),
-            "機種名": st.column_config.TextColumn("機種", width="small"),
-            "期待度": st.column_config.TextColumn("AI期待度", width="small", help="AIが前日時点で予測していた設定5以上の確率です。"),
-            "予測信頼度": st.column_config.TextColumn("信頼度", width="small"),
-            "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
-            "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
-            "総回転": st.column_config.NumberColumn("総回転", format="%d"),
-            "BIG": st.column_config.NumberColumn("BIG", format="%d"),
-            "REG": st.column_config.NumberColumn("REG", format="%d"),
-            "合算確率_str": st.column_config.TextColumn("合算確率", width="small"),
-            "BIG確率_str": st.column_config.TextColumn("BIG確率", width="small"),
-            "REG確率_str": st.column_config.TextColumn("REG確率", width="small"),
-            "ぶどう確率_str": st.column_config.TextColumn("🍇確率", width="small", help="差枚数から逆算した推定ぶどう確率 (ステータスOKの台のみ)"),
-            "根拠": st.column_config.TextColumn("AI推奨根拠", width="large"),
-        },
-        width="stretch",
-        hide_index=True
-    )
+        map_metric = st.radio("表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(予測時)"], horizontal=True)
+        
+        with st.expander("🔍 絞り込みフィルター (条件に合わない台をグレーアウト)", expanded=False):
+            st.caption("条件に合致しない台を目立たなくし、目的の台（凹み台や高稼働台など）を浮き彫りにします。")
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=0, step=500)
+            with col_f2:
+                filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
+            filter_min_diff, filter_max_diff = filter_diff_range
+            
+        if df_island is None or df_island.empty:
+            st.warning("島マスターのデータがありません。サイドバーの「島マスター管理」から島を登録してください。")
+        else:
+            # 該当店舗の島情報をパース
+            shop_islands = df_island[df_island['店名'] == selected_shop]
+            if shop_islands.empty:
+                st.info("この店舗に登録されている島情報がありません。サイドバーの「島マスター管理」から島を登録してください。")
+            else:
+                parsed_islands = []
+                for _, i_row in shop_islands.iterrows():
+                    i_name = i_row.get('島名')
+                    machines = []
+                    rule = str(i_row.get('台番号ルール', ''))
+                    if rule and rule.strip() != '' and rule != 'nan':
+                        for part in rule.split(','):
+                            part = part.strip()
+                            if not part: continue
+                            if '-' in part:
+                                try:
+                                    s_str, e_str = part.split('-', 1)
+                                    machines.extend(range(int(s_str), int(e_str) + 1))
+                                except: pass
+                            else:
+                                try: machines.append(int(part))
+                                except: pass
+                    else:
+                        try:
+                            s = int(i_row.get('開始台番号', 0))
+                            e = int(i_row.get('終了台番号', 0))
+                            if s > 0 and e >= s: machines.extend(range(s, e + 1))
+                        except: pass
+                        
+                    machines = sorted(list(set(machines)))
+                    if machines:
+                        parsed_islands.append({
+                            'name': i_name,
+                            'type': str(i_row.get('島属性', '普通')),
+                            'corner': str(i_row.get('メイン角番', '')).strip(),
+                            'machines': machines
+                        })
+                
+                if not parsed_islands:
+                    st.info("島に有効な台番号が登録されていません。")
+                else:
+                    mac_data_dict = {}
+                    for _, row in df_target.iterrows():
+                        mac_num = str(row['台番号']).replace('.0', '')
+                        g = row.get('累計ゲーム', 0)
+                        b = row.get('BIG', 0)
+                        r = row.get('REG', 0)
+                        diff = row.get('差枚', 0)
+                        pred = row.get('prediction_score', np.nan)
+                        mac_name = row.get('機種名', '')
+                        
+                        mac_data_dict[mac_num] = {
+                            'g': g, 'b': b, 'r': r, 'diff': diff, 'pred': pred, 'mac_name': mac_name
+                        }
+                        
+                    html_parts = ["<div style='display: flex; flex-direction: column; gap: 20px; font-family: sans-serif;'>"]
+                    
+                    for island in parsed_islands:
+                        isl_name = island['name']
+                        isl_type = island['type']
+                        machines = island['machines']
+                        
+                        html_parts.append(f"<div style='border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc;'>")
+                        html_parts.append(f"<h4 style='margin-top: 0; margin-bottom: 12px; color: #444; font-size: 16px;'>🏝️ {isl_name} <span style='font-size:12px; font-weight:normal; color:#888;'>({isl_type})</span></h4>")
+                        html_parts.append("<div style='display: flex; flex-wrap: wrap; gap: 8px;'>")
+                        
+                        for m_num in machines:
+                            m_str = str(m_num)
+                            data = mac_data_dict.get(m_str)
+                            
+                            bg_color, text_color, main_text, sub_text, border_color = "#f5f5f5", "#aaa", "-", "データなし", "#e0e0e0"
+                            opacity = "1.0"
+                            
+                            if data:
+                                g = int(pd.to_numeric(data['g'], errors='coerce') or 0)
+                                b = int(pd.to_numeric(data['b'], errors='coerce') or 0)
+                                r = int(pd.to_numeric(data['r'], errors='coerce') or 0)
+                                diff = int(pd.to_numeric(data['diff'], errors='coerce') or 0)
+                                pred = float(pd.to_numeric(data['pred'], errors='coerce') or np.nan)
+                                m_name = str(data['mac_name'])
+                                
+                                matched_key = backend.get_matched_spec_key(m_name, specs)
+                                spec_r5 = specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 260.0
+                                spec_t5 = specs[matched_key].get('設定5', {"合算": 128.0})["合算"] if matched_key in specs else 128.0
+                                
+                                reg_prob_val = g / r if r > 0 else 9999
+                                tot_prob_val = g / (b + r) if (b + r) > 0 else 9999
+                                
+                                short_mac = m_name.replace('ジャグラー', 'J').replace('ガールズ', 'G').replace('ハッピー', 'ﾊｯﾋﾟｰ').replace('ファンキー', 'ﾌｧﾝｷｰ')
+                                sub_text = f"{g}G / {short_mac}" if g > 0 else "0G"
+                                
+                                if map_metric == "差枚":
+                                    main_text = f"{diff:+d}" if g > 0 else "-"
+                                    if g == 0: bg_color = "#f5f5f5"; text_color = "#9e9e9e"
+                                    elif diff >= 2000: bg_color = "#d32f2f"; text_color = "#fff"; border_color = "#b71c1c"
+                                    elif diff >= 1000: bg_color = "#ef5350"; text_color = "#fff"; border_color = "#c62828"
+                                    elif diff > 0: bg_color = "#ffcdd2"; text_color = "#d32f2f"; border_color = "#ef5350"
+                                    elif diff > -1000: bg_color = "#e3f2fd"; text_color = "#1565c0"; border_color = "#42a5f5"
+                                    else: bg_color = "#1976d2"; text_color = "#fff"; border_color = "#0d47a1"
+                                        
+                                elif map_metric == "REG確率":
+                                    main_text = f"1/{int(reg_prob_val)}" if r > 0 else "-"
+                                    if g < 1000: bg_color = "#f5f5f5"; text_color = "#9e9e9e"
+                                    elif reg_prob_val <= spec_r5: bg_color = "#ef6c00"; text_color = "#fff"; border_color = "#e65100"
+                                    elif reg_prob_val <= spec_r5 * 1.15: bg_color = "#ffe082"; text_color = "#f57f17"; border_color = "#ffb300"
+                                    else: bg_color = "#eceff1"; text_color = "#546e7a"; border_color = "#cfd8dc"
+                                        
+                                elif map_metric == "合算確率":
+                                    main_text = f"1/{int(tot_prob_val)}" if (b+r) > 0 else "-"
+                                    if g < 1000: bg_color = "#f5f5f5"; text_color = "#9e9e9e"
+                                    elif tot_prob_val <= spec_t5: bg_color = "#8e24aa"; text_color = "#fff"; border_color = "#6a1b9a"
+                                    elif tot_prob_val <= spec_t5 * 1.1: bg_color = "#e1bee7"; text_color = "#6a1b9a"; border_color = "#ab47bc"
+                                    else: bg_color = "#eceff1"; text_color = "#546e7a"; border_color = "#cfd8dc"
+                                        
+                                elif map_metric == "AI期待度(予測時)":
+                                    if pd.notna(pred):
+                                        main_text = f"{int(pred * 100)}%"
+                                        if pred >= 0.50: bg_color = "#d32f2f"; text_color = "#fff"; border_color = "#b71c1c"
+                                        elif pred >= 0.30: bg_color = "#ef5350"; text_color = "#fff"; border_color = "#c62828"
+                                        elif pred >= 0.15: bg_color = "#ffcdd2"; text_color = "#d32f2f"; border_color = "#ef5350"
+                                        else: bg_color = "#eceff1"; text_color = "#546e7a"; border_color = "#cfd8dc"
+                                    else:
+                                        main_text = "-"
+                                        bg_color = "#f5f5f5"; text_color = "#9e9e9e"
+                                        
+                                # フィルターの適用
+                                if g < filter_min_g or diff > filter_max_diff or diff < filter_min_diff:
+                                    bg_color = "#fafafa"
+                                    text_color = "#ccc"
+                                    border_color = "#eee"
+                                    opacity = "0.2"
+                            else:
+                                if filter_min_g > 0:
+                                    opacity = "0.2"
+                            
+                            is_corner_mark = "✨" if str(m_num) == island['corner'] else ""
+                                
+                            html_parts.append(f"""
+                                <div style='width: 82px; height: 75px; background-color: {bg_color}; border: 2px solid {border_color}; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; padding: 2px; box-sizing: border-box; opacity: {opacity};'>
+                                    <div style='position: absolute; top: 2px; left: 4px; font-size: 11px; font-weight: bold; color: #555;'>{is_corner_mark}#{m_num}</div>
+                                    <div style='font-size: 18px; font-weight: bold; color: {text_color}; margin-top: 12px; line-height: 1;'>{main_text}</div>
+                                    <div style='font-size: 10px; color: #666; margin-top: 4px; width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>{sub_text}</div>
+                                </div>
+                            """)
+                        html_parts.append("</div></div>")
+                    html_parts.append("</div>")
+                    
+                    st.components.v1.html("".join(html_parts), height=800, scrolling=True)

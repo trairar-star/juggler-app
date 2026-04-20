@@ -557,6 +557,38 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
                                         g = row.get('累計ゲーム', 0)
                                         context_data += f"  [{d_str}] 差枚: {int(diff):+d}枚 / 総回転: {int(g)}G / BIG: {int(b)} / REG: {int(r)}\n"
 
+                    # --- 4.6. 全台の直近3日間の履歴データ（AIによる自由な条件検索・抽出用） ---
+                    if not df_raw.empty:
+                        shop_raw_all = df_raw[df_raw[shop_col] == selected_shop].copy()
+                        if '対象日付' in shop_raw_all.columns:
+                            shop_raw_all['対象日付'] = pd.to_datetime(shop_raw_all['対象日付'])
+                            base_date = pd.to_datetime(target_date_val) - pd.Timedelta(days=1)
+                            cutoff_date = base_date - pd.Timedelta(days=3)
+                            hist_all_df = shop_raw_all[(shop_raw_all['対象日付'] > cutoff_date) & (shop_raw_all['対象日付'] <= base_date)].copy()
+                            
+                            if not hist_all_df.empty:
+                                context_data += f"\n【{selected_shop} の全台の直近3日間の個別データ (条件検索・抽出用)】\n"
+                                context_data += "※お客様から「特定の条件（REG確率、差枚、連敗など）を満たす台を探して」と依頼された場合は、このデータから条件に合致する台を探して回答してください。確率は(総回転数÷REG回数)等で計算してください。\n"
+                                
+                                hist_all_df['date_str'] = hist_all_df['対象日付'].dt.strftime('%m/%d')
+                                hist_all_df['台番号'] = hist_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                                
+                                def make_hist_line(r):
+                                    g = int(r.get('累計ゲーム', 0))
+                                    if g == 0: return "" # 文字数節約のため稼働0Gの台は省略
+                                    diff = int(r.get('差枚', 0))
+                                    b = int(r.get('BIG', 0))
+                                    reg = int(r.get('REG', 0))
+                                    mac = str(r.get('機種名', '')).replace('ジャグラー', 'J') # 文字数節約
+                                    return f"[{r['date_str']}]#{r['台番号']}({mac}) {g}G B{b} R{reg} 差{diff:+d}"
+                                    
+                                hist_lines = hist_all_df.apply(make_hist_line, axis=1).tolist()
+                                hist_lines = [line for line in hist_lines if line] # 空行を除外
+                                
+                                # AIが読み込みやすいよう、適度な件数ごとにパイプ(|)区切りで1行にまとめる
+                                chunked_lines = [" | ".join(hist_lines[i:i+100]) for i in range(0, len(hist_lines), 100)]
+                                context_data += "\n".join(chunked_lines) + "\n"
+
             # --- 5. AIの過去予測の実績検証（直近1ヶ月の推奨台勝率） ---
             df_pred_log = backend.load_prediction_log()
             if not df_pred_log.empty and not df_raw.empty:
@@ -944,6 +976,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
 - [やめ時・撤退判断]: お客様から稼働中の台について「やめどきか」「捨てるべきか」相談された場合、以下の基準で厳しくジャッジしてください。1) 事前のAI期待度が低い場合や、総回転数が2000G以上でREG確率が設定4の目安（概ね1/300〜1/350以下）より大幅に悪い場合は「即撤退」を強く推奨してください。2) 回転数が1000G未満と少ない場合は「まだ確率が暴れる時期なので、もう少し様子を見るか、周りの台（並びや塊）の状況を見て判断」とアドバイスしてください。3) ピークから1000枚以上飲まれている場合は、合算確率が良くても「メダルがあるうちの利確・撤退」を視野に入れるよう提案してください。
 - [予測エラー分析]: お客様から「なぜこの台を外したのか」「逃したお宝台の原因は？」などと質問された場合、提供されている「AI予測エラー分析」のデータに基づき、結果のデータ（総回転数やボーナス確率から低設定の誤爆か本物の高設定か等）を推測し、論理的に回答してください。
+- [条件検索の対応]: お客様から「過去〇日でREG確率が〇〇以上で差枚が〇〇以下の台はある？」などのように、特定の条件で台を探すよう依頼された場合は、提供されている【全台の直近3日間の個別データ (条件検索・抽出用)】から該当する台を漏れなく探し出し、台番号・機種名・実際の日々のデータ（回転数、BIG、REG、差枚、およびそこから計算される確率）を提示して回答してください。計算が必要な確率（REG確率など）はデータ（回転数÷REG回数）からその場で計算して判定してください。
 - [ユーザー自身の成績]: 提供されている「あなたの機種別 通算ボーナス成績」に基づき、ユーザーのヒキや各機種の相性について回答してください。「BIGは引けていますがREG確率が低いですね」などの客観的な評価を行い、立ち回りの改善に繋がるアドバイスをしてください。
 - [AIの設定調整の相談]: お客様から「AIの精度を上げたい」「設定をどう調整すればいいか」といった相談があった場合、提供されている「AI予測実績 (直近1ヶ月)」の勝率と検証台数、および「現在のAIモデル設定」をもとにアドバイスしてください。
   1. 検証台数（有効稼働数）が30台未満と少ない場合は「まだデータが少ないため、たまたまのヒキでブレている可能性が高いです。パラメータは変更せずにもう少し（30台以上貯まるまで）様子を見ることをおすすめします」と案内してください。
