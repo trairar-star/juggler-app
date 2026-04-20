@@ -290,13 +290,13 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px;"
         island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; min-width: max-content;"
     elif layout_mode == "島ごとに改行 (縦積み・島内横スクロール)":
-        container_style = "display: flex; flex-direction: column; gap: 20px; width: 100%;"
-        island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding-bottom: 10px;"
-        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; box-sizing: border-box;"
+        container_style = "display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 100%; overflow-x: hidden;"
+        island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding-bottom: 12px; width: 100%;"
+        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: hidden;"
     else:
-        container_style = "display: flex; flex-direction: column; gap: 20px;"
+        container_style = "display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 100%; overflow-x: hidden;"
         island_style = "display: flex; flex-wrap: wrap; gap: 6px;"
-        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; box-sizing: border-box;"
+        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: hidden;"
 
     # --- ツールチップ(ホバー表示)用 CSS ---
     html_parts = [f"""
