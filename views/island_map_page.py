@@ -4,52 +4,208 @@ import streamlit as st # type: ignore
 import backend
 
 def render_island_map_page(df_raw, df_pred_log, df_island):
-    st.header("🗺️ 島マップ (神視点ビュー)")
-    st.caption("島マスターに登録された情報に基づき、各島（列）の出玉状況を上から見た図で直感的に確認できます。塊や並びの投入箇所が一目で分かります。")
-
-    if df_raw.empty:
-        st.warning("データがありません。")
-        return
-
-    specs = backend.get_machine_specs()
-    date_col = '対象日付'
-    temp_df = df_raw.copy()
-    temp_df[date_col] = pd.to_datetime(temp_df[date_col], errors='coerce')
-    available_dates = sorted(temp_df[date_col].dropna().dt.date.unique(), reverse=True)
-
-    if not available_dates:
-        st.warning("有効な日付データがありません。")
-        return
-
-    col_d, col_s = st.columns(2)
-    selected_date = col_d.selectbox("📅 確認する日付を選択", available_dates)
-
-    shop_col = '店名' if '店名' in temp_df.columns else ('店舗名' if '店舗名' in temp_df.columns else None)
-    df_day = temp_df[temp_df[date_col].dt.date == selected_date].copy()
-    shops = ["店舗を選択してください"] + sorted(list(df_day[shop_col].unique()))
+    # ==========================================
+    # UIコントロール群を一つのコンテナにまとめる
+    # ==========================================
+    ui_container = st.container()
     
-    default_index = 0
-    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
-    if saved_shop in shops:
-        default_index = shops.index(saved_shop)
+    with ui_container:
+        st.header("🗺️ 島マップ (神視点ビュー)")
+        st.caption("島マスターに登録された情報に基づき、各島（列）の出玉状況を上から見た図で直感的に確認できます。塊や並びの投入箇所が一目で分かります。")
 
-    selected_shop = col_s.selectbox("🏬 店舗を選択", shops, index=default_index)
-    if selected_shop != "店舗を選択してください":
-        st.session_state["global_selected_shop"] = selected_shop
+        if df_raw.empty:
+            st.warning("データがありません。")
+            st.stop()
 
-    if selected_shop == "店舗を選択してください":
-        st.info("👆 店舗を選択すると、その日の島マップが表示されます。")
-        return
+        specs = backend.get_machine_specs()
+        date_col = '対象日付'
+        temp_df = df_raw.copy()
+        temp_df[date_col] = pd.to_datetime(temp_df[date_col], errors='coerce')
+        available_dates = sorted(temp_df[date_col].dropna().dt.date.unique(), reverse=True)
 
-    if df_island is None or df_island.empty:
-        st.warning("島マスターのデータがありません。サイドバーの「島マスター管理」から島を登録してください。")
-        return
+        if not available_dates:
+            st.warning("有効な日付データがありません。")
+            st.stop()
 
-    shop_islands = df_island[df_island['店名'] == selected_shop]
-    if shop_islands.empty:
-        st.info("この店舗に登録されている島情報がありません。サイドバーの「島マスター管理」から島を登録してください。")
-        return
+        col_d, col_s = st.columns(2)
+        selected_date = col_d.selectbox("📅 確認する日付を選択", available_dates)
 
+        shop_col = '店名' if '店名' in temp_df.columns else ('店舗名' if '店舗名' in temp_df.columns else None)
+        df_day = temp_df[temp_df[date_col].dt.date == selected_date].copy()
+        shops = ["店舗を選択してください"] + sorted(list(df_day[shop_col].unique()))
+        
+        default_index = 0
+        saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
+        if saved_shop in shops:
+            default_index = shops.index(saved_shop)
+
+        selected_shop = col_s.selectbox("🏬 店舗を選択", shops, index=default_index)
+        if selected_shop != "店舗を選択してください":
+            st.session_state["global_selected_shop"] = selected_shop
+
+        if selected_shop == "店舗を選択してください":
+            st.info("👆 店舗を選択すると、その日の島マップが表示されます。")
+            st.stop()
+
+        if df_island is None or df_island.empty:
+            st.warning("島マスターのデータがありません。サイドバーの「島マスター管理」から島を登録してください。")
+            st.stop()
+
+        shop_islands = df_island[df_island['店名'] == selected_shop]
+        if shop_islands.empty:
+            st.info("この店舗に登録されている島情報がありません。サイドバーの「島マスター管理」から島を登録してください。")
+            st.stop()
+
+        st.divider()
+
+        # --- 島のパース処理 (UIに表示するため先に実行) ---
+        parsed_islands = []
+        for _, i_row in shop_islands.iterrows():
+            i_name = i_row.get('島名')
+            machines = []
+            rule = str(i_row.get('台番号ルール', ''))
+            if rule and rule.strip() != '' and rule != 'nan':
+                for part in rule.split(','):
+                    part = part.strip()
+                    if not part: continue
+                    if '-' in part:
+                        try:
+                            s_str, e_str = part.split('-', 1)
+                            machines.extend(range(int(s_str), int(e_str) + 1))
+                        except: pass
+                    else:
+                        try: machines.append(int(part))
+                        except: pass
+            else:
+                try:
+                    s = int(i_row.get('開始台番号', 0))
+                    e = int(i_row.get('終了台番号', 0))
+                    if s > 0 and e >= s: machines.extend(range(s, e + 1))
+                except: pass
+                
+            machines = sorted(list(set(machines)))
+            if machines:
+                parsed_islands.append({
+                    'name': i_name,
+                    'type': str(i_row.get('島属性', '普通')),
+                    'corner': str(i_row.get('メイン角番', '')).strip(),
+                    'machines': machines
+                })
+
+        if not parsed_islands:
+            st.info("島に有効な台番号が登録されていません。")
+            st.stop()
+
+        # --- コントロールパネル (指標、レイアウト、並び替え、フィルター) ---
+        col_fs, col_c1, col_c2 = st.columns([1, 2.5, 2])
+        with col_fs:
+            st.components.v1.html("""
+                <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 40px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; margin-top: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                    🖥️ 領域を最大化
+                </button>
+                <script>
+                function toggleFullscreen() {
+                    const doc = window.parent.document;
+                    const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                    const btn = document.getElementById('fs-btn');
+                    
+                    // UIコンテナ（一番上のブロック）を取得してSticky化する
+                    const topBlock = mainBlock ? mainBlock.querySelector('[data-testid="stVerticalBlock"] > div:first-child') : null;
+                    
+                    if (!doc.fullscreenElement) {
+                        if (mainBlock) {
+                            mainBlock.requestFullscreen().then(() => {
+                                mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
+                                mainBlock.style.maxWidth = '100%';
+                                mainBlock.style.padding = '1rem';
+                                mainBlock.style.overflowY = 'auto';
+                                
+                                if (topBlock) {
+                                    topBlock.style.position = 'sticky';
+                                    topBlock.style.top = '-1rem';
+                                    topBlock.style.zIndex = '9999';
+                                    topBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
+                                    topBlock.style.paddingTop = '1rem';
+                                    topBlock.style.paddingBottom = '0.5rem';
+                                    topBlock.style.borderBottom = '2px solid #ddd';
+                                }
+                                
+                                btn.innerHTML = '↙️ 元に戻す';
+                            }).catch(err => { console.log('Error:', err); });
+                        }
+                    } else { 
+                        doc.exitFullscreen(); 
+                    }
+                }
+                
+                window.parent.document.addEventListener('fullscreenchange', () => {
+                    const doc = window.parent.document;
+                    const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                    const btn = document.getElementById('fs-btn');
+                    const topBlock = mainBlock ? mainBlock.querySelector('[data-testid="stVerticalBlock"] > div:first-child') : null;
+                    
+                    if (!doc.fullscreenElement) {
+                        if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
+                        if (topBlock) {
+                            topBlock.style.position = '';
+                            topBlock.style.top = '';
+                            topBlock.style.zIndex = '';
+                            topBlock.style.backgroundColor = '';
+                            topBlock.style.paddingTop = '';
+                            topBlock.style.paddingBottom = '';
+                            topBlock.style.borderBottom = '';
+                        }
+                        if (btn) btn.innerHTML = '🖥️ 領域を最大化';
+                    }
+                });
+                </script>
+            """, height=75)
+        with col_c1:
+            map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"], horizontal=True)
+        with col_c2:
+            layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み・島内横スクロール)", "すべて横一列に繋げる", "島内で折り返す (コンパクト)"], horizontal=True)
+
+        island_names = [isl['name'] for isl in parsed_islands]
+        
+        shop_order_key = f"island_order_{selected_shop}"
+        if shop_order_key not in st.session_state:
+            st.session_state[shop_order_key] = island_names
+        else:
+            current_valid_order = [n for n in st.session_state[shop_order_key] if n in island_names]
+            if current_valid_order != st.session_state[shop_order_key]:
+                st.session_state[shop_order_key] = current_valid_order
+
+        selected_island_names = st.multiselect(
+            "🛠️ 表示する島と順番（×で消して選び直すことで順番を変更できます）", 
+            options=island_names, 
+            key=shop_order_key,
+            help="ここで選択した順番通りに島が配置されます。×ボタンで島を消し、再度追加することで一番下に移動し、並べ替えができます。"
+        )
+
+        with st.expander("🔍 絞り込みフィルター (条件に合わない台をグレーアウト)", expanded=False):
+            st.caption("条件に合致しない台を目立たなくし、目的の台（凹み台や高稼働台など）を浮き彫りにします。")
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=3000, step=500)
+            with col_f2:
+                filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
+            filter_min_diff, filter_max_diff = filter_diff_range
+
+    display_islands = []
+    for name in selected_island_names:
+        for isl in parsed_islands:
+            if isl['name'] == name:
+                display_islands.append(isl)
+                break
+
+    if not display_islands:
+        st.info("表示する島が選択されていません。")
+        st.stop()
+
+    # ==========================================
+    # データ処理 (UIには見えないバックグラウンド処理)
+    # ==========================================
+    
     # データ準備
     shop_all_df = temp_df[temp_df[shop_col] == selected_shop].copy()
     shop_all_df['台番号'] = shop_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
@@ -112,127 +268,6 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
 
     # 当日データに絞り込み
     df_target = shop_all_df[shop_all_df[date_col].dt.date == selected_date].copy()
-
-    st.divider()
-
-    # 島のパース
-    parsed_islands = []
-    for _, i_row in shop_islands.iterrows():
-        i_name = i_row.get('島名')
-        machines = []
-        rule = str(i_row.get('台番号ルール', ''))
-        if rule and rule.strip() != '' and rule != 'nan':
-            for part in rule.split(','):
-                part = part.strip()
-                if not part: continue
-                if '-' in part:
-                    try:
-                        s_str, e_str = part.split('-', 1)
-                        machines.extend(range(int(s_str), int(e_str) + 1))
-                    except: pass
-                else:
-                    try: machines.append(int(part))
-                    except: pass
-        else:
-            try:
-                s = int(i_row.get('開始台番号', 0))
-                e = int(i_row.get('終了台番号', 0))
-                if s > 0 and e >= s: machines.extend(range(s, e + 1))
-            except: pass
-            
-        machines = sorted(list(set(machines)))
-        if machines:
-            parsed_islands.append({
-                'name': i_name,
-                'type': str(i_row.get('島属性', '普通')),
-                'corner': str(i_row.get('メイン角番', '')).strip(),
-                'machines': machines
-            })
-
-    if not parsed_islands:
-        st.info("島に有効な台番号が登録されていません。")
-        return
-
-    # コントロールパネル
-    col_fs, col_c1, col_c2 = st.columns([1, 2.5, 2])
-    with col_fs:
-        st.components.v1.html("""
-            <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 40px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; margin-top: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-                🖥️ 領域を最大化
-            </button>
-            <script>
-            function toggleFullscreen() {
-                const doc = window.parent.document;
-                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
-                const btn = document.getElementById('fs-btn');
-                
-                if (!doc.fullscreenElement) {
-                    if (mainBlock) {
-                        mainBlock.requestFullscreen().then(() => {
-                            mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
-                            mainBlock.style.maxWidth = '100%';
-                            mainBlock.style.padding = '2rem';
-                            mainBlock.style.overflowY = 'auto';
-                            btn.innerHTML = '↙️ 元に戻す';
-                        }).catch(err => { console.log('Error:', err); });
-                    }
-                } else { doc.exitFullscreen(); }
-            }
-            
-            window.parent.document.addEventListener('fullscreenchange', () => {
-                const doc = window.parent.document;
-                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
-                const btn = document.getElementById('fs-btn');
-                if (!doc.fullscreenElement) {
-                    if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
-                    if (btn) btn.innerHTML = '🖥️ 領域を最大化';
-                }
-            });
-            </script>
-        """, height=75)
-    with col_c1:
-        map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"], horizontal=True)
-    with col_c2:
-        layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み・島内横スクロール)", "すべて横一列に繋げる", "島内で折り返す (コンパクト)"], horizontal=True)
-
-    island_names = [isl['name'] for isl in parsed_islands]
-    
-    shop_order_key = f"island_order_{selected_shop}"
-    if shop_order_key not in st.session_state:
-        st.session_state[shop_order_key] = island_names
-    else:
-        saved_order = [n for n in st.session_state[shop_order_key] if n in island_names]
-        for n in island_names:
-            if n not in saved_order:
-                saved_order.append(n)
-        st.session_state[shop_order_key] = saved_order
-
-    selected_island_names = st.multiselect(
-        "🛠️ 表示する島と順番（×で消して選び直すことで順番を変更できます）", 
-        options=island_names, 
-        key=shop_order_key,
-        help="ここで選択した順番通りに島が配置されます。並び順は店舗ごとに自動で記憶されます。"
-    )
-
-    with st.expander("🔍 絞り込みフィルター (条件に合わない台をグレーアウト)", expanded=False):
-        st.caption("条件に合致しない台を目立たなくし、目的の台（凹み台や高稼働台など）を浮き彫りにします。")
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=3000, step=500)
-        with col_f2:
-            filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
-        filter_min_diff, filter_max_diff = filter_diff_range
-
-    display_islands = []
-    for name in selected_island_names:
-        for isl in parsed_islands:
-            if isl['name'] == name:
-                display_islands.append(isl)
-                break
-
-    if not display_islands:
-        st.info("表示する島が選択されていません。")
-        return
 
     # 台データ辞書の作成
     mac_data_dict = {}
@@ -314,7 +349,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         opacity: 1;
     }}
     </style>
-    <div style='{container_style} font-family: sans-serif; padding-top: 150px;'>
+    <div style='{container_style} font-family: sans-serif; padding-top: 10px;'>
     """]
     
     for island in display_islands:
