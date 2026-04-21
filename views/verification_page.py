@@ -415,7 +415,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         ver_stats['勝率'] = np.where(ver_stats['有効稼働数'] > 0, ver_stats['勝数'] / ver_stats['有効稼働数'] * 100, 0.0)
         ver_stats['高設定率'] = np.where(ver_stats['高設定有効数'] > 0, ver_stats['高設定数'] / ver_stats['高設定有効数'] * 100, 0.0)
         ver_stats['平均期待度'] = ver_stats['平均期待度'] * 100
-        ver_stats['REG確率'] = ver_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+        ver_stats['REG確率'] = ver_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
         
         st.dataframe(
             ver_stats[['比較用バージョン', '平均期待度', '検証台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '設定5近似度', 'REG確率']],
@@ -531,7 +531,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     day_type_stats['平均REG確率'] = np.where(day_type_stats['合計R'] > 0, day_type_stats['合計G'] / day_type_stats['合計R'], 0)
     day_type_stats['推奨台勝率'] = np.where(day_type_stats['有効稼働数'] > 0, day_type_stats['勝数'] / day_type_stats['有効稼働数'] * 100, 0.0)
     day_type_stats['推奨台高設定率'] = np.where(day_type_stats['高設定有効数'] > 0, day_type_stats['高設定数'] / day_type_stats['高設定有効数'] * 100, 0.0)
-    day_type_stats['REG確率'] = day_type_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+    day_type_stats['REG確率'] = day_type_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
     
     # 店舗全体の実際の平均差枚を集計して結合 (表示期間の絞り込みを反映するため ai_recom_df から日別にユニーク化して計算)
     day_eval_summary = ai_recom_df[['対象日付', group_col, '店舗全体平均差枚']].drop_duplicates().groupby(group_col).agg(店舗全体平均差枚=('店舗全体平均差枚', 'mean')).reset_index()
@@ -581,7 +581,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             ).reset_index()
             mac_stats['平均REG確率'] = np.where(mac_stats['合計R'] > 0, mac_stats['合計G'] / mac_stats['合計R'], 0)
             mac_stats['勝率'] = np.where(mac_stats['有効稼働数'] > 0, mac_stats['勝数'] / mac_stats['有効稼働数'] * 100, 0.0)
-            mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+            mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
             mac_stats = mac_stats.sort_values('合計差枚', ascending=False)
             
             st.dataframe(
@@ -611,7 +611,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             ).reset_index()
             end_stats['平均REG確率'] = np.where(end_stats['合計R'] > 0, end_stats['合計G'] / end_stats['合計R'], 0)
             end_stats['勝率'] = np.where(end_stats['有効稼働数'] > 0, end_stats['勝数'] / end_stats['有効稼働数'] * 100, 0.0)
-            end_stats['REG確率'] = end_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+            end_stats['REG確率'] = end_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
             end_stats = end_stats.sort_values('末尾番号')
             
             st.dataframe(
@@ -645,7 +645,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     ).reset_index()
                     isl_stats['平均REG確率'] = np.where(isl_stats['合計R'] > 0, isl_stats['合計G'] / isl_stats['合計R'], 0)
                     isl_stats['勝率'] = np.where(isl_stats['有効稼働数'] > 0, isl_stats['勝数'] / isl_stats['有効稼働数'] * 100, 0.0)
-                    isl_stats['REG確率'] = isl_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                    isl_stats['REG確率'] = isl_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
                     isl_stats = isl_stats.sort_values('合計差枚', ascending=False)
                     
                     st.dataframe(
@@ -954,8 +954,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
                 r_stats['高設定率'] = np.where(r_stats['高設定有効数'] > 0, r_stats['高設定数'] / r_stats['高設定有効数'] * 100, 0.0)
                 r_stats['平均期待度'] = r_stats['平均期待度'] * 100
-                r_stats['REG確率'] = r_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
-                r_stats['合算確率'] = r_stats['平均合算確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                r_stats['REG確率'] = r_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
+                r_stats['合算確率'] = r_stats['平均合算確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
                 
                 rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                 r_stats['sort'] = r_stats['確率帯'].map(rank_order).fillna(99)
@@ -1696,8 +1696,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_stats['高設定率'] = np.where(test_stats['高設定有効数'] > 0, test_stats['高設定数'] / test_stats['高設定有効数'] * 100, 0.0)
                             test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
                             test_stats['平均期待度'] = test_stats['平均期待度'] * 100
-                            test_stats['REG確率'] = test_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
-                            test_stats['合算確率'] = test_stats['平均合算確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                            test_stats['REG確率'] = test_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
+                            test_stats['合算確率'] = test_stats['平均合算確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
                             
                             rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                             test_stats['sort'] = test_stats['確率帯'].map(rank_order).fillna(99)
@@ -1906,8 +1906,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     s_stats['勝率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['勝数'] / s_stats['有効稼働数'] * 100, 0.0)
                     s_stats['高設定率'] = np.where(s_stats['高設定有効数'] > 0, s_stats['高設定数'] / s_stats['高設定有効数'] * 100, 0.0)
                     s_stats['平均期待度'] = s_stats['平均期待度'] * 100
-                    s_stats['REG確率'] = s_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
-                    s_stats['合算確率'] = s_stats['平均合算確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
+                    s_stats['REG確率'] = s_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
+                    s_stats['合算確率'] = s_stats['平均合算確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
                     
                     rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
                     s_stats['sort'] = s_stats['確率帯'].map(rank_order).fillna(99)
