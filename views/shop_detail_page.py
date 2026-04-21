@@ -853,7 +853,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 shop_stats = shop_stats.sort_values('ソート用スコア', ascending=False)
                 
                 st.caption(f"※{eval_period}の**ガチ予測（保存ログ）に対する正答率と勝率**です。この数値が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い等）と判断し、ランキング順位を下げるペナルティを適用しています。（※サンプル5台以上で適用）")
-                st.dataframe(
+                st.data_editor(
                     shop_stats[[shop_col, '営業予測', '予測平均差枚', '平均スコア', '推奨台数', '全台数', '収集日数', 'AI正答率', 'AI推奨台勝率']],
                     column_config={
                         shop_col: st.column_config.TextColumn("店舗", width="small"),

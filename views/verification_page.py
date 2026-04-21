@@ -382,9 +382,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df['valid_合算確率'] = np.where(merged_df['valid_play'], merged_df['結果_合算確率_val'], np.nan)
 
     # --- 確率計算用の総G・総B・総Rを追加 ---
-    merged_df['valid_G'] = np.where(merged_df['valid_play'], pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0), 0)
-    merged_df['valid_B'] = np.where(merged_df['valid_play'], pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0), 0)
-    merged_df['valid_R'] = np.where(merged_df['valid_play'], pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0), 0)
+    merged_df['all_G'] = pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+    merged_df['all_B'] = pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0)
+    merged_df['all_R'] = pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)
 
     # 保存されている予測ログはすでに「各店舗の上位10%」に絞られているため、そのまま使用する
     ai_recom_df = merged_df.copy()
@@ -408,8 +408,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             平均差枚=('valid_差枚_actual', 'mean'),
             設定5近似度=('valid_設定5近似度', 'mean'),
             平均期待度=('prediction_score', 'mean'),
-            合計G=('valid_G', 'sum'),
-            合計R=('valid_R', 'sum')
+            合計G=('all_G', 'sum'),
+            合計R=('all_R', 'sum')
         ).reset_index().sort_values('設定5近似度', ascending=False)
         ver_stats['平均REG確率'] = np.where(ver_stats['合計R'] > 0, ver_stats['合計G'] / ver_stats['合計R'], 0)
         ver_stats['勝率'] = np.where(ver_stats['有効稼働数'] > 0, ver_stats['勝数'] / ver_stats['有効稼働数'] * 100, 0.0)
@@ -525,8 +525,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         勝数=('valid_win', 'sum'),
         推奨台平均差枚=('valid_差枚_actual', 'mean'),
         平均設定5近似度=('valid_設定5近似度', 'mean'),
-        合計G=('valid_G', 'sum'),
-        合計R=('valid_R', 'sum')
+        合計G=('all_G', 'sum'),
+        合計R=('all_R', 'sum')
     ).reset_index()
     day_type_stats['平均REG確率'] = np.where(day_type_stats['合計R'] > 0, day_type_stats['合計G'] / day_type_stats['合計R'], 0)
     day_type_stats['推奨台勝率'] = np.where(day_type_stats['有効稼働数'] > 0, day_type_stats['勝数'] / day_type_stats['有効稼働数'] * 100, 0.0)
@@ -576,8 +576,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 勝数=('valid_win', 'sum'),
                 平均差枚=('valid_差枚_actual', 'mean'),
                 合計差枚=('差枚_actual', 'sum'),
-                合計G=('valid_G', 'sum'),
-                合計R=('valid_R', 'sum')
+                合計G=('all_G', 'sum'),
+                合計R=('all_R', 'sum')
             ).reset_index()
             mac_stats['平均REG確率'] = np.where(mac_stats['合計R'] > 0, mac_stats['合計G'] / mac_stats['合計R'], 0)
             mac_stats['勝率'] = np.where(mac_stats['有効稼働数'] > 0, mac_stats['勝数'] / mac_stats['有効稼働数'] * 100, 0.0)
@@ -606,8 +606,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 勝数=('valid_win', 'sum'),
                 平均差枚=('valid_差枚_actual', 'mean'),
                 合計差枚=('差枚_actual', 'sum'),
-                合計G=('valid_G', 'sum'),
-                合計R=('valid_R', 'sum')
+                合計G=('all_G', 'sum'),
+                合計R=('all_R', 'sum')
             ).reset_index()
             end_stats['平均REG確率'] = np.where(end_stats['合計R'] > 0, end_stats['合計G'] / end_stats['合計R'], 0)
             end_stats['勝率'] = np.where(end_stats['有効稼働数'] > 0, end_stats['勝数'] / end_stats['有効稼働数'] * 100, 0.0)
@@ -640,8 +640,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         勝数=('valid_win', 'sum'),
                         平均差枚=('valid_差枚_actual', 'mean'),
                         合計差枚=('差枚_actual', 'sum'),
-                        合計G=('valid_G', 'sum'),
-                        合計R=('valid_R', 'sum')
+                        合計G=('all_G', 'sum'),
+                        合計R=('all_R', 'sum')
                     ).reset_index()
                     isl_stats['平均REG確率'] = np.where(isl_stats['合計R'] > 0, isl_stats['合計G'] / isl_stats['合計R'], 0)
                     isl_stats['勝率'] = np.where(isl_stats['有効稼働数'] > 0, isl_stats['勝数'] / isl_stats['有効稼働数'] * 100, 0.0)
@@ -945,9 +945,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     平均差枚=('valid_差枚_actual', 'mean'),
                     合計差枚=('差枚_actual', 'sum'),
                     平均期待度=('prediction_score', 'mean'),
-                    合計G=('valid_G', 'sum'),
-                    合計B=('valid_B', 'sum'),
-                    合計R=('valid_R', 'sum')
+                    合計G=('all_G', 'sum'),
+                    合計B=('all_B', 'sum'),
+                    合計R=('all_R', 'sum')
                 ).reset_index()
                 r_stats['平均REG確率'] = np.where(r_stats['合計R'] > 0, r_stats['合計G'] / r_stats['合計R'], 0)
                 r_stats['平均合算確率'] = np.where((r_stats['合計B'] + r_stats['合計R']) > 0, r_stats['合計G'] / (r_stats['合計B'] + r_stats['合計R']), 0)
@@ -1662,9 +1662,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_data['結果_合算確率_val'] = np.where(pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(test_data['next_BIG'], errors='coerce').fillna(0) + pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0)) / pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0), 0)
                             test_data['valid_合算確率'] = np.where(test_data['valid_play'], test_data['結果_合算確率_val'], np.nan)
                             
-                            test_data['valid_G'] = np.where(test_data['valid_play'], pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0), 0)
-                            test_data['valid_B'] = np.where(test_data['valid_play'], pd.to_numeric(test_data['next_BIG'], errors='coerce').fillna(0), 0)
-                            test_data['valid_R'] = np.where(test_data['valid_play'], pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0), 0)
+                            test_data['all_G'] = pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0)
+                            test_data['all_B'] = pd.to_numeric(test_data['next_BIG'], errors='coerce').fillna(0)
+                            test_data['all_R'] = pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0)
                             
                             def get_prob_band(score):
                                 if score >= 0.50: return '50%以上'
@@ -1685,9 +1685,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 平均差枚=('valid_next_diff', 'mean'),
                                 合計差枚=('next_diff', 'sum'),
                                 平均期待度=('pred_score', 'mean'),
-                                合計G=('valid_G', 'sum'),
-                                合計B=('valid_B', 'sum'),
-                                合計R=('valid_R', 'sum')
+                                合計G=('all_G', 'sum'),
+                                合計B=('all_B', 'sum'),
+                                合計R=('all_R', 'sum')
                             ).reset_index()
                             test_stats['平均REG確率'] = np.where(test_stats['合計R'] > 0, test_stats['合計G'] / test_stats['合計R'], 0)
                             test_stats['平均合算確率'] = np.where((test_stats['合計B'] + test_stats['合計R']) > 0, test_stats['合計G'] / (test_stats['合計B'] + test_stats['合計R']), 0)
@@ -1703,6 +1703,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_stats['信頼度'] = test_stats['台数'].apply(get_confidence_indicator)
                             
                             st.session_state['backtest_result'] = test_stats
+                            st.session_state['backtest_details'] = test_data
                         except Exception as e:
                             st.error(f"テスト実行中にエラーが発生しました: {e}")
                             
@@ -1727,6 +1728,47 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 hide_index=True,
                 use_container_width=True
             )
+            
+            if 'backtest_details' in st.session_state:
+                with st.expander("🔍 カンニングなしテストの詳細データを確認", expanded=False):
+                    st.caption("テストで各確率帯に分類された台の具体的な日付と結果を確認できます。なぜ差枚が沈んだのか（不発か、稼働不足か）の分析に役立ててください。")
+                    detail_df = st.session_state['backtest_details'].copy()
+                    
+                    band_options_test = ['すべて', '50%以上', '40%〜49%', '30%〜39%', '20%〜29%', '15%〜19%', '10%〜14%', '10%未満']
+                    selected_band_test = st.selectbox("表示する確率帯を選択", band_options_test, index=0, key="test_band_select_detail")
+                    
+                    if selected_band_test != 'すべて':
+                        detail_df = detail_df[detail_df['確率帯'] == selected_band_test]
+                        
+                    if detail_df.empty:
+                        st.info("該当するデータがありません。")
+                    else:
+                        detail_df['予想設定5以上確率'] = (detail_df['pred_score'] * 100).astype(int)
+                        if 'next_date' in detail_df.columns:
+                            detail_df['予測対象日'] = pd.to_datetime(detail_df['next_date'])
+                        else:
+                            detail_df['予測対象日'] = pd.to_datetime(detail_df['対象日付']) + pd.Timedelta(days=1)
+                            
+                        detail_df['高設定挙動'] = detail_df['target'].apply(lambda x: '🌟' if x == 1 else '')
+                        detail_df = detail_df.sort_values('予測対象日', ascending=False)
+                        
+                        display_cols_test = ['予測対象日', '対象日付', '台番号', '機種名', '予想設定5以上確率', '高設定挙動', 'next_diff', 'next_累計ゲーム', 'next_BIG', 'next_REG']
+                        
+                        st.dataframe(
+                            detail_df[display_cols_test],
+                            column_config={
+                                "予測対象日": st.column_config.DateColumn("予測日", format="MM/DD"),
+                                "対象日付": st.column_config.DateColumn("稼働日(前日)", format="MM/DD", help="予測のベースとなった過去の稼働日"),
+                                "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%"),
+                                "高設定挙動": st.column_config.TextColumn("挙動", help="設定5以上基準を満たしたか"),
+                                "next_diff": st.column_config.NumberColumn("結果差枚", format="%+d"),
+                                "next_累計ゲーム": st.column_config.NumberColumn("総G数", format="%dG"),
+                                "next_BIG": st.column_config.NumberColumn("BIG", format="%d"),
+                                "next_REG": st.column_config.NumberColumn("REG", format="%d"),
+                            },
+                            hide_index=True,
+                            width="stretch"
+                        )
                 
         if auto_tune_btn:
             with st.spinner("AIが過去データを分割し、数多くの組み合わせから最適な設定を探索中... (約10〜20秒かかります)"):
@@ -1865,9 +1907,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 sim_df['結果_合算確率_val'] = np.where(pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(sim_df['next_BIG'], errors='coerce').fillna(0) + pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0)) / pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0), 0)
                 sim_df['valid_合算確率'] = np.where(sim_df['valid_play'], sim_df['結果_合算確率_val'], np.nan)
                 
-                sim_df['valid_G'] = np.where(sim_df['valid_play'], pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0), 0)
-                sim_df['valid_B'] = np.where(sim_df['valid_play'], pd.to_numeric(sim_df['next_BIG'], errors='coerce').fillna(0), 0)
-                sim_df['valid_R'] = np.where(sim_df['valid_play'], pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0), 0)
+                sim_df['all_G'] = pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0)
+                sim_df['all_B'] = pd.to_numeric(sim_df['next_BIG'], errors='coerce').fillna(0)
+                sim_df['all_R'] = pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0)
                 
                 # 営業区分の付与
                 if 'next_date' in sim_df.columns and not shop_daily_eval_map.empty:
@@ -1893,9 +1935,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         平均差枚=('valid_next_diff', 'mean'),
                         合計差枚=('next_diff', 'sum'),
                         平均期待度=('prediction_score', 'mean'),
-                        合計G=('valid_G', 'sum'),
-                        合計B=('valid_B', 'sum'),
-                        合計R=('valid_R', 'sum')
+                        合計G=('all_G', 'sum'),
+                        合計B=('all_B', 'sum'),
+                        合計R=('all_R', 'sum')
                     ).reset_index()
                     s_stats['平均REG確率'] = np.where(s_stats['合計R'] > 0, s_stats['合計G'] / s_stats['合計R'], 0)
                     s_stats['平均合算確率'] = np.where((s_stats['合計B'] + s_stats['合計R']) > 0, s_stats['合計G'] / (s_stats['合計B'] + s_stats['合計R']), 0)

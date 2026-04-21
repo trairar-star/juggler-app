@@ -293,7 +293,7 @@ def main():
             realtime_judgement_page.render_realtime_judgement_page(df_pred_log)
         elif page == "🤖 AIチャット相談":
             from views import ai_chat_page
-            ai_chat_page.render_ai_chat_page(df, df_raw, shop_col, df_events=df_events, df_importance=df_importance, shop_hyperparams=st.session_state["shop_hyperparams"])
+            ai_chat_page.render_ai_chat_page(df, df_raw, shop_col, df_verify, df_events=df_events, df_importance=df_importance, shop_hyperparams=st.session_state["shop_hyperparams"])
         elif page == "📊 予測の実績検証・AI設定":
             df_pred_log = backend.load_prediction_log()
             verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw)

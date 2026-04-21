@@ -33,7 +33,7 @@ def save_chat_history(messages):
     except Exception:
         pass
 
-def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importance=None, shop_hyperparams=None):
+def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None, df_importance=None, shop_hyperparams=None):
     # 会話履歴の初期化 (ファイルから復元)
     if "gemini_messages" not in st.session_state:
         st.session_state.gemini_messages = load_chat_history()
@@ -197,6 +197,63 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
         # --- アプリ内のデータをGemini用に文字列化して準備 ---
         context_data = ""
         
+        # --- カンニングなしテストを実行し、店舗の「スイートスポット」をAIに教える ---
+        backtest_summary = ""
+        if selected_shop != "店舗を選択してください" and not df_verify.empty:
+            try:
+                shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
+                if len(shop_df) >= 50:
+                    actual_features = [f for f in backend.BASE_FEATURES if f in shop_df.columns]
+                    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+                    
+                    shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
+                    max_date = shop_df['対象日付'].max()
+                    cutoff_date = max_date - pd.Timedelta(days=30)
+                    train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
+                    test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+
+                    if len(train_data) >= 30 and len(test_data) >= 10:
+                        X_train, y_train = train_data[actual_features], train_data['target']
+                        X_test, y_test = test_data[actual_features], test_data['target']
+                        
+                        days_diff = (train_data['対象日付'].max() - train_data['対象日付']).dt.days
+                        sample_weights = 0.995 ** days_diff
+                        
+                        params = shop_hyperparams.get(selected_shop, shop_hyperparams.get("デフォルト", {}))
+                        
+                        reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                        reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
+                        
+                        X_train_st = X_train.copy(); X_train_st['predicted_diff'] = reg_model.predict(X_train)
+                        model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                        model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                        
+                        X_test_st = X_test.copy(); X_test_st['predicted_diff'] = reg_model.predict(X_test)
+                        preds = model.predict_proba(X_test_st)[:, 1]
+                        test_data['pred_score'] = preds
+
+                        test_data['valid_play'] = (pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | ((pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & ((pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) >= 750)))
+                        test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
+                        
+                        def get_prob_band(score):
+                            if score >= 0.50: return '50%以上'
+                            elif score >= 0.40: return '40%〜49%'
+                            elif score >= 0.30: return '30%〜39%'
+                            elif score >= 0.20: return '20%〜29%'
+                            else: return '20%未満'
+                        test_data['確率帯'] = test_data['pred_score'].apply(get_prob_band)
+                        
+                        test_stats = test_data.groupby('確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
+                        test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
+                        
+                        test_stats_filtered = test_stats[test_stats['有効稼働数'] >= 5]
+                        if not test_stats_filtered.empty:
+                            best_band_row = test_stats_filtered.loc[test_stats_filtered['勝率'].idxmax()]
+                            backtest_summary = f"\n【最重要・カンニングなしテストによるAI実力分析】\nこの店舗のAI予測では、期待度が「{best_band_row['確率帯']}」の台を狙うのが最も勝率が高く({best_band_row['勝率']:.1f}%)、平均差枚も{int(best_band_row['平均差枚']):+d}枚と優秀です。AIに相談する際は、この確率帯を狙うように指示すると効果的です。\n"
+            except Exception:
+                pass # エラー時は何もせずスキップ
+        context_data += backtest_summary
+
         # --- 予測対象日の取得 (サイドバーで選んだ日付と一致させる) ---
         if not df_predict.empty and 'next_date' in df_predict.columns:
             target_date_val = df_predict['next_date'].max()
@@ -957,6 +1014,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_events=None, df_importa
 - お客様（ユーザー）に対して、上品で柔らかい敬語（「〜ですね」「〜いたしますね」）を使ってください。
 - 偉そうな態度、専門用語の多用は避け、初心者にもわかりやすく寄り添うように案内してください。
 - パチスロは確率のゲームであるため、「絶対に勝てる」「確実に出る」といった断定的な表現は避け、「期待値が高い」「傾向がある」といった客観的な表現に留めてください。
+- 【最重要】提供データに『カンニングなしテストによるAI実力分析』が含まれている場合、それを最優先の判断材料としてください。期待度が最も高い台ではなく、『テスト結果で最も勝率や期待値が高かった確率帯』の台をおすすめし、その理由（「テスト結果によると、このお店では20-40%の台が一番勝てていますので」など）も必ず説明してください。
 
 <回答のガイドライン>
 1. 【結論ファースト】: お客様の質問に対する直接的な答えを最初に述べてください。
