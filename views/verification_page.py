@@ -381,6 +381,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df['結果_合算確率_val'] = np.where(pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0) + pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)) / pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0), 0)
     merged_df['valid_合算確率'] = np.where(merged_df['valid_play'], merged_df['結果_合算確率_val'], np.nan)
 
+    # --- 確率計算用の総G・総B・総Rを追加 ---
+    merged_df['valid_G'] = np.where(merged_df['valid_play'], pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0), 0)
+    merged_df['valid_B'] = np.where(merged_df['valid_play'], pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0), 0)
+    merged_df['valid_R'] = np.where(merged_df['valid_play'], pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0), 0)
+
     # 保存されている予測ログはすでに「各店舗の上位10%」に絞られているため、そのまま使用する
     ai_recom_df = merged_df.copy()
 
@@ -403,8 +408,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             平均差枚=('valid_差枚_actual', 'mean'),
             設定5近似度=('valid_設定5近似度', 'mean'),
             平均期待度=('prediction_score', 'mean'),
-            平均REG確率=('valid_REG確率', 'mean')
+            合計G=('valid_G', 'sum'),
+            合計R=('valid_R', 'sum')
         ).reset_index().sort_values('設定5近似度', ascending=False)
+        ver_stats['平均REG確率'] = np.where(ver_stats['合計R'] > 0, ver_stats['合計G'] / ver_stats['合計R'], 0)
         ver_stats['勝率'] = np.where(ver_stats['有効稼働数'] > 0, ver_stats['勝数'] / ver_stats['有効稼働数'] * 100, 0.0)
         ver_stats['高設定率'] = np.where(ver_stats['高設定有効数'] > 0, ver_stats['高設定数'] / ver_stats['高設定有効数'] * 100, 0.0)
         ver_stats['平均期待度'] = ver_stats['平均期待度'] * 100
@@ -518,8 +525,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         勝数=('valid_win', 'sum'),
         推奨台平均差枚=('valid_差枚_actual', 'mean'),
         平均設定5近似度=('valid_設定5近似度', 'mean'),
-        平均REG確率=('valid_REG確率', 'mean')
+        合計G=('valid_G', 'sum'),
+        合計R=('valid_R', 'sum')
     ).reset_index()
+    day_type_stats['平均REG確率'] = np.where(day_type_stats['合計R'] > 0, day_type_stats['合計G'] / day_type_stats['合計R'], 0)
     day_type_stats['推奨台勝率'] = np.where(day_type_stats['有効稼働数'] > 0, day_type_stats['勝数'] / day_type_stats['有効稼働数'] * 100, 0.0)
     day_type_stats['推奨台高設定率'] = np.where(day_type_stats['高設定有効数'] > 0, day_type_stats['高設定数'] / day_type_stats['高設定有効数'] * 100, 0.0)
     day_type_stats['REG確率'] = day_type_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
@@ -567,8 +576,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 勝数=('valid_win', 'sum'),
                 平均差枚=('valid_差枚_actual', 'mean'),
                 合計差枚=('差枚_actual', 'sum'),
-                平均REG確率=('valid_REG確率', 'mean')
+                合計G=('valid_G', 'sum'),
+                合計R=('valid_R', 'sum')
             ).reset_index()
+            mac_stats['平均REG確率'] = np.where(mac_stats['合計R'] > 0, mac_stats['合計G'] / mac_stats['合計R'], 0)
             mac_stats['勝率'] = np.where(mac_stats['有効稼働数'] > 0, mac_stats['勝数'] / mac_stats['有効稼働数'] * 100, 0.0)
             mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
             mac_stats = mac_stats.sort_values('合計差枚', ascending=False)
@@ -595,8 +606,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 勝数=('valid_win', 'sum'),
                 平均差枚=('valid_差枚_actual', 'mean'),
                 合計差枚=('差枚_actual', 'sum'),
-                平均REG確率=('valid_REG確率', 'mean')
+                合計G=('valid_G', 'sum'),
+                合計R=('valid_R', 'sum')
             ).reset_index()
+            end_stats['平均REG確率'] = np.where(end_stats['合計R'] > 0, end_stats['合計G'] / end_stats['合計R'], 0)
             end_stats['勝率'] = np.where(end_stats['有効稼働数'] > 0, end_stats['勝数'] / end_stats['有効稼働数'] * 100, 0.0)
             end_stats['REG確率'] = end_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
             end_stats = end_stats.sort_values('末尾番号')
@@ -627,8 +640,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         勝数=('valid_win', 'sum'),
                         平均差枚=('valid_差枚_actual', 'mean'),
                         合計差枚=('差枚_actual', 'sum'),
-                        平均REG確率=('valid_REG確率', 'mean')
+                        合計G=('valid_G', 'sum'),
+                        合計R=('valid_R', 'sum')
                     ).reset_index()
+                    isl_stats['平均REG確率'] = np.where(isl_stats['合計R'] > 0, isl_stats['合計G'] / isl_stats['合計R'], 0)
                     isl_stats['勝率'] = np.where(isl_stats['有効稼働数'] > 0, isl_stats['勝数'] / isl_stats['有効稼働数'] * 100, 0.0)
                     isl_stats['REG確率'] = isl_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                     isl_stats = isl_stats.sort_values('合計差枚', ascending=False)
@@ -930,9 +945,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     平均差枚=('valid_差枚_actual', 'mean'),
                     合計差枚=('差枚_actual', 'sum'),
                     平均期待度=('prediction_score', 'mean'),
-                    平均REG確率=('valid_REG確率', 'mean'),
-                    平均合算確率=('valid_合算確率', 'mean')
+                    合計G=('valid_G', 'sum'),
+                    合計B=('valid_B', 'sum'),
+                    合計R=('valid_R', 'sum')
                 ).reset_index()
+                r_stats['平均REG確率'] = np.where(r_stats['合計R'] > 0, r_stats['合計G'] / r_stats['合計R'], 0)
+                r_stats['平均合算確率'] = np.where((r_stats['合計B'] + r_stats['合計R']) > 0, r_stats['合計G'] / (r_stats['合計B'] + r_stats['合計R']), 0)
                 r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
                 r_stats['高設定率'] = np.where(r_stats['高設定有効数'] > 0, r_stats['高設定数'] / r_stats['高設定有効数'] * 100, 0.0)
                 r_stats['平均期待度'] = r_stats['平均期待度'] * 100
@@ -1646,6 +1664,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             test_data['結果_合算確率_val'] = np.where(pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(test_data['next_BIG'], errors='coerce').fillna(0) + pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0)) / pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0), 0)
                             test_data['valid_合算確率'] = np.where(test_data['valid_play'], test_data['結果_合算確率_val'], np.nan)
                             
+                            test_data['valid_G'] = np.where(test_data['valid_play'], pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0), 0)
+                            test_data['valid_B'] = np.where(test_data['valid_play'], pd.to_numeric(test_data['next_BIG'], errors='coerce').fillna(0), 0)
+                            test_data['valid_R'] = np.where(test_data['valid_play'], pd.to_numeric(test_data['next_REG'], errors='coerce').fillna(0), 0)
+                            
                             def get_prob_band(score):
                                 if score >= 0.50: return '50%以上'
                                 elif score >= 0.40: return '40%〜49%'
@@ -1665,9 +1687,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 平均差枚=('valid_next_diff', 'mean'),
                                 合計差枚=('next_diff', 'sum'),
                                 平均期待度=('pred_score', 'mean'),
-                                平均REG確率=('valid_REG確率', 'mean'),
-                                平均合算確率=('valid_合算確率', 'mean')
+                                合計G=('valid_G', 'sum'),
+                                合計B=('valid_B', 'sum'),
+                                合計R=('valid_R', 'sum')
                             ).reset_index()
+                            test_stats['平均REG確率'] = np.where(test_stats['合計R'] > 0, test_stats['合計G'] / test_stats['合計R'], 0)
+                            test_stats['平均合算確率'] = np.where((test_stats['合計B'] + test_stats['合計R']) > 0, test_stats['合計G'] / (test_stats['合計B'] + test_stats['合計R']), 0)
                             test_stats['高設定率'] = np.where(test_stats['高設定有効数'] > 0, test_stats['高設定数'] / test_stats['高設定有効数'] * 100, 0.0)
                             test_stats['勝率'] = np.where(test_stats['有効稼働数'] > 0, test_stats['勝数'] / test_stats['有効稼働数'] * 100, 0.0)
                             test_stats['平均期待度'] = test_stats['平均期待度'] * 100
@@ -1844,6 +1869,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 sim_df['結果_合算確率_val'] = np.where(pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) > 0, (pd.to_numeric(sim_df['next_BIG'], errors='coerce').fillna(0) + pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0)) / pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0), 0)
                 sim_df['valid_合算確率'] = np.where(sim_df['valid_play'], sim_df['結果_合算確率_val'], np.nan)
                 
+                sim_df['valid_G'] = np.where(sim_df['valid_play'], pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0), 0)
+                sim_df['valid_B'] = np.where(sim_df['valid_play'], pd.to_numeric(sim_df['next_BIG'], errors='coerce').fillna(0), 0)
+                sim_df['valid_R'] = np.where(sim_df['valid_play'], pd.to_numeric(sim_df['next_REG'], errors='coerce').fillna(0), 0)
+                
                 # 営業区分の付与
                 if 'next_date' in sim_df.columns and not shop_daily_eval_map.empty:
                     sim_df['日付キー'] = pd.to_datetime(sim_df['next_date']).dt.normalize()
@@ -1868,9 +1897,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         平均差枚=('valid_next_diff', 'mean'),
                         合計差枚=('next_diff', 'sum'),
                         平均期待度=('prediction_score', 'mean'),
-                        平均REG確率=('valid_REG確率', 'mean'),
-                        平均合算確率=('valid_合算確率', 'mean')
+                        合計G=('valid_G', 'sum'),
+                        合計B=('valid_B', 'sum'),
+                        合計R=('valid_R', 'sum')
                     ).reset_index()
+                    s_stats['平均REG確率'] = np.where(s_stats['合計R'] > 0, s_stats['合計G'] / s_stats['合計R'], 0)
+                    s_stats['平均合算確率'] = np.where((s_stats['合計B'] + s_stats['合計R']) > 0, s_stats['合計G'] / (s_stats['合計B'] + s_stats['合計R']), 0)
                     s_stats['勝率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['勝数'] / s_stats['有効稼働数'] * 100, 0.0)
                     s_stats['高設定率'] = np.where(s_stats['高設定有効数'] > 0, s_stats['高設定数'] / s_stats['高設定有効数'] * 100, 0.0)
                     s_stats['平均期待度'] = s_stats['平均期待度'] * 100
