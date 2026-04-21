@@ -1070,10 +1070,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 params = {
                                     'n_estimators': trial.suggest_int('n_estimators', 100, 800, step=50),
                                     'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-                                    'max_depth': trial.suggest_int('max_depth', 2, 5),
-                                    'min_child_samples': trial.suggest_int('min_child_samples', 30, 150, step=10),
-                                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 5.0),
-                                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 5.0)
+                                    'max_depth': trial.suggest_int('max_depth', 3, 6),
+                                    'min_child_samples': trial.suggest_int('min_child_samples', 20, 80, step=10),
+                                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 2.0),
+                                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 2.0)
                                 }
                                 max_leaves = min(127, (2 ** params['max_depth']) - 1)
                                 params['num_leaves'] = trial.suggest_int('num_leaves', 7, max_leaves)
@@ -1124,8 +1124,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                     high_rate = valid_target['valid_high'].mean()
                                     avg_diff = valid_target['next_diff'].mean()
                                     
-                                    # 勝率等に加え、期待度の順位が正しいか(AUC)を強く評価する
-                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10) + (auc * 200)
+                                    # 勝率と高設定率を主軸にしつつ、順位の正しさ(AUC)も加味する
+                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 20) + (max(0, auc - 0.5) * 200)
                                     return score
                                 except Exception:
                                     return -1.0
@@ -1733,14 +1733,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sample_weights = 0.995 ** days_diff
                     
                     param_candidates = [
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 50, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
-                        {'n_estimators': 200, 'learning_rate': 0.02, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 2.0, 'reg_lambda': 2.0},
-                        {'n_estimators': 400, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
-                        {'n_estimators': 150, 'learning_rate': 0.05, 'num_leaves': 7,  'max_depth': 2, 'min_child_samples': 80, 'reg_alpha': 3.0, 'reg_lambda': 1.0},
-                        {'n_estimators': 300, 'learning_rate': 0.02, 'num_leaves': 31, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
-                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 70, 'reg_alpha': 1.0, 'reg_lambda': 2.0},
-                        {'n_estimators': 250, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 300, 'learning_rate': 0.04, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 50, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
+                        {'n_estimators': 300, 'learning_rate': 0.02, 'num_leaves': 31, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.5},
+                        {'n_estimators': 250, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 150, 'learning_rate': 0.05, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
                     ]
                     
                     best_score = -9999
@@ -1792,8 +1792,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                         win_rate = valid_target['valid_win'].mean()
                                         high_rate = valid_target['valid_high'].mean()
                                         avg_diff = valid_target['next_diff'].mean()
-                                        # 勝率等に加え、期待度の順位が正しいか(AUC)を強く評価する
-                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10) + (auc * 200)
+                                        # 勝率と高設定率を主軸にしつつ、順位の正しさ(AUC)も加味する
+                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 20) + (max(0, auc - 0.5) * 200)
                             if score > best_score:
                                 best_score = score
                                 best_params = params
