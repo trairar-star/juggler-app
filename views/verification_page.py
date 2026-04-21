@@ -1094,7 +1094,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                     'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 3.0)
                                 }
                                 max_leaves = min(127, (2 ** params['max_depth']) - 1)
-                                params['num_leaves'] = trial.suggest_int('num_leaves', 7, max_leaves)
+                                params['num_leaves'] = trial.suggest_int('num_leaves', min(7, max_leaves), max_leaves)
                                 
                                 try:
                                     reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
