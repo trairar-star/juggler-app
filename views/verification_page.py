@@ -1049,14 +1049,19 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             if len(shop_df) < 150:
                                 continue
                             
+                            shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
                             shop_df = shop_df.sort_values('対象日付')
-                            split_idx = int(len(shop_df) * 0.8)
-                            train_data = shop_df.iloc[:split_idx]
-                            test_data = shop_df.iloc[split_idx:]
+                            max_date = shop_df['対象日付'].max()
+                            cutoff_date = max_date - pd.Timedelta(days=30)
+                            
+                            train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
+                            test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+                            
+                            if len(train_data) < 30 or len(test_data) < 10:
+                                continue
                             
                             X_train, y_train = train_data[actual_features], train_data['target']
                             X_test, y_test = test_data[actual_features], test_data['target']
-                            
                             max_date = train_data['対象日付'].max()
                             days_diff = (max_date - train_data['対象日付']).dt.days
                             sample_weights = 0.995 ** days_diff
@@ -1074,23 +1079,46 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 params['num_leaves'] = trial.suggest_int('num_leaves', 7, max_leaves)
                                 
                                 try:
-                                    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                                    model.fit(X_train, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
-                                    preds = model.predict_proba(X_test)[:, 1]
+                                    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                                    reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
+                                    
+                                    X_train_st = X_train.copy()
+                                    X_train_st['predicted_diff'] = reg_model.predict(X_train)
+                                    
+                                    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                                    model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
+                                    
+                                    X_test_st = X_test.copy()
+                                    X_test_st['predicted_diff'] = reg_model.predict(X_test)
+                                    
+                                    preds = model.predict_proba(X_test_st)[:, 1]
                                     test_eval = test_data.copy()
                                     test_eval['pred_score'] = preds
                                     
                                     if test_eval['pred_score'].nunique() <= 1:
                                         return -1.0
                                     
+                                    test_eval['valid_play'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                                                           ((pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                                                            ((pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) >= 750)))
+                                    test_eval['valid_win'] = test_eval['valid_play'] & (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) > 0)
+                                    test_eval['valid_high'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) & (test_eval['target'] == 1)
+                                    
                                     threshold = test_eval['pred_score'].quantile(0.85)
                                     target_df = test_eval[test_eval['pred_score'] >= threshold]
-                                    if len(target_df) == 0: return -1.0
                                     
-                                    precision = target_df['target'].mean()
-                                    avg_diff = target_df['next_diff'].mean()
-                                    coverage = len(target_df) / len(test_eval)
-                                    score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                                    if len(target_df) == 0: 
+                                        return -1.0
+                                        
+                                    valid_target = target_df[target_df['valid_play']]
+                                    if len(valid_target) == 0:
+                                        return -1.0
+                                        
+                                    win_rate = valid_target['valid_win'].mean()
+                                    high_rate = valid_target['valid_high'].mean()
+                                    avg_diff = valid_target['next_diff'].mean()
+                                    
+                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10)
                                     return score
                                 except Exception:
                                     return -1.0
@@ -1679,13 +1707,19 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 if len(shop_df) < 150:
                     st.error("データが少なすぎて自動チューニングを実行できません。150件以上のデータが必要です。")
                 else:
+                    shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
                     shop_df = shop_df.sort_values('対象日付')
-                    split_idx = int(len(shop_df) * 0.8)
-                    train_data = shop_df.iloc[:split_idx]
-                    test_data = shop_df.iloc[split_idx:]
+                    max_date = shop_df['対象日付'].max()
+                    cutoff_date = max_date - pd.Timedelta(days=30)
                     
-                    X_train, y_train = train_data[actual_features], train_data['target']
-                    X_test, y_test = test_data[actual_features], test_data['target']
+                    train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
+                    test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+                    
+                    if len(train_data) < 30 or len(test_data) < 10:
+                        st.error("直近1ヶ月またはそれ以前のデータが不足しているため、カンニングなしでの自動チューニングが実行できません。")
+                    else:
+                        X_train, y_train = train_data[actual_features], train_data['target']
+                        X_test, y_test = test_data[actual_features], test_data['target']
                     
                     max_date = train_data['対象日付'].max()
                     days_diff = (max_date - train_data['対象日付']).dt.days
@@ -1730,15 +1764,26 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             if test_eval['pred_score'].nunique() <= 1:
                                 score = -1
                             else:
-                                # データ上の裏付けに基づく評価
+                                test_eval['valid_play'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
+                                                       ((pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
+                                                        ((pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) >= 750)))
+                                test_eval['valid_win'] = test_eval['valid_play'] & (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) > 0)
+                                test_eval['valid_high'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) & (test_eval['target'] == 1)
+                                
                                 threshold = test_eval['pred_score'].quantile(0.85)
                                 target_df = test_eval[test_eval['pred_score'] >= threshold]
-                                if len(target_df) == 0: score = -1
+                                
+                                if len(target_df) == 0:
+                                    score = -1
                                 else:
-                                    precision = target_df['target'].mean()
-                                    avg_diff = target_df['next_diff'].mean()
-                                    coverage = len(target_df) / len(test_eval)
-                                    score = (precision * 100) + (avg_diff / 10) + (coverage * 50)
+                                    valid_target = target_df[target_df['valid_play']]
+                                    if len(valid_target) == 0:
+                                        score = -1
+                                    else:
+                                        win_rate = valid_target['valid_win'].mean()
+                                        high_rate = valid_target['valid_high'].mean()
+                                        avg_diff = valid_target['next_diff'].mean()
+                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10)
                             if score > best_score:
                                 best_score = score
                                 best_params = params
