@@ -3,193 +3,217 @@ import numpy as np
 import streamlit as st # type: ignore
 import backend
 
+@st.cache_data(show_spinner=False)
+def _prepare_island_map_data(df_raw, df_pred_log, selected_shop, shop_col, penalty_reg, penalty_big, low_g_penalty):
+    shop_all_df = df_raw[df_raw[shop_col] == selected_shop].copy()
+    shop_all_df['対象日付'] = pd.to_datetime(shop_all_df['対象日付'], errors='coerce')
+    shop_all_df['台番号'] = shop_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+    shop_all_df = shop_all_df.sort_values(['台番号', '対象日付'])
+
+    if not df_pred_log.empty:
+        log_temp = df_pred_log.copy()
+        if '予測対象日' in log_temp.columns:
+            log_temp['予測対象日_dt'] = pd.to_datetime(log_temp['予測対象日'], errors='coerce').dt.date
+            shop_col_log = '店名' if '店名' in log_temp.columns else '店舗名'
+            if shop_col_log in log_temp.columns:
+                log_shop = log_temp[log_temp[shop_col_log] == selected_shop].copy()
+                if not log_shop.empty:
+                    log_shop['台番号'] = log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                    log_shop['prediction_score'] = pd.to_numeric(log_shop['prediction_score'], errors='coerce')
+                    if '実行日時' in log_shop.columns:
+                        log_shop = log_shop.sort_values('実行日時', ascending=False).drop_duplicates(['台番号', '予測対象日_dt'])
+                    shop_all_df['対象日付_dt'] = shop_all_df['対象日付'].dt.date
+                    shop_all_df = pd.merge(shop_all_df, log_shop[['台番号', '予測対象日_dt', 'prediction_score']], left_on=['台番号', '対象日付_dt'], right_on=['台番号', '予測対象日_dt'], how='left')
+                    shop_all_df = shop_all_df.drop(columns=['対象日付_dt', '予測対象日_dt'], errors='ignore')
+
+    shop_avg_g = shop_all_df['累計ゲーム'].mean() if not shop_all_df.empty else 4000
+    if pd.isna(shop_avg_g):
+        shop_avg_g = 4000
+        
+    def calc_score_all(row):
+        g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
+        act_b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
+        act_r = pd.to_numeric(row.get('REG', 0), errors='coerce')
+        diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
+        machine = row.get('機種名', '')
+        
+        return backend.calculate_setting_score(
+            g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
+            shop_avg_g=shop_avg_g, penalty_reg=penalty_reg, penalty_big=penalty_big,
+            low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
+        )
+
+    if not shop_all_df.empty:
+        shop_all_df['結果点数'] = shop_all_df.apply(calc_score_all, axis=1)
+    else:
+        shop_all_df['結果点数'] = np.nan
+        
+    shop_all_df = shop_all_df.sort_values(['台番号', '対象日付'])
+    shop_all_df['prev_差枚'] = shop_all_df.groupby('台番号')['差枚'].shift(1)
+    shop_all_df['prev_累計ゲーム'] = shop_all_df.groupby('台番号')['累計ゲーム'].shift(1)
+    shop_all_df['prev_BIG'] = shop_all_df.groupby('台番号')['BIG'].shift(1)
+    shop_all_df['prev_REG'] = shop_all_df.groupby('台番号')['REG'].shift(1)
+    if 'prediction_score' in shop_all_df.columns:
+        shop_all_df['prev_pred'] = shop_all_df.groupby('台番号')['prediction_score'].shift(1)
+    if '結果点数' in shop_all_df.columns:
+        shop_all_df['prev_score'] = shop_all_df.groupby('台番号')['結果点数'].shift(1)
+
+    return shop_all_df
+
 def render_island_map_page(df_raw, df_pred_log, df_island):
-    # ==========================================
-    # UIコントロール群を一つのコンテナにまとめる
-    # ==========================================
-    ui_container = st.container()
-    
-    with ui_container:
+    col_h1, col_h2 = st.columns([4, 1])
+    with col_h1:
         st.header("🗺️ 島マップ (神視点ビュー)")
         st.caption("島マスターに登録された情報に基づき、各島（列）の出玉状況を上から見た図で直感的に確認できます。塊や並びの投入箇所が一目で分かります。")
+    with col_h2:
+        st.components.v1.html("""
+            <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 36px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                🖥️ 領域を最大化
+            </button>
+            <script>
+            function toggleFullscreen() {
+                const doc = window.parent.document;
+                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                const btn = document.getElementById('fs-btn');
+                
+                if (!doc.fullscreenElement) {
+                    if (mainBlock) {
+                        mainBlock.requestFullscreen().then(() => {
+                            mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
+                            mainBlock.style.maxWidth = '100%';
+                            mainBlock.style.padding = '1rem';
+                            mainBlock.style.overflowY = 'auto';
+                            btn.innerHTML = '↙️ 元に戻す';
+                        }).catch(err => { console.log('Error:', err); });
+                    }
+                } else { 
+                    doc.exitFullscreen(); 
+                }
+            }
+            
+            window.parent.document.addEventListener('fullscreenchange', () => {
+                const doc = window.parent.document;
+                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                const btn = document.getElementById('fs-btn');
+                if (!doc.fullscreenElement) {
+                    if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
+                    if (btn) btn.innerHTML = '🖥️ 領域を最大化';
+                }
+            });
+            </script>
+        """, height=50)
 
-        if df_raw.empty:
-            st.warning("データがありません。")
-            st.stop()
+    if df_raw.empty:
+        st.warning("データがありません。")
+        st.stop()
 
-        specs = backend.get_machine_specs()
-        date_col = '対象日付'
-        temp_df = df_raw.copy()
-        temp_df[date_col] = pd.to_datetime(temp_df[date_col], errors='coerce')
-        available_dates = sorted(temp_df[date_col].dropna().dt.date.unique(), reverse=True)
+    specs = backend.get_machine_specs()
+    date_col = '対象日付'
+    temp_df = df_raw.copy()
+    temp_df[date_col] = pd.to_datetime(temp_df[date_col], errors='coerce')
+    available_dates = sorted(temp_df[date_col].dropna().dt.date.unique(), reverse=True)
 
-        if not available_dates:
-            st.warning("有効な日付データがありません。")
-            st.stop()
+    if not available_dates:
+        st.warning("有効な日付データがありません。")
+        st.stop()
 
-        col_d, col_s = st.columns(2)
-        selected_date = col_d.selectbox("📅 確認する日付を選択", available_dates)
+    shop_col = '店名' if '店名' in temp_df.columns else ('店舗名' if '店舗名' in temp_df.columns else None)
+    shops = ["店舗を選択してください"] + sorted(list(temp_df[shop_col].dropna().unique()))
+    
+    default_index = 0
+    saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
+    if saved_shop in shops:
+        default_index = shops.index(saved_shop)
 
-        shop_col = '店名' if '店名' in temp_df.columns else ('店舗名' if '店舗名' in temp_df.columns else None)
-        df_day = temp_df[temp_df[date_col].dt.date == selected_date].copy()
-        shops = ["店舗を選択してください"] + sorted(list(df_day[shop_col].unique()))
+    # --- サイドバーにコントロールパネルを配置 ---
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("🗺️ 島マップ 操作パネル")
+        st.caption("※常に画面に表示されます。日付や指標をコロコロ変えて、直感的に変化を確認してください。")
         
-        default_index = 0
-        saved_shop = st.session_state.get("global_selected_shop", "店舗を選択してください")
-        if saved_shop in shops:
-            default_index = shops.index(saved_shop)
-
-        selected_shop = col_s.selectbox("🏬 店舗を選択", shops, index=default_index)
+        selected_date = st.selectbox("📅 確認する日付を選択", available_dates)
+        selected_shop = st.selectbox("🏬 店舗を選択", shops, index=default_index)
+        
         if selected_shop != "店舗を選択してください":
             st.session_state["global_selected_shop"] = selected_shop
 
-        if selected_shop == "店舗を選択してください":
-            st.info("👆 店舗を選択すると、その日の島マップが表示されます。")
-            st.stop()
-
-        if df_island is None or df_island.empty:
-            st.warning("島マスターのデータがありません。サイドバーの「島マスター管理」から島を登録してください。")
-            st.stop()
-
-        shop_islands = df_island[df_island['店名'] == selected_shop]
-        if shop_islands.empty:
-            st.info("この店舗に登録されている島情報がありません。サイドバーの「島マスター管理」から島を登録してください。")
-            st.stop()
-
-        st.divider()
-
-        # --- 島のパース処理 (UIに表示するため先に実行) ---
-        parsed_islands = []
-        for _, i_row in shop_islands.iterrows():
-            i_name = i_row.get('島名')
-            machines = []
-            rule = str(i_row.get('台番号ルール', ''))
-            if rule and rule.strip() != '' and rule != 'nan':
-                for part in rule.split(','):
-                    part = part.strip()
-                    if not part: continue
-                    if '-' in part:
-                        try:
-                            s_str, e_str = part.split('-', 1)
-                            machines.extend(range(int(s_str), int(e_str) + 1))
-                        except: pass
-                    else:
-                        try: machines.append(int(part))
-                        except: pass
-            else:
-                try:
-                    s = int(i_row.get('開始台番号', 0))
-                    e = int(i_row.get('終了台番号', 0))
-                    if s > 0 and e >= s: machines.extend(range(s, e + 1))
-                except: pass
-                
-            machines = sorted(list(set(machines)))
-            if machines:
-                parsed_islands.append({
-                    'name': i_name,
-                    'type': str(i_row.get('島属性', '普通')),
-                    'corner': str(i_row.get('メイン角番', '')).strip(),
-                    'machines': machines
-                })
-
-        if not parsed_islands:
-            st.info("島に有効な台番号が登録されていません。")
-            st.stop()
-
-        # --- コントロールパネル (指標、レイアウト、並び替え、フィルター) ---
-        col_fs, col_c1, col_c2 = st.columns([1, 2.5, 2])
-        with col_fs:
-            st.components.v1.html("""
-                <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 40px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; margin-top: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-                    🖥️ 領域を最大化
-                </button>
-                <script>
-                function toggleFullscreen() {
-                    const doc = window.parent.document;
-                    const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
-                    const btn = document.getElementById('fs-btn');
-                    
-                    // UIコンテナ（一番上のブロック）を取得してSticky化する
-                    const topBlock = mainBlock ? mainBlock.querySelector('[data-testid="stVerticalBlock"] > div:first-child') : null;
-                    
-                    if (!doc.fullscreenElement) {
-                        if (mainBlock) {
-                            mainBlock.requestFullscreen().then(() => {
-                                mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
-                                mainBlock.style.maxWidth = '100%';
-                                mainBlock.style.padding = '1rem';
-                                mainBlock.style.overflowY = 'auto';
-                                
-                                if (topBlock) {
-                                    topBlock.style.position = 'sticky';
-                                    topBlock.style.top = '-1rem';
-                                    topBlock.style.zIndex = '9999';
-                                    topBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
-                                    topBlock.style.paddingTop = '1rem';
-                                    topBlock.style.paddingBottom = '0.5rem';
-                                    topBlock.style.borderBottom = '2px solid #ddd';
-                                }
-                                
-                                btn.innerHTML = '↙️ 元に戻す';
-                            }).catch(err => { console.log('Error:', err); });
-                        }
-                    } else { 
-                        doc.exitFullscreen(); 
-                    }
-                }
-                
-                window.parent.document.addEventListener('fullscreenchange', () => {
-                    const doc = window.parent.document;
-                    const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
-                    const btn = document.getElementById('fs-btn');
-                    const topBlock = mainBlock ? mainBlock.querySelector('[data-testid="stVerticalBlock"] > div:first-child') : null;
-                    
-                    if (!doc.fullscreenElement) {
-                        if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
-                        if (topBlock) {
-                            topBlock.style.position = '';
-                            topBlock.style.top = '';
-                            topBlock.style.zIndex = '';
-                            topBlock.style.backgroundColor = '';
-                            topBlock.style.paddingTop = '';
-                            topBlock.style.paddingBottom = '';
-                            topBlock.style.borderBottom = '';
-                        }
-                        if (btn) btn.innerHTML = '🖥️ 領域を最大化';
-                    }
-                });
-                </script>
-            """, height=75)
-        with col_c1:
-            map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"], horizontal=True)
-        with col_c2:
-            layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み・島内横スクロール)", "すべて横一列に繋げる", "島内で折り返す (コンパクト)"], horizontal=True)
-
-        island_names = [isl['name'] for isl in parsed_islands]
+        map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"])
+        layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み・島内横スクロール)", "すべて横一列に繋げる", "島内で折り返す (コンパクト)"])
         
-        shop_order_key = f"island_order_{selected_shop}"
-        if shop_order_key not in st.session_state:
-            st.session_state[shop_order_key] = island_names
-        else:
-            current_valid_order = [n for n in st.session_state[shop_order_key] if n in island_names]
-            if current_valid_order != st.session_state[shop_order_key]:
-                st.session_state[shop_order_key] = current_valid_order
-
-        selected_island_names = st.multiselect(
-            "🛠️ 表示する島と順番（×で消して選び直すことで順番を変更できます）", 
-            options=island_names, 
-            key=shop_order_key,
-            help="ここで選択した順番通りに島が配置されます。×ボタンで島を消し、再度追加することで一番下に移動し、並べ替えができます。"
-        )
-
-        with st.expander("🔍 絞り込みフィルター (条件に合わない台をグレーアウト)", expanded=False):
-            st.caption("条件に合致しない台を目立たなくし、目的の台（凹み台や高稼働台など）を浮き彫りにします。")
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=3000, step=500)
-            with col_f2:
-                filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
+        with st.expander("🔍 絞り込みフィルター (グレーアウト)", expanded=False):
+            filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=3000, step=500)
+            filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
             filter_min_diff, filter_max_diff = filter_diff_range
+
+    if selected_shop == "店舗を選択してください":
+        st.info("👆 サイドバーから店舗を選択すると、その日の島マップが表示されます。")
+        st.stop()
+
+    if df_island is None or df_island.empty:
+        st.warning("島マスターのデータがありません。サイドバーの「島マスター管理」から島を登録してください。")
+        st.stop()
+
+    shop_islands = df_island[df_island['店名'] == selected_shop]
+    if shop_islands.empty:
+        st.info("この店舗に登録されている島情報がありません。サイドバーの「島マスター管理」から島を登録してください。")
+        st.stop()
+
+    st.divider()
+
+    # --- 島のパース処理 ---
+    parsed_islands = []
+    for _, i_row in shop_islands.iterrows():
+        i_name = i_row.get('島名')
+        machines = []
+        rule = str(i_row.get('台番号ルール', ''))
+        if rule and rule.strip() != '' and rule != 'nan':
+            for part in rule.split(','):
+                part = part.strip()
+                if not part: continue
+                if '-' in part:
+                    try:
+                        s_str, e_str = part.split('-', 1)
+                        machines.extend(range(int(s_str), int(e_str) + 1))
+                    except: pass
+                else:
+                    try: machines.append(int(part))
+                    except: pass
+        else:
+            try:
+                s = int(i_row.get('開始台番号', 0))
+                e = int(i_row.get('終了台番号', 0))
+                if s > 0 and e >= s: machines.extend(range(s, e + 1))
+            except: pass
+            
+        machines = sorted(list(set(machines)))
+        if machines:
+            parsed_islands.append({
+                'name': i_name,
+                'type': str(i_row.get('島属性', '普通')),
+                'corner': str(i_row.get('メイン角番', '')).strip(),
+                'machines': machines
+            })
+
+    if not parsed_islands:
+        st.info("島に有効な台番号が登録されていません。")
+        st.stop()
+
+    island_names = [isl['name'] for isl in parsed_islands]
+    
+    shop_order_key = f"island_order_{selected_shop}"
+    if shop_order_key not in st.session_state:
+        st.session_state[shop_order_key] = island_names
+    else:
+        current_valid_order = [n for n in st.session_state[shop_order_key] if n in island_names]
+        if current_valid_order != st.session_state[shop_order_key]:
+            st.session_state[shop_order_key] = current_valid_order
+
+    selected_island_names = st.multiselect(
+        "🛠️ 表示する島と順番（×で消して選び直すことで順番を変更できます）", 
+        options=island_names, 
+        key=shop_order_key,
+        help="ここで選択した順番通りに島が配置されます。×ボタンで島を消し、再度追加することで一番下に移動し、並べ替えができます。"
+    )
 
     display_islands = []
     for name in selected_island_names:
@@ -203,71 +227,16 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         st.stop()
 
     # ==========================================
-    # データ処理 (UIには見えないバックグラウンド処理)
+    # データ処理 (キャッシュ使用で高速化)
     # ==========================================
+    penalty_reg = st.session_state.get('penalty_reg', 15)
+    penalty_big = st.session_state.get('penalty_big', 5)
+    low_g_penalty = st.session_state.get('low_g_penalty', 30)
     
-    # データ準備
-    shop_all_df = temp_df[temp_df[shop_col] == selected_shop].copy()
-    shop_all_df['台番号'] = shop_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-    shop_all_df = shop_all_df.sort_values(['台番号', date_col])
-
-    # --- 1. AI期待度の結合 (全日程) ---
-    if not df_pred_log.empty:
-        log_temp = df_pred_log.copy()
-        if '予測対象日' in log_temp.columns:
-            log_temp['予測対象日_dt'] = pd.to_datetime(log_temp['予測対象日'], errors='coerce').dt.date
-            shop_col_log = '店名' if '店名' in log_temp.columns else '店舗名'
-            if shop_col_log in log_temp.columns:
-                log_shop = log_temp[log_temp[shop_col_log] == selected_shop].copy()
-                if not log_shop.empty:
-                    log_shop['台番号'] = log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-                    log_shop['prediction_score'] = pd.to_numeric(log_shop['prediction_score'], errors='coerce')
-                    if '実行日時' in log_shop.columns:
-                        log_shop = log_shop.sort_values('実行日時', ascending=False).drop_duplicates(['台番号', '予測対象日_dt'])
-                    shop_all_df['対象日付_dt'] = shop_all_df[date_col].dt.date
-                    shop_all_df = pd.merge(shop_all_df, log_shop[['台番号', '予測対象日_dt', 'prediction_score']], left_on=['台番号', '対象日付_dt'], right_on=['台番号', '予測対象日_dt'], how='left')
-                    shop_all_df = shop_all_df.drop(columns=['対象日付_dt', '予測対象日_dt'], errors='ignore')
-
-    # --- 2. 結果点数の計算 (全日程) ---
-    shop_avg_g = shop_all_df['累計ゲーム'].mean() if not shop_all_df.empty else 4000
-    if pd.isna(shop_avg_g):
-        shop_avg_g = 4000
-        
-    def calc_score_all(row):
-        g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
-        act_b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
-        act_r = pd.to_numeric(row.get('REG', 0), errors='coerce')
-        diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
-        machine = row.get('機種名', '')
-        
-        penalty_reg = st.session_state.get('penalty_reg', 15)
-        penalty_big = st.session_state.get('penalty_big', 5)
-        low_g_penalty = st.session_state.get('low_g_penalty', 30)
-        
-        return backend.calculate_setting_score(
-            g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
-            shop_avg_g=shop_avg_g, penalty_reg=penalty_reg, penalty_big=penalty_big,
-            low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
-        )
-
-    if not shop_all_df.empty:
-        shop_all_df['結果点数'] = shop_all_df.apply(calc_score_all, axis=1)
-    else:
-        shop_all_df['結果点数'] = np.nan
-        
-    # --- 3. 前日データの計算と比較用シフト ---
-    shop_all_df = shop_all_df.sort_values(['台番号', date_col])
-    shop_all_df['prev_差枚'] = shop_all_df.groupby('台番号')['差枚'].shift(1)
-    shop_all_df['prev_累計ゲーム'] = shop_all_df.groupby('台番号')['累計ゲーム'].shift(1)
-    shop_all_df['prev_BIG'] = shop_all_df.groupby('台番号')['BIG'].shift(1)
-    shop_all_df['prev_REG'] = shop_all_df.groupby('台番号')['REG'].shift(1)
-    if 'prediction_score' in shop_all_df.columns:
-        shop_all_df['prev_pred'] = shop_all_df.groupby('台番号')['prediction_score'].shift(1)
-    if '結果点数' in shop_all_df.columns:
-        shop_all_df['prev_score'] = shop_all_df.groupby('台番号')['結果点数'].shift(1)
+    shop_all_df = _prepare_island_map_data(df_raw, df_pred_log, selected_shop, shop_col, penalty_reg, penalty_big, low_g_penalty)
 
     # 当日データに絞り込み
-    df_target = shop_all_df[shop_all_df[date_col].dt.date == selected_date].copy()
+    df_target = shop_all_df[shop_all_df['対象日付'].dt.date == selected_date].copy()
 
     # 台データ辞書の作成
     mac_data_dict = {}
@@ -376,6 +345,11 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
                 m_name = str(data['mac_name']).replace('nan', '')
 
                 prev_diff_val = data.get('prev_diff')
+                prev_g_val = pd.to_numeric(data.get('prev_g', 0), errors='coerce')
+                prev_b_val = pd.to_numeric(data.get('prev_b', 0), errors='coerce')
+                prev_r_val = pd.to_numeric(data.get('prev_r', 0), errors='coerce')
+                prev_pred_val = data.get('prev_pred')
+                prev_score_val = data.get('prev_score')
                 rs_val = pd.to_numeric(data.get('result_score', np.nan), errors='coerce')
                 result_score = float(rs_val) if pd.notna(rs_val) else np.nan
                 
@@ -423,10 +397,26 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
                     else:
                         main_text = "-"
                         bg_color, text_color = "#f5f5f5", "#9e9e9e"
-                if pd.notna(prev_diff_val):
+                if map_metric == "差枚" and pd.notna(prev_diff_val):
                     p_diff = int(prev_diff_val)
                     p_color = "#d32f2f" if p_diff > 0 else "#1565c0" if p_diff < 0 else "#9e9e9e"
                     prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:{p_diff:+d}</div>"
+                elif map_metric == "REG確率" and pd.notna(prev_r_val) and prev_r_val > 0:
+                    p_reg_prob = prev_g_val / prev_r_val
+                    p_color = "#ef6c00" if p_reg_prob <= spec_r5 else "#f57f17" if p_reg_prob <= spec_r5 * 1.15 else "#9e9e9e"
+                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:1/{int(p_reg_prob)}</div>"
+                elif map_metric == "合算確率" and pd.notna(prev_b_val) and pd.notna(prev_r_val) and (prev_b_val + prev_r_val) > 0:
+                    p_tot_prob = prev_g_val / (prev_b_val + prev_r_val)
+                    p_color = "#8e24aa" if p_tot_prob <= spec_t5 else "#ab47bc" if p_tot_prob <= spec_t5 * 1.1 else "#9e9e9e"
+                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:1/{int(p_tot_prob)}</div>"
+                elif map_metric == "AI期待度(事前の予測)" and pd.notna(prev_pred_val):
+                    p_pred = float(prev_pred_val)
+                    p_color = "#d32f2f" if p_pred >= 0.50 else "#ef5350" if p_pred >= 0.30 else "#9e9e9e"
+                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:{int(p_pred*100)}%</div>"
+                elif map_metric == "結果点数(設定5近似度)" and pd.notna(prev_score_val):
+                    p_score = float(prev_score_val)
+                    p_color = "#d32f2f" if p_score >= 80 else "#ef5350" if p_score >= 60 else "#9e9e9e"
+                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:{p_score:.1f}</div>"
                 if g < filter_min_g or diff > filter_max_diff or diff < filter_min_diff: bg_color, text_color, border_color, opacity = "#fafafa", "#ccc", "#eee", "0.2"
             else:
                 if filter_min_g > 0: opacity = "0.2"
