@@ -1070,22 +1070,22 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 params = {
                                     'n_estimators': trial.suggest_int('n_estimators', 100, 800, step=50),
                                     'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-                                    'max_depth': trial.suggest_int('max_depth', 3, 6),
-                                    'min_child_samples': trial.suggest_int('min_child_samples', 20, 80, step=10),
-                                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 2.0),
-                                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 2.0)
+                                    'max_depth': trial.suggest_int('max_depth', 3, 7),
+                                    'min_child_samples': trial.suggest_int('min_child_samples', 10, 60, step=10),
+                                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 1.0),
+                                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 1.0)
                                 }
                                 max_leaves = min(127, (2 ** params['max_depth']) - 1)
                                 params['num_leaves'] = trial.suggest_int('num_leaves', 7, max_leaves)
                                 
                                 try:
-                                    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                                    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
                                     reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
                                     
                                     X_train_st = X_train.copy()
                                     X_train_st['predicted_diff'] = reg_model.predict(X_train)
                                     
-                                    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                                    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
                                     model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
                                     
                                     X_test_st = X_test.copy()
@@ -1124,8 +1124,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                     high_rate = valid_target['valid_high'].mean()
                                     avg_diff = valid_target['next_diff'].mean()
                                     
-                                    # 勝率と高設定率を主軸にしつつ、順位の正しさ(AUC)も加味する
-                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 20) + (max(0, auc - 0.5) * 200)
+                                    base_win_rate = test_eval['valid_win'].mean()
+                                    win_lift = max(0, win_rate - base_win_rate)
+                                    
+                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10) + (win_lift * 200) + (max(0, auc - 0.5) * 100)
                                     return score
                                 except Exception:
                                     return -1.0
@@ -1733,13 +1735,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sample_weights = 0.995 ** days_diff
                     
                     param_candidates = [
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
-                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
                         {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 50, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
-                        {'n_estimators': 300, 'learning_rate': 0.02, 'num_leaves': 31, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.5},
-                        {'n_estimators': 250, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 300, 'learning_rate': 0.02, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.1},
+                        {'n_estimators': 250, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.1, 'reg_lambda': 0.0},
+                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 15, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
                         {'n_estimators': 150, 'learning_rate': 0.05, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
                     ]
                     
@@ -1749,13 +1751,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     
                     for i, params in enumerate(param_candidates):
                         try:
-                            reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                            reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
                             reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
                             
                             X_train_st = X_train.copy()
                             X_train_st['predicted_diff'] = reg_model.predict(X_train)
                             
-                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
                             model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
                             
                             X_test_st = X_test.copy()
@@ -1792,8 +1794,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                         win_rate = valid_target['valid_win'].mean()
                                         high_rate = valid_target['valid_high'].mean()
                                         avg_diff = valid_target['next_diff'].mean()
-                                        # 勝率と高設定率を主軸にしつつ、順位の正しさ(AUC)も加味する
-                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 20) + (max(0, auc - 0.5) * 200)
+                                        
+                                        base_win_rate = test_eval['valid_win'].mean()
+                                        win_lift = max(0, win_rate - base_win_rate)
+                                        
+                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10) + (win_lift * 200) + (max(0, auc - 0.5) * 100)
                             if score > best_score:
                                 best_score = score
                                 best_params = params
