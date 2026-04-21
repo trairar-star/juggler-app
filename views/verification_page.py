@@ -1070,8 +1070,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                 params = {
                                     'n_estimators': trial.suggest_int('n_estimators', 100, 800, step=50),
                                     'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, log=True),
-                                    'max_depth': trial.suggest_int('max_depth', 3, 7),
-                                    'min_child_samples': trial.suggest_int('min_child_samples', 10, 100, step=10),
+                                    'max_depth': trial.suggest_int('max_depth', 2, 5),
+                                    'min_child_samples': trial.suggest_int('min_child_samples', 30, 150, step=10),
                                     'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 5.0),
                                     'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 5.0)
                                 }
@@ -1733,18 +1733,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sample_weights = 0.995 ** days_diff
                     
                     param_candidates = [
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 30, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
-                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 20, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 1.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 50, 'reg_alpha': 0.1, 'reg_lambda': 1.0},
-                        {'n_estimators': 200, 'learning_rate': 0.05, 'num_leaves': 31, 'max_depth': 5, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.03, 'num_leaves': 31, 'max_depth': 6, 'min_child_samples': 30, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
-                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 2.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 600, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.0, 'reg_lambda': 2.0},
-                        {'n_estimators': 300, 'learning_rate': 0.05, 'num_leaves': 63, 'max_depth': 7, 'min_child_samples': 15, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
-                        {'n_estimators': 100, 'learning_rate': 0.10, 'num_leaves': 7, 'max_depth': 3, 'min_child_samples': 20, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
-                        {'n_estimators': 400, 'learning_rate': 0.02, 'num_leaves': 25, 'max_depth': 5, 'min_child_samples': 30, 'reg_alpha': 0.5, 'reg_lambda': 1.0},
-                        {'n_estimators': 200, 'learning_rate': 0.04, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 20, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
+                        {'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 50, 'reg_alpha': 1.0, 'reg_lambda': 1.0},
+                        {'n_estimators': 200, 'learning_rate': 0.02, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 60, 'reg_alpha': 2.0, 'reg_lambda': 2.0},
+                        {'n_estimators': 400, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 40, 'reg_alpha': 0.5, 'reg_lambda': 0.5},
+                        {'n_estimators': 150, 'learning_rate': 0.05, 'num_leaves': 7,  'max_depth': 2, 'min_child_samples': 80, 'reg_alpha': 3.0, 'reg_lambda': 1.0},
+                        {'n_estimators': 300, 'learning_rate': 0.02, 'num_leaves': 31, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.1, 'reg_lambda': 0.1},
+                        {'n_estimators': 500, 'learning_rate': 0.01, 'num_leaves': 15, 'max_depth': 3, 'min_child_samples': 70, 'reg_alpha': 1.0, 'reg_lambda': 2.0},
+                        {'n_estimators': 250, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 60, 'reg_alpha': 0.0, 'reg_lambda': 0.0},
+                        {'n_estimators': 300, 'learning_rate': 0.04, 'num_leaves': 7,  'max_depth': 3, 'min_child_samples': 40, 'reg_alpha': 1.0, 'reg_lambda': 0.5},
                     ]
                     
                     best_score = -9999
