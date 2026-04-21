@@ -1098,6 +1098,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                     if test_eval['pred_score'].nunique() <= 1:
                                         return -1.0
                                     
+                                    try:
+                                        from sklearn.metrics import roc_auc_score
+                                        auc = roc_auc_score(test_eval['target'], test_eval['pred_score'])
+                                    except Exception:
+                                        auc = 0.5
+                                    
                                     test_eval['valid_play'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
                                                            ((pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
                                                             ((pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) >= 750)))
@@ -1118,7 +1124,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                     high_rate = valid_target['valid_high'].mean()
                                     avg_diff = valid_target['next_diff'].mean()
                                     
-                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10)
+                                    # 勝率等に加え、期待度の順位が正しいか(AUC)を強く評価する
+                                    score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10) + (auc * 200)
                                     return score
                                 except Exception:
                                     return -1.0
@@ -1764,6 +1771,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             if test_eval['pred_score'].nunique() <= 1:
                                 score = -1
                             else:
+                                try:
+                                    from sklearn.metrics import roc_auc_score
+                                    auc = roc_auc_score(test_eval['target'], test_eval['pred_score'])
+                                except Exception:
+                                    auc = 0.5
+                                
                                 test_eval['valid_play'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | \
                                                        ((pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & \
                                                         ((pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) >= 750)))
@@ -1783,7 +1796,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                                         win_rate = valid_target['valid_win'].mean()
                                         high_rate = valid_target['valid_high'].mean()
                                         avg_diff = valid_target['next_diff'].mean()
-                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10)
+                                        # 勝率等に加え、期待度の順位が正しいか(AUC)を強く評価する
+                                        score = (win_rate * 100) + (high_rate * 100) + (avg_diff / 10) + (auc * 200)
                             if score > best_score:
                                 best_score = score
                                 best_params = params
