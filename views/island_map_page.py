@@ -49,6 +49,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"
         ]
         table_day_filter = st.selectbox("📅 日付フィルター (特定の日付/曜日で絞り込み)", day_filter_options)
+        min_g_filter = st.slider("🌫️ グレーアウトする回転数 (G以下)", min_value=0, max_value=8000, value=1000, step=500, help="指定した回転数以下のデータは灰色で表示されます。")
 
     if selected_shop == "店舗を選択してください":
         st.info("👆 サイドバーから店舗を選択すると、台別データ表が表示されます。")
@@ -94,24 +95,76 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         
     if df_island is not None and not df_island.empty:
         shop_islands = df_island[df_island['店名'] == selected_shop]
+        parsed_machines = []
         for _, r in shop_islands.iterrows():
             c = str(r.get('メイン角番', '')).strip()
             if c: corner_macs.add(c)
-
-    if table_metric == "REG確率":
-        df_month['値'] = np.where(pd.to_numeric(df_month['REG'], errors='coerce').fillna(0) > 0, pd.to_numeric(df_month['累計ゲーム'], errors='coerce').fillna(0) / pd.to_numeric(df_month['REG'], errors='coerce').fillna(0), 0)
+            
+            rule = str(r.get('台番号ルール', ''))
+            if rule and rule.strip() != '' and rule != 'nan':
+                for part in rule.split(','):
+                    part = part.strip()
+                    if not part: continue
+                    if '-' in part:
+                        try:
+                            s_str, e_str = part.split('-', 1)
+                            parsed_machines.extend(range(int(s_str), int(e_str) + 1))
+                        except: pass
+                    else:
+                        try: parsed_machines.append(int(part))
+                        except: pass
+            else:
+                try:
+                    s = int(r.get('開始台番号', 0))
+                    e = int(r.get('終了台番号', 0))
+                    if s > 0 and e >= s: parsed_machines.extend(range(s, e + 1))
+                except: pass
+        island_order = []
+        for m in parsed_machines:
+            if str(m) not in island_order:
+                island_order.append(str(m))
     else:
-        df_month['値'] = pd.to_numeric(df_month['差枚'], errors='coerce').fillna(0)
+        island_order = []
 
-    pivot_val = df_month.pivot_table(index=['台番号', '機種名'], columns='day_str', values='値', aggfunc='first').reset_index()
+    df_month['g'] = pd.to_numeric(df_month['累計ゲーム'], errors='coerce').fillna(0)
+    df_month['b'] = pd.to_numeric(df_month['BIG'], errors='coerce').fillna(0)
+    df_month['r'] = pd.to_numeric(df_month['REG'], errors='coerce').fillna(0)
+    df_month['diff'] = pd.to_numeric(df_month['差枚'], errors='coerce').fillna(0)
 
-    pivot_val['台番号_num'] = pd.to_numeric(pivot_val['台番号'], errors='coerce')
-    pivot_val = pivot_val.sort_values('台番号_num').drop(columns=['台番号_num'])
+    df_month_dedup = df_month.drop_duplicates(subset=['台番号', '機種名', 'day_str'], keep='first')
+    df_month_dedup = df_month_dedup.set_index(['台番号', '機種名', 'day_str'])
+    
+    pivot_g = df_month_dedup['g'].unstack()
+    pivot_r = df_month_dedup['r'].unstack()
+    pivot_diff = df_month_dedup['diff'].unstack()
+    
+    date_cols = sorted([c for c in pivot_g.columns])
+    
+    records = []
+    for (mac_num, mac_name) in pivot_g.index:
+        row_data = {'台番号': str(mac_num), '機種名': mac_name}
+        for d in date_cols:
+            g_val = pivot_g.loc[(mac_num, mac_name), d]
+            r_val = pivot_r.loc[(mac_num, mac_name), d]
+            diff_val = pivot_diff.loc[(mac_num, mac_name), d]
+            if pd.isna(g_val):
+                row_data[d] = np.nan
+            else:
+                row_data[d] = (g_val, r_val, diff_val)
+        records.append(row_data)
+        
+    pivot_val = pd.DataFrame(records)
 
-    date_cols = [c for c in pivot_val.columns if c not in ['台番号', '機種名']]
-    date_cols = sorted(date_cols)
+    def get_sort_key(m_str):
+        if m_str in island_order:
+            return island_order.index(m_str)
+        else:
+            return 999999 + int(m_str) if str(m_str).isdigit() else 999999
+            
+    pivot_val['sort_key'] = pivot_val['台番号'].apply(get_sort_key)
+    pivot_val = pivot_val.sort_values('sort_key').drop(columns=['sort_key'])
+    pivot_val = pivot_val[['台番号', '機種名'] + date_cols + ['sort_key']]
 
-    pivot_val = pivot_val[['台番号', '機種名'] + date_cols]
     pivot_val['角台'] = pivot_val['台番号'].apply(lambda x: 1 if str(x) in corner_macs else 0)
 
     def style_monthly_table(row):
@@ -124,45 +177,63 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             styles[idx_num] = 'background-color: #FFF9C4; color: #F57F17; font-weight: bold;'
             
         matched_key = backend.get_matched_spec_key(mac_name, specs)
-        spec_r4 = 1.0 / specs[matched_key].get('設定4', {"REG": 300.0})["REG"] if matched_key in specs else 1/300.0
-        spec_r5 = 1.0 / specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 1/260.0
-        spec_r6 = 1.0 / specs[matched_key].get('設定6', {"REG": 240.0})["REG"] if matched_key in specs else 1/240.0
+        spec_r4_den = specs[matched_key].get('設定4', {"REG": 300.0})["REG"] if matched_key in specs else 300.0
+        spec_r5_den = specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 260.0
+        spec_r6_den = specs[matched_key].get('設定6', {"REG": 240.0})["REG"] if matched_key in specs else 240.0
         
         for i, col in enumerate(row.index):
-            if col in ['台番号', '機種名', '角台']: continue
+            if col in ['台番号', '機種名', '角台', 'sort_key']: continue
             val = row[col]
-            if pd.isna(val) or val == 0:
+            if not isinstance(val, tuple): continue
+            
+            g, r, diff = val
+            if g == 0: continue
+            
+            if g <= min_g_filter:
+                styles[i] = 'background-color: #EEEEEE; color: #9E9E9E;'
                 continue
                 
+            bg_color = ""
+            text_color = ""
+                
             if table_metric == "REG確率":
-                if val <= 0: continue
-                prob = 1.0 / val
-                if prob >= spec_r6:
-                    styles[i] = 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
-                elif prob >= spec_r5:
-                    styles[i] = 'background-color: #FFE082; color: #E65100; font-weight: bold;'
-                elif prob >= spec_r4:
-                    styles[i] = 'background-color: #FFF59D; color: #F57F17;'
+                if r > 0:
+                    prob = g / r
+                    if prob <= spec_r6_den: bg_color = "#FFCDD2"
+                    elif prob <= spec_r5_den: bg_color = "#FFE082"
+                    elif prob <= spec_r4_den: bg_color = "#FFF59D"
             elif table_metric == "差枚":
-                if val >= 2000:
-                    styles[i] = 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
-                elif val >= 1000:
-                    styles[i] = 'background-color: #FFE082; color: #E65100; font-weight: bold;'
-                elif val > 0:
-                    styles[i] = 'background-color: #FFF59D; color: #F57F17;'
-                elif val <= -1000:
-                    styles[i] = 'background-color: #E3F2FD; color: #1565C0;'
+                if diff >= 2000: bg_color = "#FFCDD2"
+                elif diff >= 1000: bg_color = "#FFE082"
+                elif diff > 0: bg_color = "#FFF59D"
+                elif diff <= -1000: bg_color = "#E3F2FD"
+                
+            if diff > 1000: text_color = "#D32F2F"
+            elif diff > 0: text_color = "#EF6C00"
+            elif diff < 0: text_color = "#1565C0"
+            
+            style_str = ""
+            if bg_color: style_str += f"background-color: {bg_color}; "
+            if text_color:
+                style_str += f"color: {text_color}; "
+                if diff > 1000: style_str += "font-weight: bold; "
+                
+            styles[i] = style_str
                     
         return styles
 
-    format_dict = {}
-    if table_metric == "REG確率":
-        for c in date_cols:
-            format_dict[c] = lambda x: f"1/{int(x)}" if pd.notna(x) and x > 0 else "-"
-    else:
-        for c in date_cols:
-            format_dict[c] = lambda x: f"{int(x):+d}" if pd.notna(x) else "-"
+    def fmt_cell(val):
+        if isinstance(val, tuple):
+            g, r, diff = val
+            if g == 0: return "-"
+            if table_metric == "REG確率":
+                prob_str = f"1/{int(g/r)}" if r > 0 else "-"
+                return f"{prob_str} ({int(diff):+d})"
+            else:
+                return f"{int(diff):+d}"
+        return "-"
 
+    format_dict = {c: fmt_cell for c in date_cols}
     styled_df = pivot_val.style.apply(style_monthly_table, axis=1).format(format_dict, na_rep="-")
 
     config = {
