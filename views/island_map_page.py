@@ -279,6 +279,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         st.markdown("**(色分けの目安)** 🟥: 設定6基準以上 / 🟧: 設定5基準以上 / 🟨: 設定4基準以上 ｜ 台番号背景🟨: 角台")
     else:
         st.markdown("**(色分けの目安)** 🟥: +2000枚以上 / 🟧: +1000枚以上 / 🟨: プラス / 🟦: -1000枚以下 ｜ 台番号背景🟨: 角台")
+        
+    st.info("💡 **便利機能**: 表のセルをマウスでクリック＆ドラッグ（なぞって複数選択）すると、選択した台の **合計ゲーム数・REG回数・合算REG確率・合計差枚** が画面下部に自動計算されます！島や並びの判別に活用してください。")
 
     # Streamlitの仕様による行高さの制限を回避するため、HTML形式で描画
     html_table = styled_df.hide(axis="index").to_html(escape=False)
@@ -286,6 +288,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     custom_css = """
     <style>
         .scroll-container {
+            position: relative;
             overflow: auto;
             max-height: 85vh;
             width: 100%;
@@ -297,6 +300,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             font-size: 11px;
             font-family: sans-serif;
             text-align: center;
+            user-select: none;
+            -webkit-user-select: none;
         }
         .scroll-container th, .scroll-container td {
             border: 1px solid #ccc;
@@ -309,6 +314,131 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             background-color: #eeeeee;
             z-index: 1;
         }
+        .scroll-container th:nth-child(1), .scroll-container td:nth-child(1) {
+            position: sticky;
+            left: 0;
+            background-color: #f9f9f9;
+            z-index: 2;
+        }
+        .scroll-container th:nth-child(2), .scroll-container td:nth-child(2) {
+            position: sticky;
+            background-color: #f9f9f9;
+            z-index: 2;
+        }
+        .scroll-container thead th:nth-child(1), .scroll-container thead th:nth-child(2) {
+            z-index: 3;
+            background-color: #eeeeee;
+        }
+        .selected-cell {
+            box-shadow: inset 0 0 0 3px #E91E63 !important;
+        }
+        #calc-bar {
+            position: sticky;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background-color: rgba(30, 30, 30, 0.95);
+            color: white;
+            padding: 10px 15px;
+            font-size: 15px;
+            font-weight: bold;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.4);
+            text-align: center;
+            border-radius: 4px 4px 0 0;
+        }
     </style>
     """
-    st.components.v1.html(f"{custom_css}<div class='scroll-container'>{html_table}</div>", height=850, scrolling=False)
+    
+    html_content = f"""
+    {custom_css}
+    <div class='scroll-container' id='main-scroll'>
+        {html_table}
+        <div id="calc-bar"></div>
+    </div>
+    <script>
+        (function() {{
+            const container = document.getElementById('main-scroll');
+            const table = container.querySelector('table');
+            let isMouseDown = false;
+            
+            function updateStickyLeft() {{
+                const th1 = table.querySelector('th:nth-child(1)');
+                const th2 = table.querySelector('th:nth-child(2)');
+                if(th1 && th2) {{
+                    const w1 = th1.getBoundingClientRect().width;
+                    const cells2 = table.querySelectorAll('th:nth-child(2), td:nth-child(2)');
+                    cells2.forEach(c => {{
+                        c.style.left = w1 + 'px';
+                    }});
+                }}
+            }}
+            
+            setTimeout(updateStickyLeft, 50);
+            setTimeout(updateStickyLeft, 500);
+            window.addEventListener('resize', updateStickyLeft);
+
+            function updateCalc() {{
+                let totalG = 0;
+                let totalR = 0;
+                let totalDiff = 0;
+                let count = 0;
+                const selected = table.querySelectorAll('.selected-cell');
+                selected.forEach(td => {{
+                    const text = td.innerText || td.textContent;
+                    const gMatch = text.match(/([0-9]+)G/);
+                    const rMatch = text.match(/([0-9]+)R/);
+                    const diffMatch = text.match(/([+-]?[0-9]+)枚/);
+
+                    if(gMatch && rMatch && diffMatch) {{
+                        totalG += parseInt(gMatch[1], 10);
+                        totalR += parseInt(rMatch[1], 10);
+                        totalDiff += parseInt(diffMatch[1].replace('+', ''), 10);
+                        count++;
+                    }}
+                }});
+
+                const calcBar = document.getElementById('calc-bar');
+                if (count > 0) {{
+                    let probStr = totalR > 0 ? "1/" + Math.floor(totalG / totalR) : "-";
+                    let diffSign = totalDiff > 0 ? "+" : "";
+                    calcBar.innerHTML = `🎰 [選択: ${{count}}台] ｜ 総回転: ${{totalG}}G ｜ REG: ${{totalR}}回 (合算REG確率: <span style="color:#FFCA28">${{probStr}}</span>) ｜ 差枚: <span style="color:${{totalDiff>0?'#FFCA28':'#81D4FA'}}">${{diffSign}}${{totalDiff}}枚</span>`;
+                    calcBar.style.display = 'block';
+                }} else {{
+                    calcBar.style.display = 'none';
+                }}
+            }}
+
+            table.addEventListener('mousedown', function(e) {{
+                let td = e.target.closest('td');
+                if (!td || td.cellIndex < 2) {{
+                    document.querySelectorAll('.selected-cell').forEach(c => c.classList.remove('selected-cell'));
+                    updateCalc();
+                    return;
+                }}
+                isMouseDown = true;
+                if (!e.ctrlKey && !e.metaKey) {{
+                    document.querySelectorAll('.selected-cell').forEach(c => c.classList.remove('selected-cell'));
+                }}
+                td.classList.toggle('selected-cell');
+                updateCalc();
+                e.preventDefault();
+            }});
+
+            table.addEventListener('mouseover', function(e) {{
+                if (!isMouseDown) return;
+                let td = e.target.closest('td');
+                if (!td || td.cellIndex < 2) return;
+                td.classList.add('selected-cell');
+                updateCalc();
+            }});
+
+            document.addEventListener('mouseup', function(e) {{
+                isMouseDown = false;
+            }});
+        }})();
+    </script>
+    """
+    
+    st.components.v1.html(html_content, height=850, scrolling=False)
