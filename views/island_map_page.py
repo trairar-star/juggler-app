@@ -4,8 +4,47 @@ import streamlit as st # type: ignore
 import backend
 
 def render_island_map_page(df_raw, df_pred_log, df_island):
-    st.header("📅 月間 台別データ表")
-    st.caption("1ヶ月間の各台の成績表（REG確率や差枚）を一覧で確認できます。設定基準による色分けと、角台の強調表示により傾向を一目で掴めます。")
+    col_h1, col_h2 = st.columns([4, 1])
+    with col_h1:
+        st.header("📅 月間 台別データ表")
+        st.caption("1ヶ月間の各台の成績表（REG確率や差枚）を一覧で確認できます。設定基準による色分けと、角台の強調表示により傾向を一目で掴めます。")
+    with col_h2:
+        st.components.v1.html("""
+            <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 36px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                🖥️ 領域を最大化
+            </button>
+            <script>
+            function toggleFullscreen() {
+                const doc = window.parent.document;
+                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                const btn = document.getElementById('fs-btn');
+                
+                if (!doc.fullscreenElement) {
+                    if (mainBlock) {
+                        mainBlock.requestFullscreen().then(() => {
+                            mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
+                            mainBlock.style.maxWidth = '100%';
+                            mainBlock.style.padding = '1rem';
+                            mainBlock.style.overflowY = 'auto';
+                            btn.innerHTML = '↙️ 元に戻す';
+                        }).catch(err => { console.log('Error:', err); });
+                    }
+                } else { 
+                    doc.exitFullscreen(); 
+                }
+            }
+            
+            window.parent.document.addEventListener('fullscreenchange', () => {
+                const doc = window.parent.document;
+                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                const btn = document.getElementById('fs-btn');
+                if (!doc.fullscreenElement) {
+                    if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
+                    if (btn) btn.innerHTML = '🖥️ 領域を最大化';
+                }
+            });
+            </script>
+        """, height=50)
 
     if df_raw.empty:
         st.warning("データがありません。")
@@ -248,7 +287,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     <style>
         .scroll-container {
             overflow: auto;
-            max-height: 720px;
+            max-height: 85vh;
             width: 100%;
             border: 1px solid #ccc;
         }
@@ -272,4 +311,4 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         }
     </style>
     """
-    st.components.v1.html(f"{custom_css}<div class='scroll-container'>{html_table}</div>", height=750, scrolling=False)
+    st.components.v1.html(f"{custom_css}<div class='scroll-container'>{html_table}</div>", height=850, scrolling=False)
