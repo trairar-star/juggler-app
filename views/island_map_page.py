@@ -235,27 +235,24 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             bg_color = ""
             text_color = ""
                 
-            if table_metric == "REG確率":
-                if r > 0:
-                    prob = g / r
-                    if prob <= spec_r6_den: bg_color = "#FFCDD2"
-                    elif prob <= spec_r5_den: bg_color = "#FFE082"
-                    elif prob <= spec_r4_den: bg_color = "#FFF59D"
-            elif table_metric == "差枚":
-                if diff >= 2000: bg_color = "#FFCDD2"
-                elif diff >= 1000: bg_color = "#FFE082"
-                elif diff > 0: bg_color = "#FFF59D"
-                elif diff <= -1000: bg_color = "#E3F2FD"
-                
-            if diff > 1000: text_color = "#D32F2F"
-            elif diff > 0: text_color = "#EF6C00"
-            elif diff < 0: text_color = "#1565C0"
+            if diff >= 2000: bg_color = "#FFCDD2"
+            elif diff >= 1000: bg_color = "#FFE082"
+            elif diff > 0: bg_color = "#FFF59D"
+            elif diff <= -1000: bg_color = "#E3F2FD"
+            
+            is_bold = False
+            if r > 0:
+                prob = g / r
+                if prob <= spec_r6_den: text_color, is_bold = "#B71C1C", True
+                elif prob <= spec_r5_den: text_color, is_bold = "#E65100", True
+                elif prob <= spec_r4_den: text_color, is_bold = "#F57F17", True
             
             style_str = "vertical-align: middle; "
             if bg_color: style_str += f"background-color: {bg_color}; "
             if text_color:
                 style_str += f"color: {text_color}; "
-                if diff > 1000: style_str += "font-weight: bold; "
+            if is_bold:
+                style_str += "font-weight: bold; "
                 
             styles[i] = style_str
                     
@@ -275,10 +272,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     format_dict = {c: fmt_cell for c in date_cols}
     styled_df = pivot_val.style.apply(style_monthly_table, axis=1).format(format_dict, na_rep="-")
 
-    if table_metric == "REG確率":
-        st.markdown("**(色分けの目安)** 🟥: 設定6基準以上 / 🟧: 設定5基準以上 / 🟨: 設定4基準以上 ｜ 台番号背景🟨: 角台")
-    else:
-        st.markdown("**(色分けの目安)** 🟥: +2000枚以上 / 🟧: +1000枚以上 / 🟨: プラス / 🟦: -1000枚以下 ｜ 台番号背景🟨: 角台")
+    st.markdown("**(色分けの目安)** 背景色(差枚) 🟥:+2000枚以上 🟧:+1000枚以上 🟨:プラス 🟦:-1000枚以下 ｜ 文字色(REG確率) 🟥:設定6以上 🟧:設定5以上 🟨:設定4以上 ｜ 台番号背景🟨: 角台")
 
     # Streamlitの仕様による行高さの制限を回避するため、HTML形式で描画
     html_table = styled_df.hide(axis="index").to_html(escape=False)
