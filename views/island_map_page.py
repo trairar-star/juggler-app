@@ -190,7 +190,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if g == 0: continue
             
             if g <= min_g_filter:
-                styles[i] = 'background-color: #EEEEEE; color: #9E9E9E; white-space: pre-wrap;'
+                styles[i] = 'background-color: #EEEEEE; color: #9E9E9E;'
                 continue
                 
             bg_color = ""
@@ -212,7 +212,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             elif diff > 0: text_color = "#EF6C00"
             elif diff < 0: text_color = "#1565C0"
             
-            style_str = "white-space: pre-wrap; "
+            style_str = "vertical-align: middle; "
             if bg_color: style_str += f"background-color: {bg_color}; "
             if text_color:
                 style_str += f"color: {text_color}; "
@@ -228,25 +228,48 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if g == 0: return "-"
             if table_metric == "REG確率":
                 prob_str = f"1/{int(g/r)}" if r > 0 else "-"
-                return f"{int(g)}G\n{int(r)}R ({prob_str})\n{int(diff):+d}枚"
+                return f"<div style='line-height:1.3; padding:2px;'>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
             else:
-                return f"{int(g)}G\n{int(r)}R\n{int(diff):+d}枚"
+                return f"<div style='line-height:1.3; padding:2px;'>{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
         return "-"
 
     format_dict = {c: fmt_cell for c in date_cols}
     styled_df = pivot_val.style.apply(style_monthly_table, axis=1).format(format_dict, na_rep="-")
-
-    config = {
-        "台番号": st.column_config.TextColumn("台番号", width="small"),
-        "機種名": st.column_config.TextColumn("機種名", width="small"),
-        "角台": None
-    }
-    for c in date_cols:
-        config[c] = st.column_config.TextColumn(c, width="small")
 
     if table_metric == "REG確率":
         st.markdown("**(色分けの目安)** 🟥: 設定6基準以上 / 🟧: 設定5基準以上 / 🟨: 設定4基準以上 ｜ 台番号背景🟨: 角台")
     else:
         st.markdown("**(色分けの目安)** 🟥: +2000枚以上 / 🟧: +1000枚以上 / 🟨: プラス / 🟦: -1000枚以下 ｜ 台番号背景🟨: 角台")
 
-    st.dataframe(styled_df, column_config=config, use_container_width=True, hide_index=True)
+    # Streamlitの仕様による行高さの制限を回避するため、HTML形式で描画
+    html_table = styled_df.hide(axis="index").to_html(escape=False)
+    
+    custom_css = """
+    <style>
+        .scroll-container {
+            overflow: auto;
+            max-height: 720px;
+            width: 100%;
+            border: 1px solid #ccc;
+        }
+        .scroll-container table {
+            border-collapse: collapse;
+            min-width: 100%;
+            font-size: 11px;
+            font-family: sans-serif;
+            text-align: center;
+        }
+        .scroll-container th, .scroll-container td {
+            border: 1px solid #ccc;
+            padding: 4px;
+            white-space: nowrap;
+        }
+        .scroll-container thead th {
+            position: sticky;
+            top: 0;
+            background-color: #eeeeee;
+            z-index: 1;
+        }
+    </style>
+    """
+    st.components.v1.html(f"{custom_css}<div class='scroll-container'>{html_table}</div>", height=750, scrolling=False)
