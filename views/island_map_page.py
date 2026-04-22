@@ -125,7 +125,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         st.warning("表示するデータがありません。")
         st.stop()
 
-    df_month['day_str'] = df_month['対象日付'].dt.strftime('%m/%d')
+    weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
+    df_month['day_str'] = df_month['対象日付'].dt.strftime('%m/%d') + "(" + df_month['対象日付'].dt.dayofweek.map(weekdays_map) + ")"
     
     corner_macs = set()
     if 'is_corner' in df_month.columns:
