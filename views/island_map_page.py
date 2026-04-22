@@ -295,7 +295,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             border: 1px solid #ccc;
         }
         .scroll-container table {
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0;
             min-width: 100%;
             font-size: 11px;
             font-family: sans-serif;
@@ -304,7 +305,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             -webkit-user-select: none;
         }
         .scroll-container th, .scroll-container td {
-            border: 1px solid #ccc;
+            border-right: 1px solid #ccc;
+            border-bottom: 1px solid #ccc;
             padding: 4px;
             white-space: nowrap;
         }
@@ -312,21 +314,25 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             position: sticky;
             top: 0;
             background-color: #eeeeee;
-            z-index: 1;
+            z-index: 10;
+            border-top: 1px solid #ccc;
+        }
+        .scroll-container tr th:first-child, .scroll-container tr td:first-child {
+            border-left: 1px solid #ccc;
         }
         .scroll-container th:nth-child(1), .scroll-container td:nth-child(1) {
             position: sticky;
             left: 0;
             background-color: #f9f9f9;
-            z-index: 2;
+            z-index: 5;
         }
         .scroll-container th:nth-child(2), .scroll-container td:nth-child(2) {
             position: sticky;
             background-color: #f9f9f9;
-            z-index: 2;
+            z-index: 5;
         }
         .scroll-container thead th:nth-child(1), .scroll-container thead th:nth-child(2) {
-            z-index: 3;
+            z-index: 15;
             background-color: #eeeeee;
         }
         .selected-cell {
