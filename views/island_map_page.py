@@ -190,7 +190,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if g == 0: continue
             
             if g <= min_g_filter:
-                styles[i] = 'background-color: #EEEEEE; color: #9E9E9E;'
+                styles[i] = 'background-color: #EEEEEE; color: #9E9E9E; white-space: pre-wrap;'
                 continue
                 
             bg_color = ""
@@ -212,7 +212,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             elif diff > 0: text_color = "#EF6C00"
             elif diff < 0: text_color = "#1565C0"
             
-            style_str = ""
+            style_str = "white-space: pre-wrap; "
             if bg_color: style_str += f"background-color: {bg_color}; "
             if text_color:
                 style_str += f"color: {text_color}; "
@@ -228,9 +228,9 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if g == 0: return "-"
             if table_metric == "REG確率":
                 prob_str = f"1/{int(g/r)}" if r > 0 else "-"
-                return f"{prob_str} ({int(diff):+d})"
+                return f"{int(g)}G\n{int(r)}R ({prob_str})\n{int(diff):+d}枚"
             else:
-                return f"{int(diff):+d}"
+                return f"{int(g)}G\n{int(r)}R\n{int(diff):+d}枚"
         return "-"
 
     format_dict = {c: fmt_cell for c in date_cols}
