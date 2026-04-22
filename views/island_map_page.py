@@ -163,7 +163,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             
     pivot_val['sort_key'] = pivot_val['台番号'].apply(get_sort_key)
     pivot_val = pivot_val.sort_values('sort_key').drop(columns=['sort_key'])
-    pivot_val = pivot_val[['台番号', '機種名'] + date_cols + ['sort_key']]
+    pivot_val = pivot_val[['台番号', '機種名'] + date_cols]
 
     pivot_val['角台'] = pivot_val['台番号'].apply(lambda x: 1 if str(x) in corner_macs else 0)
 
@@ -182,7 +182,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
         spec_r6_den = specs[matched_key].get('設定6', {"REG": 240.0})["REG"] if matched_key in specs else 240.0
         
         for i, col in enumerate(row.index):
-            if col in ['台番号', '機種名', '角台', 'sort_key']: continue
+            if col in ['台番号', '機種名', '角台']: continue
             val = row[col]
             if not isinstance(val, tuple): continue
             
