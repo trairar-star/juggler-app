@@ -3,105 +3,9 @@ import numpy as np
 import streamlit as st # type: ignore
 import backend
 
-@st.cache_data(show_spinner=False)
-def _prepare_island_map_data(df_raw, df_pred_log, selected_shop, shop_col, penalty_reg, penalty_big, low_g_penalty):
-    shop_all_df = df_raw[df_raw[shop_col] == selected_shop].copy()
-    shop_all_df['対象日付'] = pd.to_datetime(shop_all_df['対象日付'], errors='coerce')
-    shop_all_df['台番号'] = shop_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-    shop_all_df = shop_all_df.sort_values(['台番号', '対象日付'])
-
-    if not df_pred_log.empty:
-        log_temp = df_pred_log.copy()
-        if '予測対象日' in log_temp.columns:
-            log_temp['予測対象日_dt'] = pd.to_datetime(log_temp['予測対象日'], errors='coerce').dt.date
-            shop_col_log = '店名' if '店名' in log_temp.columns else '店舗名'
-            if shop_col_log in log_temp.columns:
-                log_shop = log_temp[log_temp[shop_col_log] == selected_shop].copy()
-                if not log_shop.empty:
-                    log_shop['台番号'] = log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-                    log_shop['prediction_score'] = pd.to_numeric(log_shop['prediction_score'], errors='coerce')
-                    if '実行日時' in log_shop.columns:
-                        log_shop = log_shop.sort_values('実行日時', ascending=False).drop_duplicates(['台番号', '予測対象日_dt'])
-                    shop_all_df['対象日付_dt'] = shop_all_df['対象日付'].dt.date
-                    shop_all_df = pd.merge(shop_all_df, log_shop[['台番号', '予測対象日_dt', 'prediction_score']], left_on=['台番号', '対象日付_dt'], right_on=['台番号', '予測対象日_dt'], how='left')
-                    shop_all_df = shop_all_df.drop(columns=['対象日付_dt', '予測対象日_dt'], errors='ignore')
-
-    shop_avg_g = shop_all_df['累計ゲーム'].mean() if not shop_all_df.empty else 4000
-    if pd.isna(shop_avg_g):
-        shop_avg_g = 4000
-        
-    def calc_score_all(row):
-        g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
-        act_b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
-        act_r = pd.to_numeric(row.get('REG', 0), errors='coerce')
-        diff = pd.to_numeric(row.get('差枚', 0), errors='coerce')
-        machine = row.get('機種名', '')
-        
-        return backend.calculate_setting_score(
-            g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
-            shop_avg_g=shop_avg_g, penalty_reg=penalty_reg, penalty_big=penalty_big,
-            low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
-        )
-
-    if not shop_all_df.empty:
-        shop_all_df['結果点数'] = shop_all_df.apply(calc_score_all, axis=1)
-    else:
-        shop_all_df['結果点数'] = np.nan
-        
-    shop_all_df = shop_all_df.sort_values(['台番号', '対象日付'])
-    shop_all_df['prev_差枚'] = shop_all_df.groupby('台番号')['差枚'].shift(1)
-    shop_all_df['prev_累計ゲーム'] = shop_all_df.groupby('台番号')['累計ゲーム'].shift(1)
-    shop_all_df['prev_BIG'] = shop_all_df.groupby('台番号')['BIG'].shift(1)
-    shop_all_df['prev_REG'] = shop_all_df.groupby('台番号')['REG'].shift(1)
-    if 'prediction_score' in shop_all_df.columns:
-        shop_all_df['prev_pred'] = shop_all_df.groupby('台番号')['prediction_score'].shift(1)
-    if '結果点数' in shop_all_df.columns:
-        shop_all_df['prev_score'] = shop_all_df.groupby('台番号')['結果点数'].shift(1)
-
-    return shop_all_df
-
 def render_island_map_page(df_raw, df_pred_log, df_island):
-    col_h1, col_h2 = st.columns([4, 1])
-    with col_h1:
-        st.header("🗺️ 台別データ表 ＆ 島マップ")
-        st.caption("1ヶ月間の各台の成績表や、島（列）のマップビューで出玉の傾向を直感的に確認できます。")
-    with col_h2:
-        st.components.v1.html("""
-            <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 36px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
-                🖥️ 領域を最大化
-            </button>
-            <script>
-            function toggleFullscreen() {
-                const doc = window.parent.document;
-                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
-                const btn = document.getElementById('fs-btn');
-                
-                if (!doc.fullscreenElement) {
-                    if (mainBlock) {
-                        mainBlock.requestFullscreen().then(() => {
-                            mainBlock.style.backgroundColor = window.getComputedStyle(doc.body).backgroundColor || '#ffffff';
-                            mainBlock.style.maxWidth = '100%';
-                            mainBlock.style.padding = '1rem';
-                            mainBlock.style.overflowY = 'auto';
-                            btn.innerHTML = '↙️ 元に戻す';
-                        }).catch(err => { console.log('Error:', err); });
-                    }
-                } else { 
-                    doc.exitFullscreen(); 
-                }
-            }
-            
-            window.parent.document.addEventListener('fullscreenchange', () => {
-                const doc = window.parent.document;
-                const mainBlock = doc.querySelector('[data-testid="stMainBlockContainer"]');
-                const btn = document.getElementById('fs-btn');
-                if (!doc.fullscreenElement) {
-                    if (mainBlock) { mainBlock.style.backgroundColor = ''; mainBlock.style.maxWidth = ''; mainBlock.style.padding = ''; }
-                    if (btn) btn.innerHTML = '🖥️ 領域を最大化';
-                }
-            });
-            </script>
-        """, height=50)
+    st.header("📅 月間 台別データ表")
+    st.caption("1ヶ月間の各台の成績表（REG確率や差枚）を一覧で確認できます。設定基準による色分けと、角台の強調表示により傾向を一目で掴めます。")
 
     if df_raw.empty:
         st.warning("データがありません。")
@@ -126,336 +30,152 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     if saved_shop in shops:
         default_index = shops.index(saved_shop)
 
-    # --- サイドバーにコントロールパネルを配置 ---
     with st.sidebar:
         st.markdown("---")
-        st.subheader("🗺️ 島マップ 操作パネル")
-        st.caption("※常に画面に表示されます。日付や指標をコロコロ変えて、直感的に変化を確認してください。")
-        
-        selected_date = st.selectbox("📅 確認する日付を選択", available_dates)
+        st.subheader("🛠️ 表示設定")
         selected_shop = st.selectbox("🏬 店舗を選択", shops, index=default_index)
         
         if selected_shop != "店舗を選択してください":
             st.session_state["global_selected_shop"] = selected_shop
 
-        map_metric = st.radio("📊 表示する指標", ["差枚", "REG確率", "合算確率", "AI期待度(事前の予測)", "結果点数(設定5近似度)"])
-        layout_mode = st.radio("島のレイアウト", ["島ごとに改行 (縦積み・島内横スクロール)", "すべて横一列に繋げる", "島内で折り返す (コンパクト)"])
-        
-        with st.expander("🔍 絞り込みフィルター (グレーアウト)", expanded=False):
-            filter_min_g = st.slider("最低回転数 (G以上)", min_value=0, max_value=10000, value=3000, step=500)
-            filter_diff_range = st.slider("差枚数の範囲", min_value=-5000, max_value=10000, value=(-5000, 10000), step=500)
-            filter_min_diff, filter_max_diff = filter_diff_range
+        st.markdown("---")
+        st.subheader("📅 データ表 設定")
+        table_metric = st.radio("📊 表示する指標", ["REG確率", "差枚"], horizontal=True)
+        table_period = st.selectbox("表示期間", ["直近30日", "直近14日"] + available_months)
+        day_filter_options = [
+            "すべて", 
+            "0のつく日", "1のつく日", "2のつく日", "3のつく日", "4のつく日", 
+            "5のつく日", "6のつく日", "7のつく日", "8のつく日", "9のつく日",
+            "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"
+        ]
+        table_day_filter = st.selectbox("📅 日付フィルター (特定の日付/曜日で絞り込み)", day_filter_options)
 
     if selected_shop == "店舗を選択してください":
-        st.info("👆 サイドバーから店舗を選択すると、その日の島マップが表示されます。")
-        st.stop()
-
-    if df_island is None or df_island.empty:
-        st.warning("島マスターのデータがありません。サイドバーの「島マスター管理」から島を登録してください。")
-        st.stop()
-
-    shop_islands = df_island[df_island['店名'] == selected_shop]
-    if shop_islands.empty:
-        st.info("この店舗に登録されている島情報がありません。サイドバーの「島マスター管理」から島を登録してください。")
+        st.info("👆 サイドバーから店舗を選択すると、台別データ表が表示されます。")
         st.stop()
 
     st.divider()
 
-    # --- 島のパース処理 ---
-    parsed_islands = []
-    for _, i_row in shop_islands.iterrows():
-        i_name = i_row.get('島名')
-        machines = []
-        rule = str(i_row.get('台番号ルール', ''))
-        if rule and rule.strip() != '' and rule != 'nan':
-            for part in rule.split(','):
-                part = part.strip()
-                if not part: continue
-                if '-' in part:
-                    try:
-                        s_str, e_str = part.split('-', 1)
-                        machines.extend(range(int(s_str), int(e_str) + 1))
-                    except: pass
-                else:
-                    try: machines.append(int(part))
-                    except: pass
-        else:
-            try:
-                s = int(i_row.get('開始台番号', 0))
-                e = int(i_row.get('終了台番号', 0))
-                if s > 0 and e >= s: machines.extend(range(s, e + 1))
-            except: pass
-            
-        machines = sorted(list(set(machines)))
-        if machines:
-            parsed_islands.append({
-                'name': i_name,
-                'type': str(i_row.get('島属性', '普通')),
-                'corner': str(i_row.get('メイン角番', '')).strip(),
-                'machines': machines
-            })
+    df_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
+    df_shop['対象日付'] = pd.to_datetime(df_shop['対象日付'], errors='coerce')
+    df_shop = df_shop.dropna(subset=['対象日付', '台番号'])
+    df_shop['台番号'] = df_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
 
-    if not parsed_islands:
-        st.info("島に有効な台番号が登録されていません。")
+    if table_period == "直近30日":
+        max_date = df_shop['対象日付'].max()
+        cutoff_date = max_date - pd.Timedelta(days=30)
+        df_month = df_shop[df_shop['対象日付'] > cutoff_date].copy()
+    elif table_period == "直近14日":
+        max_date = df_shop['対象日付'].max()
+        cutoff_date = max_date - pd.Timedelta(days=14)
+        df_month = df_shop[df_shop['対象日付'] > cutoff_date].copy()
+    else:
+        df_month = df_shop[df_shop['対象日付'].dt.strftime('%Y-%m') == table_period].copy()
+
+    if table_day_filter != "すべて":
+        if "のつく日" in table_day_filter:
+            target_digit = int(table_day_filter.replace("のつく日", ""))
+            df_month = df_month[df_month['対象日付'].dt.day % 10 == target_digit].copy()
+        elif "曜日" in table_day_filter:
+            weekdays = ["月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"]
+            target_weekday = weekdays.index(table_day_filter)
+            df_month = df_month[df_month['対象日付'].dt.dayofweek == target_weekday].copy()
+
+    if df_month.empty:
+        st.warning("表示するデータがありません。")
         st.stop()
 
-    island_names = [isl['name'] for isl in parsed_islands]
+    df_month['day_str'] = df_month['対象日付'].dt.strftime('%m/%d')
     
-    shop_order_key = f"island_order_{selected_shop}"
-    if shop_order_key not in st.session_state:
-        st.session_state[shop_order_key] = island_names
+    corner_macs = set()
+    if 'is_corner' in df_month.columns:
+        corners = df_month[df_month['is_corner'] == 1]['台番号'].unique()
+        corner_macs.update(corners)
+        
+    if df_island is not None and not df_island.empty:
+        shop_islands = df_island[df_island['店名'] == selected_shop]
+        for _, r in shop_islands.iterrows():
+            c = str(r.get('メイン角番', '')).strip()
+            if c: corner_macs.add(c)
+
+    if table_metric == "REG確率":
+        df_month['値'] = np.where(pd.to_numeric(df_month['REG'], errors='coerce').fillna(0) > 0, pd.to_numeric(df_month['累計ゲーム'], errors='coerce').fillna(0) / pd.to_numeric(df_month['REG'], errors='coerce').fillna(0), 0)
     else:
-        current_valid_order = [n for n in st.session_state[shop_order_key] if n in island_names]
-        if current_valid_order != st.session_state[shop_order_key]:
-            st.session_state[shop_order_key] = current_valid_order
+        df_month['値'] = pd.to_numeric(df_month['差枚'], errors='coerce').fillna(0)
 
-    selected_island_names = st.multiselect(
-        "🛠️ 表示する島と順番（×で消して選び直すことで順番を変更できます）", 
-        options=island_names, 
-        key=shop_order_key,
-        help="ここで選択した順番通りに島が配置されます。×ボタンで島を消し、再度追加することで一番下に移動し、並べ替えができます。"
-    )
+    pivot_val = df_month.pivot_table(index=['台番号', '機種名'], columns='day_str', values='値', aggfunc='first').reset_index()
 
-    display_islands = []
-    for name in selected_island_names:
-        for isl in parsed_islands:
-            if isl['name'] == name:
-                display_islands.append(isl)
-                break
+    pivot_val['台番号_num'] = pd.to_numeric(pivot_val['台番号'], errors='coerce')
+    pivot_val = pivot_val.sort_values('台番号_num').drop(columns=['台番号_num'])
 
-    if not display_islands:
-        st.info("表示する島が選択されていません。")
-        st.stop()
+    date_cols = [c for c in pivot_val.columns if c not in ['台番号', '機種名']]
+    date_cols = sorted(date_cols)
 
-    # ==========================================
-    # データ処理 (キャッシュ使用で高速化)
-    # ==========================================
-    penalty_reg = st.session_state.get('penalty_reg', 15)
-    penalty_big = st.session_state.get('penalty_big', 5)
-    low_g_penalty = st.session_state.get('low_g_penalty', 30)
-    
-    shop_all_df = _prepare_island_map_data(df_raw, df_pred_log, selected_shop, shop_col, penalty_reg, penalty_big, low_g_penalty)
+    pivot_val = pivot_val[['台番号', '機種名'] + date_cols]
+    pivot_val['角台'] = pivot_val['台番号'].apply(lambda x: 1 if str(x) in corner_macs else 0)
 
-    # 当日データに絞り込み
-    df_target = shop_all_df[shop_all_df['対象日付'].dt.date == selected_date].copy()
-
-    # 台データ辞書の作成
-    mac_data_dict = {}
-    for _, row in df_target.iterrows():
-        mac_num = str(row['台番号']).replace('.0', '')
-        mac_data_dict[mac_num] = {
-            'g': row.get('累計ゲーム', 0), 'b': row.get('BIG', 0), 'r': row.get('REG', 0), 
-            'diff': row.get('差枚', 0), 'pred': row.get('prediction_score', np.nan), 'mac_name': row.get('機種名', ''),
-            'prev_diff': row.get('prev_差枚', np.nan),
-            'prev_g': row.get('prev_累計ゲーム', 0),
-            'prev_b': row.get('prev_BIG', 0),
-            'prev_r': row.get('prev_REG', 0),
-            'prev_pred': row.get('prev_pred', np.nan),
-            'prev_score': row.get('prev_score', np.nan),
-            'result_score': row.get('結果点数', np.nan)
-        }
-
-    if layout_mode == "すべて横一列に繋げる":
-        container_style = "display: flex; flex-direction: row; gap: 20px; overflow-x: auto; padding-bottom: 20px; white-space: nowrap; width: 100%;"
-        island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px;"
-        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; min-width: max-content;"
-    elif layout_mode == "島ごとに改行 (縦積み・島内横スクロール)":
-        container_style = "display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 100%; overflow-x: hidden;"
-        island_style = "display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px; overflow-x: auto; padding-bottom: 12px; width: 100%;"
-        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: hidden;"
-    else:
-        container_style = "display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 100%; overflow-x: hidden;"
-        island_style = "display: flex; flex-wrap: wrap; gap: 6px;"
-        island_wrapper_style = "border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; width: 100%; max-width: 100%; box-sizing: border-box; overflow-x: hidden;"
-
-    # --- ツールチップ(ホバー表示)用 CSS ---
-    html_parts = [f"""
-    <style>
-    .island-container::-webkit-scrollbar {{
-        height: 6px;
-    }}
-    .island-container::-webkit-scrollbar-track {{
-        background: #f1f1f1;
-        border-radius: 4px;
-    }}
-    .island-container::-webkit-scrollbar-thumb {{
-        background: #ccc;
-        border-radius: 4px;
-    }}
-    .island-container::-webkit-scrollbar-thumb:hover {{
-        background: #aaa;
-    }}
-    .machine-box {{
-        position: relative;
-        cursor: crosshair;
-        transition: transform 0.1s ease-in-out;
-    }}
-    .machine-box:hover {{
-        z-index: 1000;
-        transform: scale(1.05);
-    }}
-    .tooltip-text {{
-        visibility: hidden;
-        width: max-content;
-        min-width: 140px;
-        background-color: rgba(20, 20, 20, 0.95);
-        color: #fff;
-        text-align: left;
-        border-radius: 6px;
-        padding: 10px;
-        position: absolute;
-        bottom: calc(100% + 8px);
-        left: 50%;
-        transform: translateX(-50%);
-        opacity: 0;
-        transition: opacity 0.2s;
-        font-size: 11px;
-        line-height: 1.5;
-        pointer-events: none;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-    }}
-    .machine-box:hover .tooltip-text {{
-        visibility: visible;
-        opacity: 1;
-    }}
-    </style>
-    <div style='{container_style} font-family: sans-serif; padding-top: 10px;'>
-    """]
-    
-    for island in display_islands:
-        html_parts.append(f"<div style='border: 2px solid #ddd; border-radius: 8px; padding: 12px; background-color: #fcfcfc; min-width: max-content;'>")
-        html_parts.append(f"<h4 style='margin-top: 0; margin-bottom: 12px; color: #444; font-size: 16px;'>🏝️ {island['name']} <span style='font-size:12px; font-weight:normal; color:#888;'>({island['type']})</span></h4>")
-        html_parts.append(f"<div style='{island_style}'>")
-        for m_num in island['machines']:
-            data = mac_data_dict.get(str(m_num))
-            bg_color, text_color, main_text, sub_text, border_color, opacity, prev_diff_str = "#f5f5f5", "#aaa", "-", "データなし", "#e0e0e0", "1.0", ""
-            tooltip_html = ""
+    def style_monthly_table(row):
+        styles = [''] * len(row)
+        mac_name = row['機種名']
+        is_corner = row['角台']
+        
+        idx_num = row.index.get_loc('台番号')
+        if is_corner:
+            styles[idx_num] = 'background-color: #FFF9C4; color: #F57F17; font-weight: bold;'
             
-            if data:
-                g_val = pd.to_numeric(data['g'], errors='coerce')
-                b_val = pd.to_numeric(data['b'], errors='coerce')
-                r_val = pd.to_numeric(data['r'], errors='coerce')
-                diff_val = pd.to_numeric(data['diff'], errors='coerce')
-                pred_val = pd.to_numeric(data['pred'], errors='coerce')
+        matched_key = backend.get_matched_spec_key(mac_name, specs)
+        spec_r4 = 1.0 / specs[matched_key].get('設定4', {"REG": 300.0})["REG"] if matched_key in specs else 1/300.0
+        spec_r5 = 1.0 / specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 1/260.0
+        spec_r6 = 1.0 / specs[matched_key].get('設定6', {"REG": 240.0})["REG"] if matched_key in specs else 1/240.0
+        
+        for i, col in enumerate(row.index):
+            if col in ['台番号', '機種名', '角台']: continue
+            val = row[col]
+            if pd.isna(val) or val == 0:
+                continue
                 
-                g = int(g_val) if pd.notna(g_val) else 0
-                b = int(b_val) if pd.notna(b_val) else 0
-                r = int(r_val) if pd.notna(r_val) else 0
-                diff = int(diff_val) if pd.notna(diff_val) else 0
-                pred = float(pred_val) if pd.notna(pred_val) else np.nan
-                m_name = str(data['mac_name']).replace('nan', '')
+            if table_metric == "REG確率":
+                if val <= 0: continue
+                prob = 1.0 / val
+                if prob >= spec_r6:
+                    styles[i] = 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
+                elif prob >= spec_r5:
+                    styles[i] = 'background-color: #FFE082; color: #E65100; font-weight: bold;'
+                elif prob >= spec_r4:
+                    styles[i] = 'background-color: #FFF59D; color: #F57F17;'
+            elif table_metric == "差枚":
+                if val >= 2000:
+                    styles[i] = 'background-color: #FFCDD2; color: #B71C1C; font-weight: bold;'
+                elif val >= 1000:
+                    styles[i] = 'background-color: #FFE082; color: #E65100; font-weight: bold;'
+                elif val > 0:
+                    styles[i] = 'background-color: #FFF59D; color: #F57F17;'
+                elif val <= -1000:
+                    styles[i] = 'background-color: #E3F2FD; color: #1565C0;'
+                    
+        return styles
 
-                prev_diff_val = data.get('prev_diff')
-                prev_g_val = pd.to_numeric(data.get('prev_g', 0), errors='coerce')
-                prev_b_val = pd.to_numeric(data.get('prev_b', 0), errors='coerce')
-                prev_r_val = pd.to_numeric(data.get('prev_r', 0), errors='coerce')
-                prev_pred_val = data.get('prev_pred')
-                prev_score_val = data.get('prev_score')
-                rs_val = pd.to_numeric(data.get('result_score', np.nan), errors='coerce')
-                result_score = float(rs_val) if pd.notna(rs_val) else np.nan
-                
-                matched_key = backend.get_matched_spec_key(m_name, specs)
-                spec_r5 = specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 260.0
-                spec_t5 = specs[matched_key].get('設定5', {"合算": 128.0})["合算"] if matched_key in specs else 128.0
-                reg_prob_val, tot_prob_val = g / r if r > 0 else 9999, g / (b + r) if (b + r) > 0 else 9999
-                sub_text = f"{g}G / {m_name.replace('ジャグラー', 'J').replace('ガールズ', 'G').replace('ハッピー', 'ﾊｯﾋﾟｰ').replace('ファンキー', 'ﾌｧﾝｷｰ')}" if g > 0 else "0G"
-                if map_metric == "差枚":
-                    main_text = f"{diff:+d}" if g > 0 else "-"
-                    if g == 0: bg_color, text_color = "#f5f5f5", "#9e9e9e"
-                    elif diff >= 2000: bg_color, text_color, border_color = "#d32f2f", "#fff", "#b71c1c"
-                    elif diff >= 1000: bg_color, text_color, border_color = "#ef5350", "#fff", "#c62828"
-                    elif diff > 0: bg_color, text_color, border_color = "#ffcdd2", "#d32f2f", "#ef5350"
-                    elif diff > -1000: bg_color, text_color, border_color = "#e3f2fd", "#1565c0", "#42a5f5"
-                    else: bg_color, text_color, border_color = "#1976d2", "#fff", "#0d47a1"
-                elif map_metric == "REG確率":
-                    main_text = f"1/{int(reg_prob_val)}" if r > 0 else "-"
-                    if g < 1000: bg_color, text_color = "#f5f5f5", "#9e9e9e"
-                    elif reg_prob_val <= spec_r5: bg_color, text_color, border_color = "#ef6c00", "#fff", "#e65100"
-                    elif reg_prob_val <= spec_r5 * 1.15: bg_color, text_color, border_color = "#ffe082", "#f57f17", "#ffb300"
-                    else: bg_color, text_color, border_color = "#eceff1", "#546e7a", "#cfd8dc"
-                elif map_metric == "合算確率":
-                    main_text = f"1/{int(tot_prob_val)}" if (b+r) > 0 else "-"
-                    if g < 1000: bg_color, text_color = "#f5f5f5", "#9e9e9e"
-                    elif tot_prob_val <= spec_t5: bg_color, text_color, border_color = "#8e24aa", "#fff", "#6a1b9a"
-                    elif tot_prob_val <= spec_t5 * 1.1: bg_color, text_color, border_color = "#e1bee7", "#6a1b9a", "#ab47bc"
-                    else: bg_color, text_color, border_color = "#eceff1", "#546e7a", "#cfd8dc"
-                elif map_metric == "AI期待度(事前の予測)":
-                    main_text = f"{int(pred * 100)}%" if pd.notna(pred) else "-"
-                    if pd.notna(pred):
-                        if pred >= 0.50: bg_color, text_color, border_color = "#d32f2f", "#fff", "#b71c1c"
-                        elif pred >= 0.30: bg_color, text_color, border_color = "#ef5350", "#fff", "#c62828"
-                        elif pred >= 0.15: bg_color, text_color, border_color = "#ffcdd2", "#d32f2f", "#ef5350"
-                        else: bg_color, text_color, border_color = "#eceff1", "#546e7a", "#cfd8dc"
-                    else: bg_color, text_color = "#f5f5f5", "#9e9e9e"
-                elif map_metric == "結果点数(設定5近似度)":
-                    if pd.notna(result_score):
-                        main_text = f"{result_score:.1f}点"
-                        if g < 1000: bg_color, text_color, border_color = "#f5f5f5", "#9e9e9e", "#e0e0e0"
-                        elif result_score >= 80: bg_color, text_color, border_color = "#d32f2f", "#fff", "#b71c1c"
-                        elif result_score >= 60: bg_color, text_color, border_color = "#ef5350", "#fff", "#c62828"
-                        elif result_score >= 40: bg_color, text_color, border_color = "#ffcdd2", "#d32f2f", "#ef5350"
-                        else: bg_color, text_color, border_color = "#eceff1", "#546e7a", "#cfd8dc"
-                    else:
-                        main_text = "-"
-                        bg_color, text_color = "#f5f5f5", "#9e9e9e"
-                if map_metric == "差枚" and pd.notna(prev_diff_val):
-                    p_diff = int(prev_diff_val)
-                    p_color = "#d32f2f" if p_diff > 0 else "#1565c0" if p_diff < 0 else "#9e9e9e"
-                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:{p_diff:+d}</div>"
-                elif map_metric == "REG確率" and pd.notna(prev_r_val) and prev_r_val > 0:
-                    p_reg_prob = prev_g_val / prev_r_val
-                    p_color = "#ef6c00" if p_reg_prob <= spec_r5 else "#f57f17" if p_reg_prob <= spec_r5 * 1.15 else "#9e9e9e"
-                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:1/{int(p_reg_prob)}</div>"
-                elif map_metric == "合算確率" and pd.notna(prev_b_val) and pd.notna(prev_r_val) and (prev_b_val + prev_r_val) > 0:
-                    p_tot_prob = prev_g_val / (prev_b_val + prev_r_val)
-                    p_color = "#8e24aa" if p_tot_prob <= spec_t5 else "#ab47bc" if p_tot_prob <= spec_t5 * 1.1 else "#9e9e9e"
-                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:1/{int(p_tot_prob)}</div>"
-                elif map_metric == "AI期待度(事前の予測)" and pd.notna(prev_pred_val):
-                    p_pred = float(prev_pred_val)
-                    p_color = "#d32f2f" if p_pred >= 0.50 else "#ef5350" if p_pred >= 0.30 else "#9e9e9e"
-                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:{int(p_pred*100)}%</div>"
-                elif map_metric == "結果点数(設定5近似度)" and pd.notna(prev_score_val):
-                    p_score = float(prev_score_val)
-                    p_color = "#d32f2f" if p_score >= 80 else "#ef5350" if p_score >= 60 else "#9e9e9e"
-                    prev_diff_str = f"<div style='position: absolute; top: 1px; right: 3px; font-size: 9px; font-weight: bold; color: {p_color}; letter-spacing: -0.5px;'>前:{p_score:.1f}</div>"
-                if g < filter_min_g or diff > filter_max_diff or diff < filter_min_diff: bg_color, text_color, border_color, opacity = "#fafafa", "#ccc", "#eee", "0.2"
-            else:
-                if filter_min_g > 0: opacity = "0.2"
-                
-            if data:
-                b_prob_str = f"1/{int(g/b)}" if b > 0 else "-"
-                r_prob_str = f"1/{int(g/r)}" if r > 0 else "-"
-                t_prob_str = f"1/{int(g/(b+r))}" if (b+r) > 0 else "-"
-                p_diff_str = f"{int(prev_diff_val):+d}枚" if pd.notna(prev_diff_val) else "-"
-                pred_str = f"{pred*100:.1f}%" if pd.notna(pred) else "-"
-                result_score_str = f"{result_score:.1f}点" if pd.notna(result_score) else "-"
-                diff_color = "#EF5350" if diff > 0 else "#64B5F6" if diff < 0 else "#fff"
-                
-                tooltip_html = f"""
-                <div class='tooltip-text'>
-                    <div style='font-size:13px; color:#64B5F6; font-weight:bold; margin-bottom:4px;'>#{m_num} <span style='font-size:11px; color:#ccc; font-weight:normal;'>{m_name}</span></div>
-                    <div style='display:flex; justify-content:space-between;'><span>総回転:</span><b>{g}G</b></div>
-                    <div style='display:flex; justify-content:space-between;'><span>差枚数:</span><b style='color:{diff_color};'>{diff:+d}枚</b></div>
-                    <div style='display:flex; justify-content:space-between; font-size:9px; color:#aaa; margin-top:-2px;'><span>(前日差枚:</span><span>{p_diff_str})</span></div>
-                    <hr style='margin:6px 0; border:none; border-top:1px dashed #666;'>
-                    <div style='display:flex; justify-content:space-between;'><span>BIG:</span><span>{b}回 ({b_prob_str})</span></div>
-                    <div style='display:flex; justify-content:space-between;'><span>REG:</span><span>{r}回 ({r_prob_str})</span></div>
-                    <div style='display:flex; justify-content:space-between;'><span>合算:</span><span>{t_prob_str}</span></div>
-                    <hr style='margin:6px 0; border:none; border-top:1px dashed #666;'>
-                    <div style='display:flex; justify-content:space-between;'><span>AI事前期待度:</span><b style='color:#FFCA28;'>{pred_str}</b></div>
-                    <div style='display:flex; justify-content:space-between;'><span>当日結果点数:</span><b style='color:#FFCA28;'>{result_score_str}</b></div>
-                </div>
-                """
-                
-            html_parts.append(f"""
-                <div class='machine-box' style='width: 72px; height: 66px; flex-shrink: 0; background-color: {bg_color}; border: 2px solid {border_color}; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 2px; box-sizing: border-box; opacity: {opacity};'>
-                    <div style='position: absolute; top: 1px; left: 3px; font-size: 10px; font-weight: bold; color: #555;'>{'✨' if str(m_num) == island['corner'] else ''}#{m_num}</div>
-                    {prev_diff_str}
-                    <div style='font-size: 15px; font-weight: bold; color: {text_color}; margin-top: 10px; line-height: 1;'>{main_text}</div>
-                    <div style='font-size: 9px; color: #666; margin-top: 3px; width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'>{sub_text}</div>
-                    {tooltip_html}
-                </div>
-            """)
-        html_parts.append("</div></div>")
-    html_parts.append("</div>")
-    st.components.v1.html("".join(html_parts), height=800, scrolling=True)
+    format_dict = {}
+    if table_metric == "REG確率":
+        for c in date_cols:
+            format_dict[c] = lambda x: f"1/{int(x)}" if pd.notna(x) and x > 0 else "-"
+    else:
+        for c in date_cols:
+            format_dict[c] = lambda x: f"{int(x):+d}" if pd.notna(x) else "-"
+
+    styled_df = pivot_val.style.apply(style_monthly_table, axis=1).format(format_dict, na_rep="-")
+
+    config = {
+        "台番号": st.column_config.TextColumn("台番号", width="small"),
+        "機種名": st.column_config.TextColumn("機種名", width="small"),
+        "角台": None
+    }
+    for c in date_cols:
+        config[c] = st.column_config.TextColumn(c, width="small")
+
+    if table_metric == "REG確率":
+        st.markdown("**(色分けの目安)** 🟥: 設定6基準以上 / 🟧: 設定5基準以上 / 🟨: 設定4基準以上 ｜ 台番号背景🟨: 角台")
+    else:
+        st.markdown("**(色分けの目安)** 🟥: +2000枚以上 / 🟧: +1000枚以上 / 🟨: プラス / 🟦: -1000枚以下 ｜ 台番号背景🟨: 角台")
+
+    st.dataframe(styled_df, column_config=config, use_container_width=True, hide_index=True)
