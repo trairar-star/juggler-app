@@ -63,8 +63,8 @@ def _prepare_island_map_data(df_raw, df_pred_log, selected_shop, shop_col, penal
 def render_island_map_page(df_raw, df_pred_log, df_island):
     col_h1, col_h2 = st.columns([4, 1])
     with col_h1:
-        st.header("🗺️ 島マップ (神視点ビュー)")
-        st.caption("島マスターに登録された情報に基づき、各島（列）の出玉状況を上から見た図で直感的に確認できます。塊や並びの投入箇所が一目で分かります。")
+        st.header("🗺️ 台別データ表 ＆ 島マップ")
+        st.caption("1ヶ月間の各台の成績表や、島（列）のマップビューで出玉の傾向を直感的に確認できます。")
     with col_h2:
         st.components.v1.html("""
             <button id="fs-btn" onclick="toggleFullscreen()" style="width: 100%; height: 36px; border-radius: 6px; background-color: #42A5F5; color: white; border: none; cursor: pointer; font-weight: bold; font-family: sans-serif; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
@@ -112,6 +112,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     temp_df = df_raw.copy()
     temp_df[date_col] = pd.to_datetime(temp_df[date_col], errors='coerce')
     available_dates = sorted(temp_df[date_col].dropna().dt.date.unique(), reverse=True)
+    available_months = sorted(list(set([d.strftime('%Y-%m') for d in available_dates])), reverse=True)
 
     if not available_dates:
         st.warning("有効な日付データがありません。")
