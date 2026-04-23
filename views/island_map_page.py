@@ -214,7 +214,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if pd.notna(score):
                 score_pct = int(score * 100)
                 color = "#D32F2F" if score_pct >= 40 else "#EF6C00" if score_pct >= 30 else "#757575"
-                mac_disp = f"{mac_name}<br><span style='color:{color}; font-weight:bold; font-size:10px;'>本日期待度:{score_pct}%</span>"
+                mac_disp = f"{mac_name}<br><span class='pred-pct' style='color:{color};'>本日期待度:{score_pct}%</span>"
                 
         row_data = {'台番号': mac_str, '機種名': mac_disp}
         for d in date_cols:
@@ -302,9 +302,9 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if g == 0: return "-"
             if table_metric == "REG確率":
                 prob_str = f"1/{int(g/r)}" if r > 0 else "-"
-                return f"<div style='line-height:1.3; padding:2px;'>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
+                return f"<div class='cell-val'>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
             else:
-                return f"<div style='line-height:1.3; padding:2px;'>{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
+                return f"<div class='cell-val'>{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
         return "-"
 
     format_dict = {c: fmt_cell for c in date_cols}
@@ -388,6 +388,33 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             box-shadow: 0 -2px 8px rgba(0,0,0,0.4);
             text-align: center;
             border-radius: 4px 4px 0 0;
+        }
+        .pred-pct {
+            font-size: 10px;
+            font-weight: bold;
+        }
+        .cell-val {
+            line-height: 1.3;
+            padding: 2px;
+        }
+        @media (max-width: 768px) {
+            .scroll-container table {
+                font-size: 9px;
+            }
+            .scroll-container th, .scroll-container td {
+                padding: 2px;
+            }
+            .pred-pct {
+                font-size: 8px;
+            }
+            .cell-val {
+                line-height: 1.1;
+                padding: 1px;
+            }
+            #calc-bar {
+                font-size: 12px;
+                padding: 6px 10px;
+            }
         }
     </style>
     """
