@@ -96,9 +96,9 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
 
     st.divider()
 
-    # --- 今日の期待度データを取得 ---
-    today_str = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d')
+    # --- 最新の期待度データを取得 ---
     pred_dict = {}
+    pred_date_disp = ""
     if not df_pred_log.empty:
         temp_pred = df_pred_log.copy()
         if '予測対象日' in temp_pred.columns:
@@ -107,19 +107,26 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             temp_pred['予測対象日_merge'] = pd.to_datetime(temp_pred['対象日付'], errors='coerce') + pd.Timedelta(days=1)
             
         temp_pred['予測対象日_str'] = temp_pred['予測対象日_merge'].dt.strftime('%Y-%m-%d')
-        df_today_pred = temp_pred[temp_pred['予測対象日_str'] == today_str].copy()
         
-        shop_col_pred = '店名' if '店名' in df_today_pred.columns else ('店舗名' if '店舗名' in df_today_pred.columns else None)
-        if shop_col_pred and not df_today_pred.empty:
-            df_today_pred = df_today_pred[df_today_pred[shop_col_pred] == selected_shop].copy()
-            if '実行日時' in df_today_pred.columns:
-                df_today_pred['実行日時'] = pd.to_datetime(df_today_pred['実行日時'], errors='coerce')
-                df_today_pred = df_today_pred.sort_values('実行日時', ascending=False).drop_duplicates(subset=['台番号'])
-            
-            if '台番号' in df_today_pred.columns and 'prediction_score' in df_today_pred.columns:
-                df_today_pred['台番号_str'] = df_today_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-                for _, r in df_today_pred.iterrows():
-                    pred_dict[r['台番号_str']] = r['prediction_score']
+        shop_col_pred = '店名' if '店名' in temp_pred.columns else ('店舗名' if '店舗名' in temp_pred.columns else None)
+        if shop_col_pred:
+            df_shop_pred = temp_pred[temp_pred[shop_col_pred] == selected_shop].copy()
+            if not df_shop_pred.empty:
+                latest_pred_date_str = df_shop_pred['予測対象日_str'].max()
+                try:
+                    pred_date_disp = pd.to_datetime(latest_pred_date_str).strftime('%m/%d') + " "
+                except:
+                    pass
+                df_latest_pred = df_shop_pred[df_shop_pred['予測対象日_str'] == latest_pred_date_str].copy()
+                
+                if '実行日時' in df_latest_pred.columns:
+                    df_latest_pred['実行日時'] = pd.to_datetime(df_latest_pred['実行日時'], errors='coerce')
+                    df_latest_pred = df_latest_pred.sort_values('実行日時', ascending=False).drop_duplicates(subset=['台番号'])
+                
+                if '台番号' in df_latest_pred.columns and 'prediction_score' in df_latest_pred.columns:
+                    df_latest_pred['台番号_str'] = df_latest_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                    for _, r in df_latest_pred.iterrows():
+                        pred_dict[r['台番号_str']] = r['prediction_score']
 
     df_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
     df_shop['対象日付'] = pd.to_datetime(df_shop['対象日付'], errors='coerce')
@@ -214,7 +221,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
             if pd.notna(score):
                 score_pct = int(score * 100)
                 color = "#D32F2F" if score_pct >= 40 else "#EF6C00" if score_pct >= 30 else "#757575"
-                mac_disp = f"{mac_name}<br><span class='pred-pct' style='color:{color};'>本日期待度:{score_pct}%</span>"
+                mac_disp = f"{mac_name}<br><span class='pred-pct' style='color:{color};'>{pred_date_disp}期待度:{score_pct}%</span>"
                 
         row_data = {'台番号': mac_str, '機種名': mac_disp}
         for d in date_cols:
