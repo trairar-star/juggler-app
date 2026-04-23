@@ -1731,6 +1731,59 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 use_container_width=True
             )
             
+            # --- 直近の傾向変化アラート (テスト期間が60日以上の場合のみ) ---
+            if test_period_disp > 30 and 'backtest_details' in st.session_state:
+                detail_df = st.session_state['backtest_details']
+                target_bands = ['50%以上', '40%〜49%', '30%〜39%']
+                recom_df = detail_df[detail_df['確率帯'].isin(target_bands)].copy()
+                
+                if not recom_df.empty:
+                    max_d = detail_df['対象日付'].max()
+                    recent_cutoff = max_d - pd.Timedelta(days=30)
+                    
+                    recent_df = recom_df[recom_df['対象日付'] > recent_cutoff]
+                    past_df = recom_df[recom_df['対象日付'] <= recent_cutoff]
+                    
+                    if not past_df.empty and not recent_df.empty:
+                        past_days = (recent_cutoff - detail_df['対象日付'].min()).days
+                        if past_days <= 0: past_days = 1
+                        recent_days = 30
+                        
+                        recent_count_per_day = len(recent_df) / recent_days
+                        past_count_per_day = len(past_df) / past_days
+                        
+                        def calc_win_rate(df):
+                            valid = df[df['valid_play']]
+                            if len(valid) == 0: return 0
+                            return len(valid[valid['valid_win']]) / len(valid) * 100
+                            
+                        def calc_reg_prob(df):
+                            sum_g = df['all_G'].sum()
+                            sum_r = df['all_R'].sum()
+                            return sum_g / sum_r if sum_r > 0 else 0
+                            
+                        recent_win_rate = calc_win_rate(recent_df)
+                        past_win_rate = calc_win_rate(past_df)
+                        recent_reg = calc_reg_prob(recent_df)
+                        past_reg = calc_reg_prob(past_df)
+                        
+                        alerts = []
+                        if past_count_per_day > 0 and recent_count_per_day < past_count_per_day * 0.5:
+                            alerts.append(f"- **推奨台数の激減**: 以前は1日あたり平均 **{past_count_per_day:.1f}台** の推奨台(期待度30%以上)がありましたが、直近30日は **{recent_count_per_day:.1f}台** に激減しています。お店が全体的なベースを下げたか、設定を入れるクセを変えた可能性があります。")
+                            
+                        if past_win_rate > 0 and recent_win_rate < past_win_rate - 10.0:
+                            alerts.append(f"- **勝率の低下**: 以前の推奨台勝率は **{past_win_rate:.1f}%** でしたが、直近30日は **{recent_win_rate:.1f}%** に悪化しています。")
+                            
+                        if past_reg > 0 and recent_reg > past_reg + 25: 
+                            past_r_str = f"1/{int(past_reg)}"
+                            recent_r_str = f"1/{int(recent_reg)}"
+                            alerts.append(f"- **REG確率の悪化**: 以前の推奨台REG確率は **{past_r_str}** でしたが、直近30日は **{recent_r_str}** に悪化しています。フェイク(低設定のまぐれ吹き)をAIが必勝法と勘違いしている可能性があります。")
+                            
+                        if alerts:
+                            st.warning("⚠️ **【直近の傾向変化アラート】**\n\nテスト期間のうち、**「直近30日間」** と **「それ以前」** の推奨台(期待度30%以上)の成績を比較したところ、以下の懸念点が見つかりました。\n\n" + "\n".join(alerts) + "\n\n💡 *対策: 「AIモデル設定」の学習データ期間を『1ヶ月』に短縮して自動チューニングをやり直すか、この店舗での稼働をしばらく慎重に行うことをおすすめします。*")
+                        else:
+                            st.success("✨ **【傾向安定チェック】**\n\n直近30日間とそれ以前の推奨台の成績を比較しましたが、台数や勝率、REG確率に大きな悪化は見られません。お店の傾向は安定しており、このAI設定のまま実戦に活用できそうです！")
+            
             if 'backtest_details' in st.session_state:
                 with st.expander("🔍 カンニングなしテストの詳細データを確認", expanded=False):
                     st.caption("テストで各確率帯に分類された台の具体的な日付と結果を確認できます。なぜ差枚が沈んだのか（不発か、稼働不足か）の分析に役立ててください。")
