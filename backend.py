@@ -21,7 +21,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.40.0" 
+APP_VERSION = "v4.41.0" 
 
 # ---------------------------------------------------------
 # AI特徴量定義 (全体共通)
@@ -2270,15 +2270,18 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     y_shop_reg = shop_train['next_diff'].clip(lower=-3000, upper=4000)
                     shop_reg.fit(X_shop, y_shop_reg, sample_weight=sw_shop, categorical_feature=cat_features)
                     
-                    X_shop_cls = shop_train_cls[features]
+                    X_shop_stacked = X_shop.copy()
+                    X_shop_stacked['predicted_diff'] = shop_reg.predict(X_shop)
+                    
+                    X_shop_cls = X_shop_stacked.loc[shop_train_cls.index]
                     y_shop_cls = shop_train_cls['target']
                     sw_shop_cls = sw_shop.loc[shop_train_cls.index] if sw_shop is not None else None
                     shop_model.fit(X_shop_cls, y_shop_cls, sample_weight=sw_shop_cls, categorical_feature=cat_features)
-                    corrs_shop = get_correlations(shop_train, features)
+                    corrs_shop = get_correlations(shop_train.assign(predicted_diff=X_shop_stacked['predicted_diff']), stacked_features)
                     feature_importances_list.append(pd.DataFrame({
                         'shop_name': shop,
                         'category': '店舗',
-                        'feature': features,
+                        'feature': stacked_features,
                         'importance': shop_model.feature_importances_,
                         'correlation': corrs_shop
                     }))
@@ -2287,14 +2290,18 @@ def _train_models(train_df, predict_df, features, shop_hyperparams):
                     if not predict_df.empty:
                         shop_pred_idx = predict_df[predict_df[shop_col] == shop].index
                         if len(shop_pred_idx) > 0:
-                            predict_df.loc[shop_pred_idx, 'prediction_score'] = shop_model.predict_proba(predict_df.loc[shop_pred_idx, features])[:, 1]
                             predict_df.loc[shop_pred_idx, '予測差枚数'] = shop_reg.predict(predict_df.loc[shop_pred_idx, features]).astype(int)
-                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.3(m{t_m}_n{s_n_est}_d{s_md}_ra{s_ra})"
+                            X_shop_pred_stacked = predict_df.loc[shop_pred_idx, features].copy()
+                            X_shop_pred_stacked['predicted_diff'] = predict_df.loc[shop_pred_idx, '予測差枚数']
+                            predict_df.loc[shop_pred_idx, 'prediction_score'] = shop_model.predict_proba(X_shop_pred_stacked)[:, 1]
+                            predict_df.loc[shop_pred_idx, 'ai_version'] = f"v2.4(m{t_m}_n{s_n_est}_d{s_md}_ra{s_ra})"
                     if not train_df.empty:
                         shop_train_idx = train_df[train_df[shop_col] == shop].index
                         if len(shop_train_idx) > 0:
-                            train_df.loc[shop_train_idx, 'prediction_score'] = shop_model.predict_proba(train_df.loc[shop_train_idx, features])[:, 1]
                             train_df.loc[shop_train_idx, '予測差枚数'] = shop_reg.predict(train_df.loc[shop_train_idx, features]).astype(int)
+                            X_shop_train_stacked = train_df.loc[shop_train_idx, features].copy()
+                            X_shop_train_stacked['predicted_diff'] = train_df.loc[shop_train_idx, '予測差枚数']
+                            train_df.loc[shop_train_idx, 'prediction_score'] = shop_model.predict_proba(X_shop_train_stacked)[:, 1]
                 except: pass
                     
     # --- 曜日別モデルの学習 ---

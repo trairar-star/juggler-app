@@ -1573,9 +1573,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくするほど、予測に不要な特徴量を無視しやすくなり、過学習を抑制します。")
             hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくするほど、AIが特定の特徴量に極端に依存するのを防ぎ、過学習を抑制します。")
             
+            test_period = st.selectbox("カンニングなしテストの検証期間", [30, 60, 90, 180], format_func=lambda x: f"直近 {x} 日間", index=0, help="テスト対象とする期間を選びます。期間を長くするとサンプル数が増え、結果の信頼度が高まります。")
+            
             cols = st.columns(4)
             submitted = cols[0].form_submit_button("保存して再分析", type="primary")
-            test_btn = cols[1].form_submit_button("🧪 カンニングなしテスト", help="現在スライダーで設定している値を使って、直近1ヶ月の結果を『カンニングなし』で予測するテストを実行します。")
+            test_btn = cols[1].form_submit_button("🧪 カンニングなしテスト", help="現在スライダーで設定している値を使って、指定した期間の結果を『カンニングなし』で予測するテストを実行します。")
             auto_tune_btn = cols[2].form_submit_button("✨ 自動チューニング", help=f"AIが【{selected_shop}】の過去データから最適なパラメータの組み合わせを自動で探索し、設定します。どの設定が良いか分からない場合にまずお試しください。")
             reset_btn = cols[3].form_submit_button("リセット")
             
@@ -1595,7 +1597,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 st.rerun()
                 
         if test_btn:
-            with st.spinner("直近1ヶ月のデータでカンニングなしのバックテストを実行中..."):
+            with st.spinner(f"直近{test_period}日間のデータでカンニングなしのバックテストを実行中..."):
                 import lightgbm as lgb
                 actual_features = [f for f in backend.BASE_FEATURES if f in df_verify.columns]
                 cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
@@ -1607,13 +1609,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                 else:
                     shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
                     max_date = shop_df['対象日付'].max()
-                    cutoff_date = max_date - pd.Timedelta(days=30)
+                    cutoff_date = max_date - pd.Timedelta(days=test_period)
                     
                     train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
                     test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
                     
                     if len(train_data) < 30 or len(test_data) < 10:
-                        st.error("直近1ヶ月またはそれ以前のデータが不足しているため、テストを実行できません。")
+                        st.error(f"直近{test_period}日間またはそれ以前のデータが不足しているため、テストを実行できません。")
                     else:
                         X_train, y_train = train_data[actual_features], train_data['target']
                         X_test, y_test = test_data[actual_features], test_data['target']
@@ -1702,12 +1704,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             
                             st.session_state['backtest_result'] = test_stats
                             st.session_state['backtest_details'] = test_data
+                            st.session_state['last_test_period'] = test_period
                         except Exception as e:
                             st.error(f"テスト実行中にエラーが発生しました: {e}")
                             
         if 'backtest_result' in st.session_state:
-            st.success("✅ 直近1ヶ月のカンニングなしテスト結果")
-            st.caption("現在設定されているパラメータで過去データのみを学習し、直近1ヶ月の結果を予測した「本物の実力」です。この表の上位の期待度帯（20%以上など）の勝率が高くなる設定を探してください。")
+            test_period_disp = st.session_state.get('last_test_period', 30)
+            st.success(f"✅ 直近{test_period_disp}日間のカンニングなしテスト結果")
+            st.caption(f"現在設定されているパラメータで過去データのみを学習し、直近{test_period_disp}日間の結果を予測した「本物の実力」です。この表の上位の期待度帯（20%以上など）の勝率が高くなる設定を探してください。")
             st.dataframe(
                 st.session_state['backtest_result'][['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                 column_config={
