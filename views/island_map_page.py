@@ -465,12 +465,20 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
             line-height: 1.4;
             font-weight: bold;
             z-index: 10;
-            display: none;
+            display: flex;
+            visibility: hidden;
+            opacity: 0;
+            pointer-events: none;
             box-shadow: 0 -2px 8px rgba(0,0,0,0.4);
             border-radius: 4px 4px 0 0;
             justify-content: space-between;
             align-items: center;
             box-sizing: border-box;
+        }
+        #calc-bar.show {
+            visibility: visible;
+            opacity: 1;
+            pointer-events: auto;
         }
         #calc-content {
             text-align: left;
@@ -603,9 +611,9 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                     let totProbStr = (totalB + totalR) > 0 ? "1/" + Math.floor(totalG / (totalB + totalR)) : "-";
                     let diffSign = totalDiff > 0 ? "+" : "";
                     calcContent.innerHTML = `🎰 [選択: ${{count}}台] ｜ 総回転: ${{totalG}}G ｜ 差枚: <span style="color:${{totalDiff>0?'#FFCA28':'#81D4FA'}}">${{diffSign}}${{totalDiff}}枚</span><br>BIG: ${{totalB}}回 (<span style="color:#FFCA28">${{bigProbStr}}</span>) ｜ REG: ${{totalR}}回 (<span style="color:#FFCA28">${{regProbStr}}</span>) ｜ 合算: <span style="color:#FFCA28">${{totProbStr}}</span>`;
-                    calcBar.style.display = 'flex';
+                    calcBar.classList.add('show');
                 }} else {{
-                    calcBar.style.display = 'none';
+                    calcBar.classList.remove('show');
                 }}
             }}
 
