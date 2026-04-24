@@ -227,6 +227,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     df_month_dedup = df_month_dedup.set_index(['台番号', '機種名', 'day_str'])
     
     pivot_g = df_month_dedup['g'].unstack()
+    pivot_b = df_month_dedup['b'].unstack()
     pivot_r = df_month_dedup['r'].unstack()
     pivot_diff = df_month_dedup['diff'].unstack()
     
@@ -261,12 +262,13 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
         row_data = {'台番号': mac_str, '機種名': mac_disp}
         for d in date_cols:
             g_val = pivot_g.loc[(mac_num, mac_name), d]
+            b_val = pivot_b.loc[(mac_num, mac_name), d]
             r_val = pivot_r.loc[(mac_num, mac_name), d]
             diff_val = pivot_diff.loc[(mac_num, mac_name), d]
             if pd.isna(g_val):
                 row_data[d] = np.nan
             else:
-                row_data[d] = (g_val, r_val, diff_val)
+                row_data[d] = (g_val, b_val, r_val, diff_val)
         records.append(row_data)
         
     pivot_val = pd.DataFrame(records)
@@ -302,7 +304,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
             val = row[col]
             if not isinstance(val, tuple): continue
             
-            g, r, diff = val
+            g, b, r, diff = val
             if g == 0: continue
             
             if g <= min_g_filter:
@@ -340,13 +342,13 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
 
     def fmt_cell(val):
         if isinstance(val, tuple):
-            g, r, diff = val
+            g, b, r, diff = val
             if g == 0: return "-"
             if table_metric == "REG確率":
                 prob_str = f"1/{int(g/r)}" if r > 0 else "-"
-                return f"<div class='cell-val'>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
+                return f"<div class='cell-val' data-b='{int(b)}'>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
             else:
-                return f"<div class='cell-val'>{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
+                return f"<div class='cell-val' data-b='{int(b)}'>{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
         return "-"
 
     format_dict = {c: fmt_cell for c in date_cols}
@@ -422,14 +424,37 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
             width: 100%;
             background-color: rgba(30, 30, 30, 0.95);
             color: white;
-            padding: 10px 15px;
-            font-size: 15px;
+            padding: 8px 15px;
+            font-size: 14px;
+            line-height: 1.4;
             font-weight: bold;
             z-index: 10;
             display: none;
             box-shadow: 0 -2px 8px rgba(0,0,0,0.4);
-            text-align: center;
             border-radius: 4px 4px 0 0;
+            justify-content: space-between;
+            align-items: center;
+            box-sizing: border-box;
+        }
+        #calc-content {
+            text-align: left;
+            flex-grow: 1;
+        }
+        #clear-btn {
+            background-color: #F44336;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 12px;
+            margin-left: 10px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #clear-btn:active {
+            background-color: #D32F2F;
         }
         .pred-pct {
             font-size: 10px;
@@ -457,6 +482,10 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 font-size: 12px;
                 padding: 6px 10px;
             }
+            #clear-btn {
+                padding: 6px 8px;
+                font-size: 11px;
+            }
         }
     </style>
     """
@@ -465,14 +494,23 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     {custom_css}
     <div class='scroll-container' id='main-scroll'>
         {html_table}
-        <div id="calc-bar"></div>
+        <div id="calc-bar">
+            <div id="calc-content"></div>
+            <button id="clear-btn" onclick="clearTableSelection()">✖ クリア</button>
+        </div>
     </div>
     <script>
         (function() {{
             const container = document.getElementById('main-scroll');
             const table = container.querySelector('table');
             let isMouseDown = false;
+            let selectionMode = true; // true: 選択(塗りつぶし), false: 解除(消しゴム)
             
+            window.clearTableSelection = function() {{
+                document.querySelectorAll('.selected-cell').forEach(c => c.classList.remove('selected-cell'));
+                updateCalc();
+            }};
+
             function updateStickyLeft() {{
                 const th1 = table.querySelector('th:nth-child(1)');
                 const th2 = table.querySelector('th:nth-child(2)');
@@ -491,30 +529,40 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
 
             function updateCalc() {{
                 let totalG = 0;
+                let totalB = 0;
                 let totalR = 0;
                 let totalDiff = 0;
                 let count = 0;
                 const selected = table.querySelectorAll('.selected-cell');
                 selected.forEach(td => {{
-                    const text = td.innerText || td.textContent;
-                    const gMatch = text.match(/([0-9]+)G/);
-                    const rMatch = text.match(/([0-9]+)R/);
-                    const diffMatch = text.match(/([+-]?[0-9]+)枚/);
-
-                    if(gMatch && rMatch && diffMatch) {{
-                        totalG += parseInt(gMatch[1], 10);
-                        totalR += parseInt(rMatch[1], 10);
-                        totalDiff += parseInt(diffMatch[1].replace('+', ''), 10);
-                        count++;
+                    const cellVal = td.querySelector('.cell-val');
+                    if(cellVal) {{
+                        const text = td.innerText || td.textContent;
+                        const gMatch = text.match(/([0-9]+)G/);
+                        const rMatch = text.match(/([0-9]+)R/);
+                        const diffMatch = text.match(/([+-]?[0-9]+)枚/);
+                        
+                        let bVal = parseInt(cellVal.getAttribute('data-b') || '0', 10);
+    
+                        if(gMatch && rMatch && diffMatch) {{
+                            totalG += parseInt(gMatch[1], 10);
+                            totalR += parseInt(rMatch[1], 10);
+                            totalDiff += parseInt(diffMatch[1].replace('+', ''), 10);
+                            totalB += bVal;
+                            count++;
+                        }}
                     }}
                 }});
 
                 const calcBar = document.getElementById('calc-bar');
+                const calcContent = document.getElementById('calc-content');
                 if (count > 0) {{
-                    let probStr = totalR > 0 ? "1/" + Math.floor(totalG / totalR) : "-";
+                    let regProbStr = totalR > 0 ? "1/" + Math.floor(totalG / totalR) : "-";
+                    let bigProbStr = totalB > 0 ? "1/" + Math.floor(totalG / totalB) : "-";
+                    let totProbStr = (totalB + totalR) > 0 ? "1/" + Math.floor(totalG / (totalB + totalR)) : "-";
                     let diffSign = totalDiff > 0 ? "+" : "";
-                    calcBar.innerHTML = `🎰 [選択: ${{count}}台] ｜ 総回転: ${{totalG}}G ｜ REG: ${{totalR}}回 (合算REG確率: <span style="color:#FFCA28">${{probStr}}</span>) ｜ 差枚: <span style="color:${{totalDiff>0?'#FFCA28':'#81D4FA'}}">${{diffSign}}${{totalDiff}}枚</span>`;
-                    calcBar.style.display = 'block';
+                    calcContent.innerHTML = `🎰 [選択: ${{count}}台] ｜ 総回転: ${{totalG}}G ｜ 差枚: <span style="color:${{totalDiff>0?'#FFCA28':'#81D4FA'}}">${{diffSign}}${{totalDiff}}枚</span><br>BIG: ${{totalB}}回 (<span style="color:#FFCA28">${{bigProbStr}}</span>) ｜ REG: ${{totalR}}回 (<span style="color:#FFCA28">${{regProbStr}}</span>) ｜ 合算: <span style="color:#FFCA28">${{totProbStr}}</span>`;
+                    calcBar.style.display = 'flex';
                 }} else {{
                     calcBar.style.display = 'none';
                 }}
@@ -522,29 +570,59 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
 
             table.addEventListener('mousedown', function(e) {{
                 let td = e.target.closest('td');
-                if (!td || td.cellIndex < 2) {{
-                    document.querySelectorAll('.selected-cell').forEach(c => c.classList.remove('selected-cell'));
-                    updateCalc();
-                    return;
-                }}
+                if (!td || td.cellIndex < 2) return;
+                
                 isMouseDown = true;
-                if (!e.ctrlKey && !e.metaKey) {{
-                    document.querySelectorAll('.selected-cell').forEach(c => c.classList.remove('selected-cell'));
+                selectionMode = !td.classList.contains('selected-cell');
+                
+                if (selectionMode) {{
+                    td.classList.add('selected-cell');
+                }} else {{
+                    td.classList.remove('selected-cell');
                 }}
-                td.classList.toggle('selected-cell');
                 updateCalc();
-                e.preventDefault();
             }});
 
             table.addEventListener('mouseover', function(e) {{
                 if (!isMouseDown) return;
                 let td = e.target.closest('td');
                 if (!td || td.cellIndex < 2) return;
-                td.classList.add('selected-cell');
+                
+                if (selectionMode) {{
+                    td.classList.add('selected-cell');
+                }} else {{
+                    td.classList.remove('selected-cell');
+                }}
                 updateCalc();
             }});
 
             document.addEventListener('mouseup', function(e) {{
+                isMouseDown = false;
+            }});
+            
+            // タッチデバイス(スマホ)でのスライド選択用
+            table.addEventListener('touchstart', function(e) {{
+                isMouseDown = true;
+            }}, {{ passive: true }});
+            
+            table.addEventListener('touchmove', function(e) {{
+                if (!isMouseDown) return;
+                let touch = e.touches[0];
+                let element = document.elementFromPoint(touch.clientX, touch.clientY);
+                if (!element) return;
+                
+                let td = element.closest('td');
+                if (!td || td.cellIndex < 2) return;
+                
+                if (selectionMode) {{
+                    td.classList.add('selected-cell');
+                }} else {{
+                    td.classList.remove('selected-cell');
+                }}
+                updateCalc();
+            }}, {{ passive: true }});
+            
+            document.addEventListener('touchend', function(e) {{
                 isMouseDown = false;
             }});
         }})();

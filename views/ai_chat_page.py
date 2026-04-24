@@ -5,6 +5,7 @@ import json
 import os
 import backend
 import time
+import lightgbm as lgb # type: ignore
 from utils import get_valid_play_mask
 from config import BASE_FEATURES, FEATURE_NAME_MAP
 
