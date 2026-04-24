@@ -475,6 +475,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
         #calc-content {
             text-align: left;
             flex-grow: 1;
+            font-size: 13px;
+            line-height: 1.4;
         }
         #clear-btn {
             background-color: #F44336;
@@ -515,8 +517,11 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 padding: 1px;
             }
             #calc-bar {
-                font-size: 12px;
-                padding: 6px 10px;
+                padding: 6px 8px;
+            }
+            #calc-content {
+                font-size: 10.5px;
+                line-height: 1.3;
             }
             #clear-btn {
                 padding: 6px 8px;
