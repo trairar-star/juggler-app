@@ -235,6 +235,19 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     records = []
     for (mac_num, mac_name) in pivot_g.index:
         mac_str = str(mac_num)
+        
+        # --- 機種スペックのツールチップ(ポップアップ)を作成 ---
+        matched_key = backend.get_matched_spec_key(mac_name, specs)
+        spec_tooltip = ""
+        if matched_key and matched_key in specs:
+            spec_info = specs[matched_key]
+            tooltip_lines = [f"【{matched_key}】確率目安"]
+            for s in ["設定1", "設定4", "設定5", "設定6"]:
+                if s in spec_info:
+                    sp = spec_info[s]
+                    tooltip_lines.append(f"{s}: BB 1/{sp.get('BIG',0):.1f} | RB 1/{sp.get('REG',0):.1f} | 合算 1/{sp.get('合算',0):.1f}")
+            spec_tooltip = "&#10;".join(tooltip_lines) # HTMLのtitle属性用の改行コード
+            
         mac_disp = mac_name
         if mac_str in pred_dict:
             score = pred_dict[mac_str]
@@ -243,6 +256,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 color = "#D32F2F" if score_pct >= 40 else "#EF6C00" if score_pct >= 30 else "#757575"
                 mac_disp = f"{mac_name}<br><span class='pred-pct' style='color:{color};'>{pred_date_disp}期待度:{score_pct}%</span>"
                 
+        mac_disp = f"<div title='{spec_tooltip}' style='cursor: help;'>{mac_disp}</div>"
+        
         row_data = {'台番号': mac_str, '機種名': mac_disp}
         for d in date_cols:
             g_val = pivot_g.loc[(mac_num, mac_name), d]
