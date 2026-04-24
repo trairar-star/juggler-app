@@ -3,6 +3,7 @@ import numpy as np
 import math
 import streamlit as st # type: ignore
 import backend
+from utils import get_valid_play_mask
 
 def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, selected_shop):
     st.subheader("🏆 日別の予測 vs 実際 ランキング比較")
@@ -229,9 +230,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     # AI推奨台(上位10%)の通算勝率の計算
                     pred_g = pd.to_numeric(valid_pred_df['結果_累計ゲーム'], errors='coerce').fillna(0)
                     pred_diff = pd.to_numeric(valid_pred_df['差枚_actual'], errors='coerce').fillna(0)
-                    valid_for_win = valid_pred_df[
-                        (pred_g >= 3000) | ((pred_g < 3000) & ((pred_diff <= -750) | (pred_diff >= 750)))
-                    ]
+                    valid_for_win = valid_pred_df[get_valid_play_mask(pred_g, pred_diff)]
                     win_rate_str = "- (0/0台)"
                     if not valid_for_win.empty:
                         total_win = (valid_for_win['差枚_actual'] > 0).sum()
@@ -253,7 +252,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         # 勝率計算用のフラグを追加
                         act_g = pd.to_numeric(match_df['結果_累計ゲーム'], errors='coerce').fillna(0)
                         act_diff = pd.to_numeric(match_df['差枚_actual'], errors='coerce').fillna(0)
-                        match_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
+                        match_df['valid_play'] = get_valid_play_mask(act_g, act_diff)
                         match_df['is_win'] = match_df['valid_play'] & (act_diff > 0)
                         match_df['valid_差枚_actual'] = np.where(match_df['valid_play'], match_df['差枚_actual'], np.nan)
                         
@@ -336,20 +335,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                 # 設定5近似度の算出ロジックを定義
                 def calculate_score(row, g_col='累計ゲーム', b_col='BIG', r_col='REG', m_col='機種名', d_col='差枚'):
-                    g = pd.to_numeric(row.get(g_col, 0), errors='coerce')
-                    act_b = pd.to_numeric(row.get(b_col, 0), errors='coerce')
-                    act_r = pd.to_numeric(row.get(r_col, 0), errors='coerce')
-                    diff = pd.to_numeric(row.get(d_col, 0), errors='coerce')
-                    machine = row.get(m_col, '')
-                    
-                    penalty_reg = st.session_state.get('penalty_reg', 15)
-                    penalty_big = st.session_state.get('penalty_big', 5)
-                    low_g_penalty = st.session_state.get('low_g_penalty', 30)
-                    
-                    return backend.calculate_setting_score(
-                        g=g, act_b=act_b, act_r=act_r, machine_name=machine, diff=diff,
-                        shop_avg_g=shop_avg_g_actual, penalty_reg=penalty_reg, penalty_big=penalty_big,
-                        low_g_penalty=low_g_penalty, use_strict_scoring=True, return_details=False
+                    return backend.get_setting_score_from_row(
+                        row, shop_avg_g=shop_avg_g_actual, g_col=g_col, b_col=b_col, r_col=r_col, m_col=m_col, d_col=d_col
                     )
 
                 # --- 実際のランキング上位10%を事前に計算 (照合用) ---
@@ -400,7 +387,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     if not pred_df_day.empty:
                         pred_g = pd.to_numeric(pred_df_day['結果_累計ゲーム'], errors='coerce').fillna(0)
                         pred_diff = pd.to_numeric(pred_df_day['差枚_actual'], errors='coerce').fillna(0)
-                        valid_pred = pred_df_day[(pred_g >= 3000) | ((pred_g < 3000) & ((pred_diff <= -750) | (pred_diff >= 750)))]
+                        valid_pred = pred_df_day[get_valid_play_mask(pred_g, pred_diff)]
                         if not valid_pred.empty:
                             win_c = (valid_pred['差枚_actual'] > 0).sum()
                             daily_win_rate = f"{win_c / len(valid_pred):.1%} ({win_c}/{len(valid_pred)}台)"

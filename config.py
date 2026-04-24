@@ -1,0 +1,135 @@
+# ---------------------------------------------------------
+# AI特徴量定義 (全体共通)
+# ---------------------------------------------------------
+BASE_FEATURES = [
+    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
+    'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
+    'min_7days_diff', 'bb_reg_ratio_diff', 'machine_play_volume_rank', 'target_date_type_avg_diff',
+    'past_wd_avg', 'past_digit_avg', 'pure_tail_number_avg_diff', 'recovery_day_sweet_machine',
+    'mean_7days_reg_prob', '連続マイナス日数', '連続プラス日数', '連続低稼働日数', 'cons_high_reg_days', 'is_new_machine', 'is_moved_machine', 
+    'cons_minus_total_diff', 'prev_bonus_balance', 'prev_unlucky_gap', 'is_beginning_of_month', 'is_end_of_month', 'is_pension_day', 
+    'is_low_play_high_reg', 'is_hot_wd_and_heavy_lose', 'mean_7days_games', 'is_prev_no_play', 
+    'is_prev_up_trend_and_high_reg', 'is_prev_low_reg_and_good_diff', 'prev_reg_reliability_score',
+    'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
+    'reg_rate_2_days_ago_high', 'reg_rate_3_days_ago_high', 'delta_2_days_ago_modest', 'delta_3_days_ago_modest',
+    'low_play_1_day_after', 'low_play_2_day_after', 'hidden_high_setting_pattern',
+    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+    'trend_v_recovery', 'trend_cont_lose', 'trend_cont_win', 'trend_down_rebound',
+    'history_count', 'machine_code', 'shop_code', 'reg_ratio', 'is_corner', 'is_main_corner',
+    'is_main_island', 'is_wall_island', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score',
+    'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate',
+    'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff',
+    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
+    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'weekday_avg_diff'
+]
+
+FEATURE_NAME_MAP = {
+    '累計ゲーム': '前日 累計G数', 'REG確率': '前日 REG確率', 'BIG確率': '前日 BIG確率',
+    '差枚': '前日 差枚数', '末尾番号': '台番号末尾', 'target_weekday': '予測日 曜日',
+    'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均差枚', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
+    'mean_7days_diff': '台 直近7日平均差枚', 'median_7days_diff': '台 7日差枚中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
+    'mean_7days_games': '台 直近7日平均G数', 'min_7days_diff': '台 7日最小差枚(最大凹み)',
+    'bb_reg_ratio_diff': '前日 BB/REG比率乖離度', 'machine_play_volume_rank': '同機種内 前日稼働ランク', 'target_date_type_avg_diff': '予測日属性 過去店舗平均差枚',
+    'past_wd_avg': '予測曜日 過去店舗平均差枚', 'past_digit_avg': '予測日付末尾 過去店舗平均差枚',
+    'pure_tail_number_avg_diff': '台番号末尾 過去平均差枚', 'recovery_day_sweet_machine': '回収日甘機種フラグ',
+    '連続マイナス日数': '連続凹み日数', '連続プラス日数': '連続勝ち日数', '連続低稼働日数': '連続放置日数', 'cons_high_reg_days': '連続高REG日数', 'is_prev_no_play': '前日 稼働なし',
+    'machine_code': '機種', 'shop_code': '店舗',
+    'reg_ratio': '前日 REG比率', 'is_corner': '角台フラグ', 'is_main_corner': 'メイン角フラグ', 'is_main_island': '目立つ島フラグ', 'is_wall_island': '壁側島フラグ',
+    'is_neighbor_high_reg': '隣台(並び) REG高設定水準', 'neighbor_reg_reliability_score': '隣台(並び) REG確率×稼働量', 'neighbor_high_setting_count': '隣台(並び) 高設定示唆台数',
+    'event_avg_diff': 'イベント 平均差枚', 'event_code': 'イベント 種類', 'event_rank_score': 'イベント ランク',
+    'prev_event_rank_score': '前日(特日)ランク',
+    'relative_games_ratio': '台 相対稼働率', 'is_new_machine': '新台フラグ', 'is_moved_machine': '配置変更フラグ',
+    'shop_7days_avg_diff': '店舗 直近7日平均差枚', 'prev_shop_daily_avg_diff': '店舗 前日平均差枚',
+    'machine_30days_avg_diff': '機種 30日平均差枚', 'machine_30days_high_rate': '機種 30日高設定率',
+    'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
+    'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚',
+    'history_count': '台 履歴データ数',
+    'cons_minus_total_diff': '前回放出からの累計差枚', 'machine_no_30days_avg_diff': '場所 30日平均差枚', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
+    'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',
+    'shop_monthly_cumulative_diff': '店舗 月間累計差枚', 'prev_bonus_balance': '前日 REG先行度(REG-BIG)', 'prev_unlucky_gap': '前日 REG不発度(期待出玉-差枚)',
+    'is_prev_up_trend_and_high_reg': '複合: 前日右肩上がり&高REG', 'is_prev_low_reg_and_good_diff': '複合: 前日低REG&差枚プラス', 'prev_reg_reliability_score': '複合: 前日REG確率×稼働量',
+    'is_prev_high_reg': '前日 高設定水準REGフラグ', 'is_high_reg_plus_diff': '複合: 前日REG高&差枚プラス(本物据え狙い)', 'is_low_reg_plus_diff': '複合: 前日REG低&差枚プラス(誤爆下げ警戒)',
+    'reg_rate_2_days_ago_high': '2日前 REG高確率フラグ', 'reg_rate_3_days_ago_high': '3日前 REG高確率フラグ',
+    'delta_2_days_ago_modest': '2日前 差枚±1000枚フラグ', 'delta_3_days_ago_modest': '3日前 差枚±1000枚フラグ',
+    'low_play_1_day_after': '2日前 翌日低稼働フラグ', 'low_play_2_day_after': '3日前 翌々日低稼働フラグ',
+    'hidden_high_setting_pattern': '複合: 隠れ高設定パターン',
+    'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
+    'trend_v_recovery': '波: V字反発(負→勝)', 'trend_cont_lose': '波: 連続凹み(負→負)', 'trend_cont_win': '波: 連続据え(勝→勝)', 'trend_down_rebound': '波: 上げ戻し(勝→負)',
+    'shop_pred_diff_7d_avg': '店舗 AI予測7日平均差枚', 'predicted_diff': 'AI予測 差枚数'
+}
+
+# ---------------------------------------------------------
+# 機種スペック情報
+# ---------------------------------------------------------
+MACHINE_SPECS = {
+    "ウルトラミラクルジャグラー": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 267.5, "REG": 425.6, "合算": 164.3, "ぶどう": 6.02},
+        "設定4": {"BIG": 242.7, "REG": 322.8, "合算": 138.6, "ぶどう": 5.90},
+        "設定5": {"BIG": 233.2, "REG": 297.9, "合算": 130.8, "ぶどう": 5.80},
+        "設定6": {"BIG": 216.3, "REG": 277.7, "合算": 121.6, "ぶどう": 5.70},
+    },
+    "ゴーゴージャグラー3": {
+        "BIG獲得": 240, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 259.0, "REG": 354.2, "合算": 149.6, "ぶどう": 6.02},
+        "設定4": {"BIG": 254.0, "REG": 268.6, "合算": 130.5, "ぶどう": 5.91},
+        "設定5": {"BIG": 247.3, "REG": 247.3, "合算": 123.7, "ぶどう": 5.86},
+        "設定6": {"BIG": 234.9, "REG": 234.9, "合算": 117.4, "ぶどう": 5.78},
+    },
+    "ジャグラーガールズSS": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 381.0, "合算": 159.1, "ぶどう": 6.09},
+        "設定4": {"BIG": 250.1, "REG": 281.3, "合算": 132.4, "ぶどう": 5.92},
+        "設定5": {"BIG": 243.6, "REG": 270.8, "合算": 128.3, "ぶどう": 5.87},
+        "設定6": {"BIG": 226.0, "REG": 252.1, "合算": 119.2, "ぶどう": 5.75},
+    },
+    "ネオアイムジャグラーEX": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 8,
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5, "ぶどう": 6.02},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2, "ぶどう": 5.95},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5, "ぶどう": 5.95},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5, "ぶどう": 5.78},
+    },
+    "ハッピージャグラーVIII": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 397.2, "合算": 161.8, "ぶどう": 6.16},
+        "設定4": {"BIG": 254.0, "REG": 300.6, "合算": 137.7, "ぶどう": 5.98},
+        "設定5": {"BIG": 239.2, "REG": 273.1, "合算": 127.5, "ぶどう": 5.87},
+        "設定6": {"BIG": 226.0, "REG": 256.0, "合算": 120.0, "ぶどう": 5.79},
+    },
+    "ファンキージャグラー2KT": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 266.4, "REG": 439.8, "合算": 165.9, "ぶどう": 6.02},
+        "設定4": {"BIG": 249.2, "REG": 322.8, "合算": 140.6, "ぶどう": 5.91},
+        "設定5": {"BIG": 240.1, "REG": 299.3, "合算": 133.2, "ぶどう": 5.81},
+        "設定6": {"BIG": 219.9, "REG": 262.1, "合算": 119.6, "ぶどう": 5.66},
+    },
+    "ミスタージャグラー": {
+        "BIG獲得": 240, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 268.6, "REG": 374.5, "合算": 156.4, "ぶどう": 6.08},
+        "設定4": {"BIG": 249.2, "REG": 291.3, "合算": 134.3, "ぶどう": 5.92},
+        "設定5": {"BIG": 240.9, "REG": 257.0, "合算": 124.4, "ぶどう": 5.87},
+        "設定6": {"BIG": 237.4, "REG": 237.4, "合算": 118.7, "ぶどう": 5.79},
+    },
+    "マイジャグラーV": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 409.6, "合算": 163.8, "ぶどう": 5.90},
+        "設定4": {"BIG": 254.0, "REG": 290.0, "合算": 135.4, "ぶどう": 5.77},
+        "設定5": {"BIG": 240.1, "REG": 268.6, "合算": 126.8, "ぶどう": 5.70},
+        "設定6": {"BIG": 229.1, "REG": 229.1, "合算": 114.6, "ぶどう": 5.60},
+    },
+    "アイムジャグラーEX": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 8,
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5, "ぶどう": 6.02},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2, "ぶどう": 6.02},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5, "ぶどう": 6.02},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5, "ぶどう": 5.78},
+    },
+    "ジャグラー（デフォルト）": {
+        "BIG獲得": 252, "REG獲得": 96, "ぶどう獲得": 7,
+        "設定1": {"BIG": 273.1, "REG": 439.8, "合算": 168.5, "ぶどう": 6.02},
+        "設定4": {"BIG": 259.0, "REG": 315.1, "合算": 142.2, "ぶどう": 5.95},
+        "設定5": {"BIG": 259.0, "REG": 255.0, "合算": 128.5, "ぶどう": 5.85},
+        "設定6": {"BIG": 255.0, "REG": 255.0, "合算": 127.5, "ぶどう": 5.75},
+    }
+}

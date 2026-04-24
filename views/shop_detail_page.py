@@ -5,7 +5,8 @@ import altair as alt # type: ignore
 
 # バックエンド処理をインポート
 import backend
-from utils import get_confidence_indicator
+from utils import get_confidence_indicator, get_valid_play_mask
+from config import FEATURE_NAME_MAP
 
 def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw, df_events, specs, df_importance=None, df_target=None):
     """店舗別詳細ページで、ランキング上位台の詳細情報を表示するExpanderを描画する"""
@@ -75,7 +76,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 corr = imp_row.get('correlation', 0)
                 val = row.get(f_key, '-')
                 
-                f_name = backend.FEATURE_NAME_MAP.get(f_key, f_key)
+                f_name = FEATURE_NAME_MAP.get(f_key, f_key)
 
                 def format_feat(v, is_avg=False):
                     if isinstance(v, (int, float)) and not pd.isna(v):
@@ -409,7 +410,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
     base_win_rate = 0
     
     if df_train is not None and not df_train.empty and shop_col in df_train.columns:
-        all_trends_dict = backend._calculate_shop_trends(df_train, shop_col, specs)
+        all_trends_dict = backend.calculate_shop_trends(df_train, shop_col, specs)
 
         # 画面表示用変数の設定 (選択された店舗がある場合)
         if selected_shop != '全て' and selected_shop in all_trends_dict:
@@ -664,22 +665,10 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
 
         # --- 島（列）別 期待度ランキング (追加) ---
         if selected_shop != '全て' and 'island_id' in df.columns:
-            island_pred_df = df[df['island_id'] != "Unknown"].copy()
-            if not island_pred_df.empty:
+            isl_stats = backend.get_island_prediction_ranking(df)
+            if not isl_stats.empty:
                 with st.expander("🏝️ 島（列）別 期待度ランキング", expanded=True):
                     st.caption("AIの予測スコアを島（列）ごとに平均し、「どの島全体に設定が入りそうか（還元島か回収島か）」をランキング化しています。")
-                    island_pred_df['島名'] = island_pred_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
-                    
-                    isl_stats = island_pred_df.groupby('島名').agg(
-                        平均期待度=('prediction_score', 'mean'),
-                        激アツ台数=('prediction_score', lambda x: (x >= 0.30).sum()),
-                        全台数=('台番号', 'count')
-                    ).reset_index().sort_values('平均期待度', ascending=False)
-                    
-                    isl_stats['営業予測'] = isl_stats.apply(
-                        lambda row: backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 20), is_prediction=False).replace('営業', '島').replace('日', '島'), axis=1
-                    )
-                    isl_stats['平均期待度'] = isl_stats['平均期待度'] * 100
                     
                     st.dataframe(
                         isl_stats,
@@ -699,158 +688,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             with st.expander("🏬 店舗別 期待度ランキング", expanded=True):
                 eval_period = st.radio("AI正答率・勝率の集計期間", ["直近1週間", "直近1ヶ月", "全期間"], index=0, horizontal=True, help="「直近1週間」でデータが0件になる場合は、期間を延ばして確認してください。")
                 
-                # 店舗ごとの集計
-                shop_stats = df.groupby(shop_col).agg(
-                    平均スコア=('prediction_score', 'mean'),
-                    推奨台数=('prediction_score', lambda x: (x >= 0.30).sum()),
-                    全台数=('台番号', 'nunique')
-                ).reset_index()
-                
-                if '予測差枚数' in df.columns:
-                    diff_stats = df.groupby(shop_col).agg(予測平均差枚=('予測差枚数', 'mean')).reset_index()
-                    shop_stats = pd.merge(shop_stats, diff_stats, on=shop_col, how='left')
-                else:
-                    shop_stats['予測平均差枚'] = np.nan
-
-                # --- 収集日数の計算 ---
-                shop_days_map = {}
-                if not df_raw.empty and shop_col in df_raw.columns and '対象日付' in df_raw.columns:
-                    days_stats = df_raw.groupby(shop_col)['対象日付'].nunique().reset_index()
-                    shop_days_map = dict(zip(days_stats[shop_col], days_stats['対象日付']))
-                shop_stats['収集日数'] = shop_stats[shop_col].map(shop_days_map).fillna(0).astype(int)
-                
-                # --- ガチ予測ログベースのAI正答率・勝率計算 ---
-                ai_accuracy_map = {}
-                ai_win_rate_map = {}
-                ai_acc_str_map = {}
-                ai_win_str_map = {}
-                
-                if df_pred_log is not None and not df_pred_log.empty and not df_raw.empty:
-                    df_pred_log_temp = df_pred_log.copy()
-                    if '予測対象日' in df_pred_log_temp.columns:
-                        df_pred_log_temp['予測対象日'] = pd.to_datetime(df_pred_log_temp['予測対象日'], errors='coerce')
-                    df_pred_log_temp['対象日付'] = pd.to_datetime(df_pred_log_temp['対象日付'], errors='coerce')
-                    
-                    if '予測対象日' in df_pred_log_temp.columns:
-                        df_pred_log_temp['予測対象日_merge'] = df_pred_log_temp['予測対象日'].fillna(df_pred_log_temp['対象日付'] + pd.Timedelta(days=1))
-                    else:
-                        df_pred_log_temp['予測対象日_merge'] = df_pred_log_temp['対象日付'] + pd.Timedelta(days=1)
-                        
-                    shop_col_pred = '店名' if '店名' in df_pred_log_temp.columns else '店舗名'
-                    if shop_col != shop_col_pred:
-                        df_pred_log_temp = df_pred_log_temp.rename(columns={shop_col_pred: shop_col})
-                        
-                    df_pred_log_temp['台番号'] = df_pred_log_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-                    
-                    if '実行日時' in df_pred_log_temp.columns:
-                        df_pred_log_temp = df_pred_log_temp.sort_values('実行日時', ascending=False).drop_duplicates(
-                            subset=['予測対象日_merge', shop_col, '台番号'], keep='first'
-                        )
-        
-                    df_raw_temp = df_raw.copy()
-                    df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-                    df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
-                    
-                    merged = pd.merge(
-                        df_pred_log_temp,
-                        df_raw_temp,
-                        left_on=['予測対象日_merge', shop_col, '台番号'],
-                        right_on=['対象日付', shop_col, '台番号'],
-                        how='inner',
-                        suffixes=('_pred', '_raw')
-                    )
-                    
-                    if not merged.empty and 'prediction_score' in merged.columns:
-                        if eval_period != "全期間":
-                            days = 7 if eval_period == "直近1週間" else 30
-                            max_date = merged['予測対象日_merge'].max()
-                            cutoff_date = max_date - pd.Timedelta(days=days)
-                            merged = merged[merged['予測対象日_merge'] > cutoff_date].copy()
-                        
-                        merged['prediction_score'] = pd.to_numeric(merged['prediction_score'], errors='coerce')
-                        
-                        # 店舗の規模（ジャグラー全台数）に応じて、評価対象とするトップ台数を動的に変動させる（約10%、最低3台〜最大10台）
-                        shop_machine_counts = df.groupby(shop_col)['台番号'].nunique().to_dict()
-                        merged['top_k_threshold'] = merged[shop_col].apply(lambda x: max(3, min(10, int(shop_machine_counts.get(x, 50) * 0.10))))
-                        
-                        merged['daily_rank'] = merged.groupby(['予測対象日_merge', shop_col])['prediction_score'].rank(method='first', ascending=False)
-                        high_expect_df = merged[merged['daily_rank'] <= merged['top_k_threshold']].copy()
-                        
-                        if not high_expect_df.empty:
-                            act_b = pd.to_numeric(high_expect_df['BIG'], errors='coerce').fillna(0)
-                            act_r = pd.to_numeric(high_expect_df['REG'], errors='coerce').fillna(0)
-                            act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)
-                            
-                            spec_reg_val = high_expect_df['機種名_raw'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-                            spec_tot_val = high_expect_df['機種名_raw'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                            
-                            reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
-                            tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
-                            
-                            high_expect_df['valid_high_play'] = (act_g >= 3000)
-                            high_expect_df['is_high_setting'] = (
-                                (((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | 
-                                 ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val)))
-                            ).astype(int)
-                            
-                            act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
-                            high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
-                            high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
-                            high_expect_df['valid_high'] = high_expect_df['valid_high_play'] & (high_expect_df['is_high_setting'] == 1)
-        
-                            acc_stats = high_expect_df.groupby(shop_col).agg(
-                                正答数=('valid_high', 'sum'),
-                                高設定有効数=('valid_high_play', 'sum'),
-                                有効稼働数=('valid_play', 'sum'),
-                                勝数=('valid_win', 'sum'),
-                                サンプル数=('台番号', 'count')
-                            ).reset_index()
-                            acc_stats['勝率'] = np.where(acc_stats['有効稼働数'] > 0, acc_stats['勝数'] / acc_stats['有効稼働数'], 0.0)
-                            acc_stats['正答率'] = np.where(acc_stats['高設定有効数'] > 0, acc_stats['正答数'] / acc_stats['高設定有効数'], 0.0)
-                            
-                            ai_accuracy_map = dict(zip(acc_stats[shop_col], acc_stats['正答率']))
-                            ai_win_rate_map = dict(zip(acc_stats[shop_col], acc_stats['勝率']))
-                            for _, r in acc_stats.iterrows():
-                                shop = r[shop_col]
-                                ai_acc_str_map[shop] = f"{r['正答率']*100:.1f}% ({int(r['正答数'])}/{int(r['高設定有効数'])}台)"
-                                ai_win_str_map[shop] = f"{r['勝率']*100:.1f}% ({int(r['勝数'])}/{int(r['有効稼働数'])}台)"
-                    
-                shop_stats['AI正答率_数値'] = shop_stats[shop_col].map(ai_accuracy_map).fillna(0.0) * 100
-                shop_stats['AI推奨台勝率_数値'] = shop_stats[shop_col].map(ai_win_rate_map).fillna(0.0) * 100
-                
-                shop_stats['AI正答率'] = shop_stats[shop_col].map(ai_acc_str_map).fillna("- (0/0台)")
-                shop_stats['AI推奨台勝率'] = shop_stats[shop_col].map(ai_win_str_map).fillna("- (0/0台)")
-                
-                # --- AI実績に基づくペナルティ計算 ---
-                def calc_sort_score(row):
-                    score = row['平均スコア']
-                    sample_count = 0
-                    acc_str = str(row.get('AI正答率', ''))
-                    if '/' in acc_str and '台)' in acc_str:
-                        try:
-                            sample_count = int(acc_str.split('/')[1].split('台)')[0])
-                        except:
-                            pass
-        
-                    if sample_count >= 5: # ガチ予測ログはサンプルが溜まりにくいため、5件以上でペナルティ評価
-                        if row['AI正答率_数値'] > 0:
-                            if row['AI正答率_数値'] < 30: score -= 0.15  # 30%未満なら重いペナルティ
-                            elif row['AI正答率_数値'] < 40: score -= 0.05  # 40%未満なら軽いペナルティ
-                        if row['AI推奨台勝率_数値'] > 0:
-                            if row['AI推奨台勝率_数値'] < 30: score -= 0.15
-                            elif row['AI推奨台勝率_数値'] < 40: score -= 0.05
-                    return score
-        
-                shop_stats['ソート用スコア'] = shop_stats.apply(calc_sort_score, axis=1)
-                
-                # 営業予測バッジの追加
-                def get_shop_eval_badge(row):
-                    return backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 50), is_prediction=True).replace('営業', '').replace('日', '')
-                    
-                shop_stats['営業予測'] = shop_stats.apply(get_shop_eval_badge, axis=1)
-                
-                # ソート用スコア（ペナルティ適用後）が高い順にソート
-                shop_stats = shop_stats.sort_values('ソート用スコア', ascending=False)
+                shop_stats = backend.get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, shop_col)
                 
                 st.caption(f"※{eval_period}の**ガチ予測（保存ログ）に対する正答率と勝率**です。この数値が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い等）と判断し、ランキング順位を下げるペナルティを適用しています。（※サンプル5台以上で適用）")
                 st.data_editor(

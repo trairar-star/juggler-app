@@ -305,7 +305,7 @@ def main():
             calendar_compare_page.render_calendar_compare_page(df_raw, df, predict_target_date)
         elif page == "🗺️ 島マップ (神視点)":
             df_pred_log = backend.load_prediction_log()
-            island_map_page.render_island_map_page(df_raw, df_pred_log, df_island)
+            island_map_page.render_island_map_page(df_raw, df_pred_log, df_island, df)
         elif page == "島マスター管理":
             island_master_page.render_island_master_page(df_raw)
         elif page == "イベント管理":

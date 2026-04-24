@@ -5,6 +5,8 @@ import json
 import os
 import backend
 import time
+from utils import get_valid_play_mask
+from config import BASE_FEATURES, FEATURE_NAME_MAP
 
 try:
     import google.generativeai as genai
@@ -203,7 +205,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
             try:
                 shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
                 if len(shop_df) >= 50:
-                    actual_features = [f for f in backend.BASE_FEATURES if f in shop_df.columns]
+                    actual_features = [f for f in BASE_FEATURES if f in shop_df.columns]
                     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                     
                     shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
@@ -232,7 +234,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         preds = model.predict_proba(X_test_st)[:, 1]
                         test_data['pred_score'] = preds
 
-                        test_data['valid_play'] = (pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) | ((pd.to_numeric(test_data['next_累計ゲーム'], errors='coerce').fillna(0) < 3000) & ((pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) <= -750) | (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) >= 750)))
+                        test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
                         test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
                         
                         def get_prob_band(score):
@@ -388,7 +390,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         if not cold_day_data.empty:
                             mac_df = cold_day_data
                             mac_df['REG確率_raw'] = mac_df['REG'] / mac_df['累計ゲーム'].replace(0, np.nan)
-                            mac_df['valid_play'] = (mac_df['累計ゲーム'] >= 3000) | ((mac_df['累計ゲーム'] < 3000) & ((mac_df['差枚'] <= -750) | (mac_df['差枚'] >= 750)))
+                            mac_df['valid_play'] = get_valid_play_mask(mac_df['累計ゲーム'], mac_df['差枚'])
                             
                             specs = backend.get_machine_specs()
                             mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
@@ -493,8 +495,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                     count = 0
                     for _, row in imp_shop.iterrows():
                         f_key = row['feature']
-                        if f_key in backend.FEATURE_NAME_MAP:
-                            f_name = backend.FEATURE_NAME_MAP[f_key]
+                        if f_key in FEATURE_NAME_MAP:
+                            f_name = FEATURE_NAME_MAP[f_key]
                             importance = row.get('importance', 0)
                             correlation = row.get('correlation', 0)
                             corr_str = f"プラス相関 (+{correlation:.2f})" if correlation >= 0 else f"マイナス相関 ({correlation:.2f})"

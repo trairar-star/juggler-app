@@ -3,7 +3,7 @@ import numpy as np
 import streamlit as st # type: ignore
 import backend
 
-def render_island_map_page(df_raw, df_pred_log, df_island):
+def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     col_h1, col_h2 = st.columns([4, 1])
     with col_h1:
         st.header("📅 月間 台別データ表")
@@ -99,7 +99,27 @@ def render_island_map_page(df_raw, df_pred_log, df_island):
     # --- 最新の期待度データを取得 ---
     pred_dict = {}
     pred_date_disp = ""
-    if not df_pred_log.empty:
+    
+    # 優先して df_predict (全台の最新予測データ) を使用する
+    if df_predict is not None and not df_predict.empty:
+        shop_col_pred = '店名' if '店名' in df_predict.columns else ('店舗名' if '店舗名' in df_predict.columns else None)
+        if shop_col_pred:
+            df_shop_pred = df_predict[df_predict[shop_col_pred] == selected_shop].copy()
+            if not df_shop_pred.empty:
+                if 'next_date' in df_shop_pred.columns:
+                    latest_pred_date = pd.to_datetime(df_shop_pred['next_date'].max())
+                    pred_date_disp = latest_pred_date.strftime('%m/%d') + " "
+                elif '予測対象日' in df_shop_pred.columns:
+                    latest_pred_date = pd.to_datetime(df_shop_pred['予測対象日'].max())
+                    pred_date_disp = latest_pred_date.strftime('%m/%d') + " "
+                
+                if '台番号' in df_shop_pred.columns and 'prediction_score' in df_shop_pred.columns:
+                    df_shop_pred['台番号_str'] = df_shop_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                    for _, r in df_shop_pred.iterrows():
+                        pred_dict[r['台番号_str']] = r['prediction_score']
+
+    # df_predict が渡されなかった場合は既存の df_pred_log (上位10%のみ) をフォールバックとして使用
+    if not pred_dict and not df_pred_log.empty:
         temp_pred = df_pred_log.copy()
         if '予測対象日' in temp_pred.columns:
             temp_pred['予測対象日_merge'] = pd.to_datetime(temp_pred['予測対象日'], errors='coerce').fillna(pd.to_datetime(temp_pred['対象日付'], errors='coerce') + pd.Timedelta(days=1))
