@@ -153,6 +153,32 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     df_shop = df_shop.dropna(subset=['対象日付', '台番号'])
     df_shop['台番号'] = df_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
 
+    # --- 過去の事前予測データ(df_pred_log)を実績データに結合 ---
+    if not df_pred_log.empty:
+        temp_log = df_pred_log.copy()
+        shop_col_log = '店名' if '店名' in temp_log.columns else ('店舗名' if '店舗名' in temp_log.columns else None)
+        if shop_col_log:
+            temp_log = temp_log[temp_log[shop_col_log] == selected_shop].copy()
+            if not temp_log.empty:
+                if '予測対象日' in temp_log.columns:
+                    temp_log['予測対象日_merge'] = pd.to_datetime(temp_log['予測対象日'], errors='coerce').fillna(pd.to_datetime(temp_log['対象日付'], errors='coerce') + pd.Timedelta(days=1))
+                else:
+                    temp_log['予測対象日_merge'] = pd.to_datetime(temp_log['対象日付'], errors='coerce') + pd.Timedelta(days=1)
+                
+                temp_log['台番号'] = temp_log['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                
+                if '実行日時' in temp_log.columns:
+                    temp_log['実行日時'] = pd.to_datetime(temp_log['実行日時'], errors='coerce')
+                    temp_log = temp_log.sort_values('実行日時', ascending=False).drop_duplicates(subset=['予測対象日_merge', '台番号'])
+                
+                temp_log = temp_log[['予測対象日_merge', '台番号', 'prediction_score']].rename(columns={'予測対象日_merge': '対象日付'})
+                temp_log['prediction_score'] = pd.to_numeric(temp_log['prediction_score'], errors='coerce')
+                
+                df_shop = pd.merge(df_shop, temp_log, on=['対象日付', '台番号'], how='left')
+                
+    if 'prediction_score' not in df_shop.columns:
+        df_shop['prediction_score'] = np.nan
+
     if table_period == "直近30日":
         max_date = df_shop['対象日付'].max()
         cutoff_date = max_date - pd.Timedelta(days=30)
@@ -222,6 +248,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     df_month['b'] = pd.to_numeric(df_month['BIG'], errors='coerce').fillna(0)
     df_month['r'] = pd.to_numeric(df_month['REG'], errors='coerce').fillna(0)
     df_month['diff'] = pd.to_numeric(df_month['差枚'], errors='coerce').fillna(0)
+    df_month['score'] = pd.to_numeric(df_month['prediction_score'], errors='coerce').fillna(np.nan)
 
     df_month_dedup = df_month.drop_duplicates(subset=['台番号', '機種名', 'day_str'], keep='first')
     df_month_dedup = df_month_dedup.set_index(['台番号', '機種名', 'day_str'])
@@ -230,6 +257,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     pivot_b = df_month_dedup['b'].unstack()
     pivot_r = df_month_dedup['r'].unstack()
     pivot_diff = df_month_dedup['diff'].unstack()
+    pivot_score = df_month_dedup['score'].unstack()
     
     date_cols = sorted([c for c in pivot_g.columns])
     
@@ -265,10 +293,11 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
             b_val = pivot_b.loc[(mac_num, mac_name), d]
             r_val = pivot_r.loc[(mac_num, mac_name), d]
             diff_val = pivot_diff.loc[(mac_num, mac_name), d]
+            score_val = pivot_score.loc[(mac_num, mac_name), d]
             if pd.isna(g_val):
                 row_data[d] = np.nan
             else:
-                row_data[d] = (g_val, b_val, r_val, diff_val)
+                row_data[d] = (g_val, b_val, r_val, diff_val, score_val)
         records.append(row_data)
         
     pivot_val = pd.DataFrame(records)
@@ -304,7 +333,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
             val = row[col]
             if not isinstance(val, tuple): continue
             
-            g, b, r, diff = val
+            g, b, r, diff, score = val
             if g == 0: continue
             
             if g <= min_g_filter:
@@ -342,13 +371,20 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
 
     def fmt_cell(val):
         if isinstance(val, tuple):
-            g, b, r, diff = val
+            g, b, r, diff, score = val
             if g == 0: return "-"
+            
+            score_badge = ""
+            if pd.notna(score):
+                score_pct = int(score * 100)
+                score_color = "#D32F2F" if score_pct >= 40 else "#EF6C00" if score_pct >= 30 else "#757575"
+                score_badge = f"<div style='font-size:9px; color:{score_color}; font-weight:bold; margin-bottom:2px;'>🎯予想: {score_pct}%</div>"
+                
             if table_metric == "REG確率":
                 prob_str = f"1/{int(g/r)}" if r > 0 else "-"
-                return f"<div class='cell-val' data-b='{int(b)}'>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
+                return f"<div class='cell-val' data-b='{int(b)}'>{score_badge}{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚</div>"
             else:
-                return f"<div class='cell-val' data-b='{int(b)}'>{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
+                return f"<div class='cell-val' data-b='{int(b)}'>{score_badge}{int(g)}G<br>{int(r)}R<br>{int(diff):+d}枚</div>"
         return "-"
 
     format_dict = {c: fmt_cell for c in date_cols}
