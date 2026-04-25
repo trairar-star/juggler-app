@@ -233,7 +233,14 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         
                         X_test_st = X_test.copy(); X_test_st['predicted_diff'] = reg_model.predict(X_test)
                         preds = model.predict_proba(X_test_st)[:, 1]
-                        test_data['pred_score'] = preds
+                        
+                        test_data_for_post = test_data.copy()
+                        test_data_for_post['prediction_score'] = preds
+                        train_data_for_post = train_data.copy()
+                        train_data_for_post['prediction_score'] = model.predict_proba(X_train_st)[:, 1]
+                        
+                        test_data_processed, _ = postprocess_predictions(test_data_for_post, train_data_for_post)
+                        test_data['pred_score'] = test_data_processed['prediction_score']
 
                         test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
                         test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)

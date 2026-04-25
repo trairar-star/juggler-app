@@ -7,6 +7,7 @@ import math
 import backend
 from utils import get_confidence_indicator, get_valid_play_mask
 from config import BASE_FEATURES
+from postprocessor import postprocess_predictions
 
 def render_verification_page(df_pred_log, df_verify, df_predict, df_raw):
     st.header("📊 予測の実績検証・AI設定")
@@ -1642,7 +1643,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             X_test_st = X_test.copy()
                             X_test_st['predicted_diff'] = reg_model.predict(X_test)
                             preds = model.predict_proba(X_test_st)[:, 1]
-                            test_data['pred_score'] = preds
+                            
+                            # --- 修正: 本番と同じ「店癖ブースト」「ペナルティ」などの後処理を適用する ---
+                            test_data_for_post = test_data.copy()
+                            test_data_for_post['prediction_score'] = preds
+                            train_data_for_post = train_data.copy()
+                            train_data_for_post['prediction_score'] = model.predict_proba(X_train_st)[:, 1]
+                            
+                            test_data_processed, _ = postprocess_predictions(test_data_for_post, train_data_for_post)
+                            test_data['pred_score'] = test_data_processed['prediction_score']
                             
                             test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
                             test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)

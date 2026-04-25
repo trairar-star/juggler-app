@@ -327,7 +327,10 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
         spec_r4_den = specs[matched_key].get('設定4', {"REG": 300.0})["REG"] if matched_key in specs else 300.0
         spec_r5_den = specs[matched_key].get('設定5', {"REG": 260.0})["REG"] if matched_key in specs else 260.0
         spec_r6_den = specs[matched_key].get('設定6', {"REG": 240.0})["REG"] if matched_key in specs else 240.0
+        spec_r1_den = specs[matched_key].get('設定1', {"REG": 400.0})["REG"] if matched_key in specs else 400.0
+        p1 = 1.0 / spec_r1_den
         
+        import math
         for i, col in enumerate(row.index):
             if col in ['台番号', '機種名', '角台']: continue
             val = row[col]
@@ -344,11 +347,16 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
             text_color = ""
                 
             if table_metric == "REG確率":
-                if r > 0:
-                    prob = g / r
-                    if prob <= spec_r6_den: bg_color = "#FFCDD2"
-                    elif prob <= spec_r5_den: bg_color = "#FFE082"
-                    elif prob <= spec_r4_den: bg_color = "#FFF59D"
+                z_score = 0
+                if g > 0:
+                    exp_r1 = g * p1
+                    std_r1 = math.sqrt(g * p1 * (1.0 - p1))
+                    if std_r1 > 0:
+                        z_score = (r - exp_r1) / std_r1
+                prob = g / r if r > 0 else 9999
+                if prob <= spec_r6_den or z_score >= 2.58: bg_color = "#FFCDD2"
+                elif prob <= spec_r5_den or z_score >= 1.64: bg_color = "#FFE082"
+                elif prob <= spec_r4_den or z_score >= 1.0: bg_color = "#FFF59D"
             elif table_metric == "差枚":
                 if diff >= 2000: bg_color = "#FFCDD2"
                 elif diff >= 1000: bg_color = "#FFE082"
@@ -391,7 +399,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     styled_df = pivot_val.style.apply(style_monthly_table, axis=1).format(format_dict, na_rep="-")
 
     if table_metric == "REG確率":
-        st.markdown("**(色分けの目安)** 🟥: 設定6基準以上 / 🟧: 設定5基準以上 / 🟨: 設定4基準以上 ｜ 台番号背景🟨: 角台")
+        st.markdown("**(色分けの目安)** 🟥: 設定6基準 または Zスコア2.58以上 / 🟧: 設定5基準 または Zスコア1.64以上 / 🟨: 設定4基準 または Zスコア1.0以上 ｜ 台番号背景🟨: 角台")
     else:
         st.markdown("**(色分けの目安)** 🟥: +2000枚以上 / 🟧: +1000枚以上 / 🟨: プラス / 🟦: -1000枚以下 ｜ 台番号背景🟨: 角台")
         
