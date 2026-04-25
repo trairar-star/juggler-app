@@ -757,7 +757,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 df_sorted = df
         
             if 'prediction_score' in df_sorted.columns:
-                df_sorted['予想設定5以上確率'] = (df_sorted['prediction_score'] * 100).astype(int)
+                df_sorted['予想設定5以上確率'] = (df_sorted['prediction_score'].fillna(0) * 100).astype(int)
         
             # --- ランク変動の計算 (前日差枚順位との比較) ---
             if 'prediction_score' in df_sorted.columns and '差枚' in df_sorted.columns:
