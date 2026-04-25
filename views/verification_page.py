@@ -1341,7 +1341,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         display_df = display_df.sort_values('対象日付', ascending=False)
         
         if 'prediction_score' in display_df.columns:
-            display_df['予想設定5以上確率'] = (display_df['prediction_score'] * 100).astype(int)
+            display_df['予想設定5以上確率'] = (display_df['prediction_score'].fillna(0) * 100).astype(int)
         else:
             display_df['予想設定5以上確率'] = 0
 
@@ -1449,7 +1449,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             if missed_df.empty:
                 st.success("現在、大きく取りこぼしたお宝台はありません！")
             else:
-                missed_df['予想設定5以上確率'] = (missed_df['prediction_score'] * 100).astype(int)
+                missed_df['予想設定5以上確率'] = (missed_df['prediction_score'].fillna(0) * 100).astype(int)
                 
                 def analyze_missed_reason(row):
                     g = row.get('累計ゲーム', 0)
@@ -1801,7 +1801,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     if detail_df.empty:
                         st.info("該当するデータがありません。")
                     else:
-                        detail_df['予想設定5以上確率'] = (detail_df['pred_score'] * 100).astype(int)
+                        detail_df['予想設定5以上確率'] = (detail_df['pred_score'].fillna(0) * 100).astype(int)
                         if 'next_date' in detail_df.columns:
                             detail_df['予測対象日'] = pd.to_datetime(detail_df['next_date'])
                         else:
@@ -2040,7 +2040,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     if sim_display_df.empty:
                         st.info("該当するデータがありません。")
                     else:
-                        sim_display_df['予想設定5以上確率'] = (sim_display_df['prediction_score'] * 100).astype(int)
+                        sim_display_df['予想設定5以上確率'] = (sim_display_df['prediction_score'].fillna(0) * 100).astype(int)
                         if 'next_date' in sim_display_df.columns:
                             sim_display_df['予測対象日'] = pd.to_datetime(sim_display_df['next_date'])
                         else:

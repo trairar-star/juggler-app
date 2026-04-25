@@ -409,7 +409,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         show_complete_victory_only = st.checkbox("「完全勝利」(的中🎯 & 高挙動🌟)のみ表示", key="complete_victory_filter")
 
                         if 'prediction_score' in pred_df_day.columns:
-                            pred_df_day['予想設定5以上確率'] = (pred_df_day['prediction_score'] * 100).astype(int)
+                            pred_df_day['予想設定5以上確率'] = (pred_df_day['prediction_score'].fillna(0) * 100).astype(int)
                         else:
                             pred_df_day['予想設定5以上確率'] = 0
 
