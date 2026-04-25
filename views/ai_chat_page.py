@@ -8,6 +8,7 @@ import time
 import lightgbm as lgb # type: ignore
 from utils import get_valid_play_mask
 from config import BASE_FEATURES, FEATURE_NAME_MAP
+from postprocessor import postprocess_predictions
 
 try:
     import google.generativeai as genai
