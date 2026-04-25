@@ -105,11 +105,18 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         matched_spec = backend.get_matched_spec_key(machine, specs)
         p_r_5 = 1.0 / specs[matched_spec].get("設定5", {"REG": 260.0})["REG"] if matched_spec else 1/260.0
         p_t_5 = 1.0 / specs[matched_spec].get("設定5", {"合算": 128.0})["合算"] if matched_spec else 1/128.0
+        p_r_3 = 1.0 / specs[matched_spec].get("設定3", {"REG": 300.0})["REG"] if matched_spec else 1/300.0
+        p_r_1 = 1.0 / specs[matched_spec].get("設定1", {"REG": 400.0})["REG"] if matched_spec else 1/400.0
         
         r_prob = r / g if g > 0 else 0
         t_prob = (b + r) / g if g > 0 else 0
         
-        return 1 if r_prob >= p_r_5 or t_prob >= p_t_5 else 0
+        import math
+        exp_r1 = g * p_r_1
+        std_r1 = math.sqrt(g * p_r_1 * (1.0 - p_r_1)) if g > 0 else 0
+        z_score = (r - exp_r1) / std_r1 if std_r1 > 0 else 0
+        
+        return 1 if r_prob >= p_r_5 or (t_prob >= p_t_5 and r_prob >= p_r_3) or z_score >= 1.64 else 0
         
     df_recent['is_high'] = df_recent.apply(is_high, axis=1)
 

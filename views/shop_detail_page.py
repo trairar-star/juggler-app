@@ -207,13 +207,20 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                     same_wd_df['合算確率'] = (same_wd_df['BIG'] + same_wd_df['REG']) / same_wd_df['累計ゲーム'].replace(0, np.nan)
                     spec_reg_p = 1.0 / specs[matched_spec_key].get('設定5', {"REG": 260.0})["REG"] if matched_spec_key else (1/260)
                     spec_tot_p = 1.0 / specs[matched_spec_key].get('設定5', {"合算": 128.0})["合算"] if matched_spec_key else (1/128)
+                    spec_reg3_p = 1.0 / specs[matched_spec_key].get('設定3', {"REG": 300.0})["REG"] if matched_spec_key else (1/300)
+                    spec_reg1_p = 1.0 / specs[matched_spec_key].get('設定1', {"REG": 400.0})["REG"] if matched_spec_key else (1/400)
                     
                     count = len(same_wd_df)
                     avg_diff = same_wd_df['差枚'].mean()
                     
                     # 高設定率は3000G以上の台のみを母数として計算
                     high_valid_mask = same_wd_df['累計ゲーム'] >= 3000
-                    high_mask = high_valid_mask & ((same_wd_df['REG確率'] >= spec_reg_p) | (same_wd_df['合算確率'] >= spec_tot_p))
+                    
+                    exp_r1 = same_wd_df['累計ゲーム'] * spec_reg1_p
+                    std_r1 = np.sqrt(same_wd_df['累計ゲーム'] * spec_reg1_p * (1.0 - spec_reg1_p))
+                    z_score = np.where(std_r1 > 0, (same_wd_df['REG'].fillna(0) - exp_r1) / std_r1, 0)
+                    
+                    high_mask = high_valid_mask & ((same_wd_df['REG確率'] >= spec_reg_p) | ((same_wd_df['合算確率'] >= spec_tot_p) & (same_wd_df['REG確率'] >= spec_reg3_p)) | (z_score >= 1.64))
                     
                     high_valid_count = high_valid_mask.sum()
                     win_rate = (high_mask.sum() / high_valid_count * 100) if high_valid_count > 0 else 0.0

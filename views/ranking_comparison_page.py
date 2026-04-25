@@ -354,7 +354,13 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     specs = backend.get_machine_specs()
                     spec_reg_val = actual_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
                     spec_tot_val = actual_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                    actual_df_day['高設定'] = (((actual_df_day['REG確率分母'] > 0) & (actual_df_day['REG確率分母'] <= spec_reg_val)) | ((actual_df_day['合算確率分母'] > 0) & (actual_df_day['合算確率分母'] <= spec_tot_val))).apply(lambda x: '🌟' if x else '')
+                    spec_reg3_val = actual_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+                    spec_reg1_val = actual_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
+                    
+                    exp_r1 = act_g * (1.0 / spec_reg1_val)
+                    std_r1 = np.sqrt(act_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
+                    z_score = np.where(std_r1 > 0, (act_r - exp_r1) / std_r1, 0)
+                    actual_df_day['高設定'] = (((actual_df_day['REG確率分母'] > 0) & (actual_df_day['REG確率分母'] <= spec_reg_val)) | ((actual_df_day['合算確率分母'] > 0) & (actual_df_day['合算確率分母'] <= spec_tot_val) & (actual_df_day['REG確率分母'] > 0) & (actual_df_day['REG確率分母'] <= spec_reg3_val)) | (z_score >= 1.64)).apply(lambda x: '🌟' if x else '')
                     
                     act_total_machines = len(actual_df_day)
                     act_top_k = max(3, int(act_total_machines * 0.10)) if act_total_machines > 0 else 10
@@ -416,7 +422,15 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         specs = backend.get_machine_specs()
                         spec_reg_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
                         spec_tot_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                        pred_df_day['高設定'] = (((pred_df_day['結果_REG確率分母'] > 0) & (pred_df_day['結果_REG確率分母'] <= spec_reg_val_pred)) | ((pred_df_day['結果_合算確率分母'] > 0) & (pred_df_day['結果_合算確率分母'] <= spec_tot_val_pred))).apply(lambda x: '🌟' if x else '')
+                        spec_reg3_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+                        spec_reg1_val_pred = pred_df_day['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
+                        
+                        p_g = pd.to_numeric(pred_df_day['結果_累計ゲーム'], errors='coerce').fillna(0)
+                        p_r = pd.to_numeric(pred_df_day['結果_REG'], errors='coerce').fillna(0)
+                        exp_r1_p = p_g * (1.0 / spec_reg1_val_pred)
+                        std_r1_p = np.sqrt(p_g * (1.0 / spec_reg1_val_pred) * (1.0 - (1.0 / spec_reg1_val_pred)))
+                        z_score_p = np.where(std_r1_p > 0, (p_r - exp_r1_p) / std_r1_p, 0)
+                        pred_df_day['高設定'] = (((pred_df_day['結果_REG確率分母'] > 0) & (pred_df_day['結果_REG確率分母'] <= spec_reg_val_pred)) | ((pred_df_day['結果_合算確率分母'] > 0) & (pred_df_day['結果_合算確率分母'] <= spec_tot_val_pred) & (pred_df_day['結果_REG確率分母'] > 0) & (pred_df_day['結果_REG確率分母'] <= spec_reg3_val_pred)) | (z_score_p >= 1.64)).apply(lambda x: '🌟' if x else '')
 
                         if show_complete_victory_only:
                             pred_df_day = pred_df_day[(pred_df_day['的中'] == '🎯') & (pred_df_day['高設定'] == '🌟')]

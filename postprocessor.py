@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import re
+import math
 from utils import get_matched_spec_key, classify_shop_eval
 from shop_trends import calculate_shop_trends, apply_trends_to_row
 from config import MACHINE_SPECS
@@ -302,7 +303,13 @@ def postprocess_predictions(predict_df, train_df):
         is_setting5_over = False
         if matched_spec_key and "設定5" in specs[matched_spec_key] and reg_prob > 0:
             set5_reg_prob_threshold = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
-            if games >= 5000 and reg_prob >= set5_reg_prob_threshold:
+            set1_reg_prob_threshold = 1.0 / specs[matched_spec_key].get("設定1", {"REG": 400.0})["REG"]
+            
+            exp_r1 = games * set1_reg_prob_threshold
+            std_r1 = math.sqrt(games * set1_reg_prob_threshold * (1.0 - set1_reg_prob_threshold))
+            z_score = (reg - exp_r1) / std_r1 if std_r1 > 0 else 0
+            
+            if (games >= 5000 and reg_prob >= set5_reg_prob_threshold) or z_score >= 1.64:
                 is_setting5_over = True
 
         spec_reg_5 = 1.0 / specs[matched_spec_key].get("設定5", {"REG": 260.0})["REG"] if matched_spec_key else 1/260.0
