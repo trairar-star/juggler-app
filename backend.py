@@ -26,7 +26,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.41.0" 
+APP_VERSION = "v4.43.0" 
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -38,7 +38,7 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
                             penalty_reg=15, penalty_big=5, low_g_penalty=30, 
                             use_strict_scoring=True, return_details=False):
     """
-    稼働データから「設定5近似度（100点満点）」を計算する共通関数
+    稼働データからベイズ推定（事後確率）とZスコアを用いて「設定5近似度（100点満点）」を計算する
     """
     import math
     if pd.isna(g) or g <= 0:
@@ -48,102 +48,75 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
 
     specs = get_machine_specs()
     matched_spec = get_matched_spec_key(machine_name, specs)
-    p_b, p_r = 1/259.0, 1/255.0 # デフォルト
-    p_b_6 = 1/255.0 # 設定6デフォルト
-    if matched_spec:
-        if "設定5" in specs[matched_spec]:
-            s5 = specs[matched_spec]["設定5"]
-            if "BIG" in s5: p_b = 1.0 / s5["BIG"]
-            if "REG" in s5: p_r = 1.0 / s5["REG"]
-        if "設定6" in specs[matched_spec]:
-            s6 = specs[matched_spec]["設定6"]
-            if "BIG" in s6: p_b_6 = 1.0 / s6["BIG"]
-        
-    exp_r = g * p_r
     
-    act_p_r = act_r / g if g > 0 else 0
-    p_b_5 = p_b
-    p_r_3 = 1 / 300.0
-    if matched_spec and "設定3" in specs[matched_spec] and "REG" in specs[matched_spec]["設定3"]:
-        p_r_3 = 1.0 / specs[matched_spec]["設定3"]["REG"]
+    ms = specs.get(matched_spec, specs['ジャグラー（デフォルト）']) if matched_spec else specs['ジャグラー（デフォルト）']
+    
+    s1 = ms.get("設定1", {"BIG": 280.0, "REG": 400.0})
+    s4 = ms.get("設定4", {"BIG": 260.0, "REG": 300.0})
+    s5 = ms.get("設定5", s4)
+    s6 = ms.get("設定6", s5)
+    
+    full_specs = {1: s1, 4: s4, 5: s5, 6: s6}
+    for s in [2, 3]:
+        full_specs[s] = {}
+        for k in ["BIG", "REG"]:
+            p1 = 1.0 / s1.get(k, 300.0)
+            p4 = 1.0 / s4.get(k, 300.0)
+            p_s = p1 + (p4 - p1) * (s - 1) / 3.0
+            full_specs[s][k] = 1.0 / p_s if p_s > 0 else 999.0
 
-    # BIGの評価基準確率を決定（BIGの上振れ評価の厳格化）
-    if g >= 5000:
-        if act_p_r >= p_r_3:
-            # REGが設定3以上のスコアをキープしている時は、設定5のBIG確率で評価
-            target_p_b = p_b_5
-        else:
-            # REGが悪い時は、設定6以上のBIG確率でのみ評価
-            target_p_b = p_b_6
-    else:
-        target_p_b = None
-        
-    exp_b = g * p_b # 詳細返却用の設定5基準の期待値
-    diff_b, diff_r = act_b - exp_b, act_r - exp_r
+    # 1. ベイズ推定による事後確率の計算
+    # 事前確率はフラット（均等）にして、純粋にデータからの尤度を評価する
+    log_likelihoods = []
     
-    base_g = max(2500, min(5000, shop_avg_g))
-    sigma_half_g = base_g
-    sigma_zero_g = base_g * 1.5
-    discount_target_g = base_g
-    penalty_g = base_g * 0.75
+    # ユーザーが設定した「甘め/標準/辛め」のペナルティ値に応じて、BIGの評価ウェイトを変える
+    # penalty_regが大きい(辛め)ほど、REGを重視しBIGのヒキを軽視する
+    big_weight = 0.5
+    if penalty_reg >= 20: big_weight = 0.3 # 辛め：REG超重視
+    elif penalty_reg <= 10: big_weight = 0.8 # 甘め：BIGも評価
+        
+    for i in range(1, 7):
+        p_b = 1.0 / full_specs[i]["BIG"]
+        p_r = 1.0 / full_specs[i]["REG"]
+        exp_b = g * p_b
+        exp_r = g * p_r
+        
+        # ポアソン分布の対数尤度近似 (定数項の階乗は比較時に相殺されるため省略)
+        ll_b = (act_b * math.log(exp_b) - exp_b) * big_weight if exp_b > 0 else 0
+        ll_r = act_r * math.log(exp_r) - exp_r if exp_r > 0 else 0
+        log_likelihoods.append(ll_b + ll_r)
+        
+    max_ll = max(log_likelihoods)
+    # オーバーフロー防止
+    posteriors_unnormalized = [math.exp(max(-700, ll - max_ll)) for ll in log_likelihoods]
+    sum_post = sum(posteriors_unnormalized)
+    posteriors = [p / sum_post for p in posteriors_unnormalized]
+    
+    # ベーススコアの算出: 設定1〜6の事後確率を重み付け加算
+    # 設定6なら100点、設定5なら90点、設定4なら60点、設定3なら30点、設定2なら10点相当
+    bayes_score = (posteriors[5] * 100) + (posteriors[4] * 90) + (posteriors[3] * 60) + (posteriors[2] * 30) + (posteriors[1] * 10)
+    
+    # 2. Zスコア（設定1の否定度）による補正
+    p_r1 = 1.0 / full_specs[1]["REG"]
+    exp_r1 = g * p_r1
+    std_r1 = math.sqrt(g * p_r1 * (1.0 - p_r1)) if g > 0 else 0
+    z_score_reg = (act_r - exp_r1) / std_r1 if std_r1 > 0 else 0
+    
+    # Zスコアが1.64（上位5%）以上なら、稼働が少なく事後確率がバラけていてもベーススコアを底上げする
+    if z_score_reg >= 1.64:
+        # Z=1.64で最低60点、Z=3.0で最低90点に近づくカーブ
+        z_bonus = min(90.0, 50.0 + (z_score_reg - 1.64) * 20.0)
+        bayes_score = max(bayes_score, z_bonus)
 
-    sigma_r = math.sqrt(g * p_r * (1.0 - p_r)) if g > 0 else 0
-    
+    # 3. 稼働ゲーム数(G数)によるスコアのスケーリング（期待値が未収束なデータへのペナルティ）
+    total_score = bayes_score
     if use_strict_scoring:
-        sigma_multiplier = 0.5
-        if g >= sigma_zero_g:
-            sigma_multiplier = 0.0
-        elif g >= sigma_half_g:
-            sigma_multiplier = 0.25
-    else:
-        sigma_multiplier = 0.5
-        
-    deficit_r = max(0, exp_r - act_r)
-    adjusted_deficit_r = max(0, deficit_r - (sigma_r * sigma_multiplier))
-    
-    if target_p_b is not None:
-        sigma_b = math.sqrt(g * target_p_b * (1.0 - target_p_b)) if g > 0 else 0
-        eval_exp_b = g * target_p_b
-        deficit_b = max(0, eval_exp_b - act_b)
-        adjusted_deficit_b = max(0, deficit_b - (sigma_b * sigma_multiplier))
-    else:
-        adjusted_deficit_b = 0
-    
-    adj_penalty_reg = penalty_reg
-    adj_penalty_big = penalty_big
-    
-    if matched_spec and "設定1" in specs[matched_spec] and "設定5" in specs[matched_spec]:
-        s1 = specs[matched_spec]["設定1"]
-        s5 = specs[matched_spec]["設定5"]
-        diff_b_spec = max(0, s1.get("BIG", 300) - s5.get("BIG", 300))
-        diff_r_spec = max(0, s1.get("REG", 400) - s5.get("REG", 400))
-        
-        if diff_b_spec > 0 or diff_r_spec > 0:
-            adj_b = diff_b_spec * 1.5
-            adj_r = diff_r_spec
-            total_adj = adj_b + adj_r
-            if total_adj > 0:
-                total_penalty = penalty_reg + penalty_big
-                adj_penalty_big = total_penalty * (adj_b / total_adj)
-                adj_penalty_reg = total_penalty * (adj_r / total_adj)
-    
-    score_r = max(0, 80 - (adjusted_deficit_r * adj_penalty_reg))
-    if target_p_b is not None:
-        score_b = max(0, 20 - (adjusted_deficit_b * adj_penalty_big))
-    else:
-        score_b = 0 # 5000G未満はBIGでの加点なし
-    
-    total_score = score_r + score_b
-    
-    if use_strict_scoring:
-        # 新ロジック: 稼働ゲーム数による強いスコア補正
-        # 3000Gで最大50点(0.5倍)、5000Gで最大100点(1.0倍)となるようにスケール
         if g <= 3000:
-            g_factor = g / 6000.0
+            g_factor = g / 4000.0  # 3000Gでも0.75倍のペナルティがかかる
         else:
-            g_factor = 0.5 + ((g - 3000) / 4000.0)
+            g_factor = 0.75 + ((g - 3000) / 8000.0)
             
-        g_factor = min(1.0, g_factor)
+        g_factor = min(1.0, max(0.1, g_factor))
         
         # 1000G未満の低稼働はさらにペナルティを重くする
         if g < 1000:
@@ -151,35 +124,25 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
             
         # 3000G未満で大勝ち（+1500枚以上）している台への救済（スコア底上げ）
         if g < 3000 and diff is not None and diff >= 1500:
-            # +1500枚なら約+0.2、最大+0.4まで底上げ
             win_bonus = min(0.4, (diff - 1000) / 2500.0)
             g_factor = min(1.0, g_factor + win_bonus)
             
         total_score *= g_factor
         
-        # タコ粘り台にはボーナス加点
-        if g >= 7000 and adjusted_deficit_r <= 0:
+        # タコ粘り(7000G以上)で確率がついてきている台はボーナス加点
+        if g >= 7000 and z_score_reg >= 0:
             bonus = min(10.0, (g - 7000) / 300.0)
             total_score = min(100.0, total_score + bonus)
-        elif g >= 8000:
-            # 8000G以上回されている場合、確率が多少悪くても何らかの根拠があったと推測して救済加点
-            bonus = min(15.0, (g - 8000) / 200.0)
-            if diff is not None and diff > 0:
-                bonus += 10.0 # 差枚がプラスならさらに加点
-            total_score = min(100.0, total_score + bonus)
     else:
-        # 従来のロジック
+        # 旧ロジックに合わせたマイルドなペナルティ
+        discount_target_g = max(2500, min(5000, shop_avg_g))
         if g < discount_target_g:
             multiplier = 0.90 + (g / float(discount_target_g)) * 0.10
             total_score *= multiplier
-            
         if g < 1000:
             total_score *= (1 - ((1000 - g) / 1000.0) * (low_g_penalty / 100.0))
             
-        if g >= 7000 and adjusted_deficit_r <= 0:
-            bonus = min(5.0, (g - 7000) / 500.0)
-            total_score = min(100.0, total_score + bonus)
-        
+    # 見切り台（ノーボナ等）の減点
     is_abandoned = False
     tot_b_r = act_b + act_r
     if g >= 500 and tot_b_r == 0: is_abandoned = True
@@ -189,35 +152,13 @@ def calculate_setting_score(g, act_b, act_r, machine_name, diff=None, shop_avg_g
     if is_abandoned:
         total_score *= 0.5
         
-    if use_strict_scoring:
-        if g >= penalty_g:
-            reg_prob_den = g / act_r if act_r > 0 else 9999
-            tot_prob_den = g / tot_b_r if tot_b_r > 0 else 9999
-            big_prob_den = g / act_b if act_b > 0 else 9999
-            spec_b6_den = 1.0 / p_b_6
-            
-            penalty_val = 0
-            if reg_prob_den > 400: penalty_val += 30
-            elif reg_prob_den > 300: penalty_val += 15
-                
-            if tot_prob_den > 180: penalty_val += 30
-            elif tot_prob_den > 150: penalty_val += 15
-            
-            # BB確率が設定6の確率分母+100を超える場合は減点
-            if big_prob_den > spec_b6_den + 150:
-                penalty_val += 30
-            elif big_prob_den > spec_b6_den + 100:
-                penalty_val += 20
-            
-            # 超高稼働(8000G以上)の場合は、打つべき根拠があった可能性が高いため悪確率ペナルティを半減
-            if g >= 8000:
-                penalty_val *= 0.5
-                
-            total_score -= penalty_val
-            
-    final_score = max(0.0, total_score)
+    final_score = max(0.0, min(100.0, total_score))
     
     if return_details:
+        exp_b5 = g * (1.0 / full_specs[5]["BIG"])
+        exp_r5 = g * (1.0 / full_specs[5]["REG"])
+        diff_b = act_b - exp_b5
+        diff_r = act_r - exp_r5
         return final_score, exp_b, exp_r, diff_b, diff_r
     return final_score
 
@@ -1932,11 +1873,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     tot_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定5', {"合算": 128.0})["合算"] for m in unique_machines}
     reg3_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定3', {"REG": 300.0})["REG"] for m in unique_machines}
     b6_den_map = {m: specs[get_matched_spec_key(m, specs)].get('設定6', {"BIG": 260.0})["BIG"] for m in unique_machines}
+    reg1_map = {m: 1.0 / specs[get_matched_spec_key(m, specs)].get('設定1', {"REG": 400.0})["REG"] for m in unique_machines}
     
     df['spec_reg'] = df['機種名'].map(reg_map)
     df['spec_tot'] = df['機種名'].map(tot_map)
     df['spec_reg3'] = df['機種名'].map(reg3_map)
     df['spec_b6_den'] = df['機種名'].map(b6_den_map)
+    df['spec_reg1'] = df['機種名'].map(reg1_map)
     
     b5_den_map = {m: specs[get_matched_spec_key(m, specs)].get('設定5', {"BIG": 260.0})["BIG"] for m in unique_machines}
     df['spec_b5_den'] = df['機種名'].map(b5_den_map)
@@ -1948,11 +1891,18 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # 先に当日の高設定挙動フラグ(is_win)を計算
     df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
     df['BIG分母'] = np.where(df['BIG'].fillna(0) > 0, df['累計ゲーム'] / df['BIG'], 9999)
+    
+    # Zスコア（設定1の否定度）の計算
+    exp_reg1 = df['累計ゲーム'] * df['spec_reg1']
+    std_reg1 = np.sqrt(df['累計ゲーム'] * df['spec_reg1'] * (1.0 - df['spec_reg1']))
+    df['z_score_reg'] = np.where(std_reg1 > 0, (df['REG'].fillna(0) - exp_reg1) / std_reg1, 0)
+    
     df['is_win'] = (
         (df['累計ゲーム'] >= 3000) & 
         (
             (df['REG確率'] >= df['spec_reg']) | 
-            ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3']))
+            ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3'])) |
+            (df['z_score_reg'] >= 1.64)
         ) &
         (df['BIG分母'] <= df['spec_b6_den'] + 100)
     ).astype(int)
@@ -1989,12 +1939,17 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['next_total_prob'] = (df['next_BIG'].fillna(0) + df['next_REG'].fillna(0)) / df['next_累計ゲーム'].replace(0, np.nan)
     df['next_big_den'] = np.where(df['next_BIG'].fillna(0) > 0, df['next_累計ゲーム'] / df['next_BIG'], 9999)
     
+    next_exp_reg1 = df['next_累計ゲーム'].fillna(0) * df['spec_reg1']
+    next_std_reg1 = np.sqrt(df['next_累計ゲーム'].fillna(0) * df['spec_reg1'] * (1.0 - df['spec_reg1']))
+    df['next_z_score_reg'] = np.where(next_std_reg1 > 0, (df['next_REG'].fillna(0) - next_exp_reg1) / next_std_reg1, 0)
+    
     # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に設定 ---
     df['target'] = (
         (df['next_累計ゲーム'] >= 3000) & 
         (
             (df['next_reg_prob'] >= df['spec_reg']) | 
-            ((df['next_total_prob'] >= df['spec_tot']) & (df['next_reg_prob'] >= df['spec_reg3']))
+            ((df['next_total_prob'] >= df['spec_tot']) & (df['next_reg_prob'] >= df['spec_reg3'])) |
+            (df['next_z_score_reg'] >= 1.64)
         ) &
         (df['next_big_den'] <= df['spec_b6_den'] + 100)
     ).astype(int)
@@ -2339,7 +2294,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_moved_machine'] = 0
 
     # 一時的に作成したフラグは削除
-    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'BIG分母', 'total_prob'], errors='ignore')
+    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'spec_reg1', 'BIG分母', 'total_prob', 'z_score_reg', 'next_z_score_reg'], errors='ignore')
 
     features = [f for f in BASE_FEATURES if f in df.columns]
 
@@ -3073,9 +3028,14 @@ def get_machine_basic_stats(df_raw_shop, specs):
     spec_tot = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
     spec_reg3 = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
     
+    spec_reg1 = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
+    exp_reg1 = mac_df['累計ゲーム'] * spec_reg1
+    std_reg1 = np.sqrt(mac_df['累計ゲーム'] * spec_reg1 * (1.0 - spec_reg1))
+    z_score_reg = np.where(std_reg1 > 0, (mac_df['REG'].fillna(0) - exp_reg1) / std_reg1, 0)
+    
     mac_df['高設定挙動'] = (
         (mac_df['累計ゲーム'] >= 3000) & 
-        ((mac_df['REG確率'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率'] >= spec_reg3)))
+        ((mac_df['REG確率'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率'] >= spec_reg3)) | (z_score_reg >= 1.64))
     ).astype(int)
     mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
     

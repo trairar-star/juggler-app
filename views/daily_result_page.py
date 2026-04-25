@@ -113,6 +113,25 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     display_df['結果点数'] = display_df.apply(calculate_score, axis=1)
     
+    # --- Zスコア（設定1否定度）の計算 ---
+    def calculate_z_score(row):
+        games = row.get('総回転', 0)
+        reg = row.get('REG', 0)
+        machine_name = row.get('機種名', '')
+        if games <= 0: return 0.0
+        
+        matched_spec_key = backend.get_matched_spec_key(machine_name, specs)
+        if matched_spec_key:
+            spec_reg1_den = specs[matched_spec_key].get('設定1', {"REG": 400.0}).get("REG", 400.0)
+            p1 = 1.0 / spec_reg1_den
+            exp_reg1 = games * p1
+            std_reg1 = math.sqrt(games * p1 * (1.0 - p1))
+            if std_reg1 > 0:
+                return (reg - exp_reg1) / std_reg1
+        return 0.0
+
+    display_df['Zスコア'] = display_df.apply(calculate_z_score, axis=1)
+    
     if '推定ぶどう確率' in display_df.columns:
         display_df['ぶどう確率_str'] = display_df['推定ぶどう確率'].apply(lambda x: f"1/{x:.2f}" if pd.notna(x) else "-")
     else:
@@ -252,7 +271,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
                 win_c = (valid_target_df['差枚'] > 0).sum()
                 win_rate_str = f"{win_c / total_target:.1%} ({win_c}/{total_target}台)"
                 
-                st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} のうち有効稼働した **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台 / 🟩緑背景=REG確率が設定5基準以上の優秀台")
+                st.info(f"{acc_color} **本日のAI予測精度: {accuracy:.1f}%** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} のうち有効稼働した **{total_target}台** 中、**{hit_count}台** が見事プラス収支または高設定挙動でした！\n\n🎯 **推奨台の実質勝率: {win_rate_str}** (有効稼働のみ対象)\n\n💡 **Zスコアについて:** 設定1のREG確率を基準とした「低設定の否定度」です。**1.64以上**で低設定では5%未満しか起こらない奇跡、**2.58以上**なら1%未満（ほぼ否定）となります。\n※表の色について: 🟥赤背景=AI推奨の期待外れ台 / 🟨黄背景=結果点数が80点以上の優秀台 / 🟩緑背景=REG確率が設定5基準以上の優秀台")
             else:
                 st.info(f"⚪ **本日のAI予測精度: データなし** ｜ 店舗のAI評価: {day_eval_str}\n\n{target_label} の中で有効稼働（3000G以上等）した台がありませんでした。")
 
@@ -269,7 +288,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     if '期待度' in display_df.columns: cols.append('期待度')
     if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
     cols.append('結果点数')
-    cols.extend(['差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
+    cols.extend(['Zスコア', '差枚', '総回転', 'BIG', 'REG', '合算確率_str', 'REG確率_str', 'BIG確率_str', 'ぶどう確率_str'])
     
     if '根拠' in display_df.columns:
         cols.append('根拠')
@@ -300,6 +319,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             "期待度": st.column_config.TextColumn("AI期待度", width="small", help="AIが前日時点で予測していた設定5以上の確率です。"),
             "予測信頼度": st.column_config.TextColumn("信頼度", width="small"),
             "結果点数": st.column_config.NumberColumn("結果点数", format="%.1f点", help="実際の結果に基づく設定5近似度"),
+            "Zスコア": st.column_config.NumberColumn("Zスコア", format="%.2f", help="設定1のREG確率を基準にした上振れ度（低設定の否定度）。1.64以上で低設定の可能性5%未満、2.58以上で1%未満（ほぼ否定）です。"),
             "差枚": st.column_config.NumberColumn("差枚", format="%+d"),
             "総回転": st.column_config.NumberColumn("総回転", format="%d"),
             "BIG": st.column_config.NumberColumn("BIG", format="%d"),
