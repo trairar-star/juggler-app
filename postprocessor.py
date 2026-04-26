@@ -193,8 +193,8 @@ def postprocess_predictions(predict_df, train_df):
     train_df = apply_shop_mood_correction(train_df)
 
     # --- 予測スコアから「前日の自己評価スコア(past_prediction_score)」を作成 ---
-    orig_pred_index = predict_df.index
-    orig_train_index = train_df.index
+    predict_df['_orig_index'] = predict_df.index
+    train_df['_orig_index'] = train_df.index
     
     predict_df['_uid'] = range(len(predict_df))
     train_df['_uid'] = range(len(train_df))
@@ -210,8 +210,11 @@ def postprocess_predictions(predict_df, train_df):
         all_df = all_df.sort_values(['台番号', '対象日付']).reset_index(drop=True)
         all_df['past_prediction_score'] = all_df.groupby('台番号')['prediction_score'].shift(1).fillna(0.0)
         
-    train_df = all_df[all_df['_is_predict'] == False].sort_values('_uid').drop(columns=['_is_predict', '_uid']).set_index(orig_train_index)
-    predict_df = all_df[all_df['_is_predict'] == True].sort_values('_uid').drop(columns=['_is_predict', '_uid']).set_index(orig_pred_index)
+    train_df = all_df[all_df['_is_predict'] == False].sort_values('_uid').set_index('_orig_index').drop(columns=['_is_predict', '_uid'])
+    predict_df = all_df[all_df['_is_predict'] == True].sort_values('_uid').set_index('_orig_index').drop(columns=['_is_predict', '_uid'])
+
+    train_df.index.name = None
+    predict_df.index.name = None
 
     def get_rating(score):
         if score >= 0.70: return 'A'
