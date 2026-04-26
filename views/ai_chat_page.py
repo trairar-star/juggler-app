@@ -246,7 +246,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             train_data_for_post['予測差枚数'] = X_train_st['predicted_diff']
                         
                         test_data_processed, _ = postprocess_predictions(test_data_for_post, train_data_for_post)
-                        test_data['pred_score'] = test_data_processed['prediction_score']
+                        test_data['pred_score'] = test_data_processed['prediction_score'].values
 
                         test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
                         test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
