@@ -196,11 +196,11 @@ def postprocess_predictions(predict_df, train_df):
     orig_pred_index = predict_df.index
     orig_train_index = train_df.index
     
+    predict_df['_uid'] = range(len(predict_df))
+    train_df['_uid'] = range(len(train_df))
+    
     predict_df['_is_predict'] = True
     train_df['_is_predict'] = False
-    
-    predict_df['_orig_index'] = predict_df.index
-    train_df['_orig_index'] = train_df.index
     
     all_df = pd.concat([train_df, predict_df], ignore_index=True)
     if shop_col:
@@ -210,8 +210,8 @@ def postprocess_predictions(predict_df, train_df):
         all_df = all_df.sort_values(['台番号', '対象日付']).reset_index(drop=True)
         all_df['past_prediction_score'] = all_df.groupby('台番号')['prediction_score'].shift(1).fillna(0.0)
         
-    train_df = all_df[all_df['_is_predict'] == False].copy().set_index('_orig_index').loc[orig_train_index].drop(columns=['_is_predict'])
-    predict_df = all_df[all_df['_is_predict'] == True].copy().set_index('_orig_index').loc[orig_pred_index].drop(columns=['_is_predict'])
+    train_df = all_df[all_df['_is_predict'] == False].sort_values('_uid').drop(columns=['_is_predict', '_uid']).set_index(orig_train_index)
+    predict_df = all_df[all_df['_is_predict'] == True].sort_values('_uid').drop(columns=['_is_predict', '_uid']).set_index(orig_pred_index)
 
     def get_rating(score):
         if score >= 0.70: return 'A'

@@ -237,8 +237,13 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         
                         test_data_for_post = test_data.copy()
                         test_data_for_post['prediction_score'] = preds
+                        if 'predicted_diff' in X_test_st.columns:
+                            test_data_for_post['予測差枚数'] = X_test_st['predicted_diff']
+                            
                         train_data_for_post = train_data.copy()
                         train_data_for_post['prediction_score'] = model.predict_proba(X_train_st)[:, 1]
+                        if 'predicted_diff' in X_train_st.columns:
+                            train_data_for_post['予測差枚数'] = X_train_st['predicted_diff']
                         
                         test_data_processed, _ = postprocess_predictions(test_data_for_post, train_data_for_post)
                         test_data['pred_score'] = test_data_processed['prediction_score']
