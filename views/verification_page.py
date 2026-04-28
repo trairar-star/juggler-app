@@ -1156,7 +1156,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             st.session_state["shop_hyperparams"][shop_name] = {
                                 'train_months': current_hp.get('train_months', 3), 'n_estimators': best_params['n_estimators'], 'learning_rate': best_params['learning_rate'],
                                 'num_leaves': best_params['num_leaves'], 'max_depth': best_params['max_depth'], 'min_child_samples': best_params['min_child_samples'],
-                                'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0)
+                                'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0),
+                                'lstm_hidden_size': current_hp.get('lstm_hidden_size', 64),
+                                'lstm_lr': current_hp.get('lstm_lr', 0.001),
+                                'lstm_epochs': current_hp.get('lstm_epochs', 20)
                             }
                             progress_bar.progress((shop_idx + 1) / len(all_shops))
                             
