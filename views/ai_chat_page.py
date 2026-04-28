@@ -535,6 +535,10 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                 context_data += f"・最小データ数 (min_child_samples): {current_hp.get('min_child_samples', 50)}\n"
                 context_data += f"・L1正則化 (reg_alpha): {current_hp.get('reg_alpha', 0.0)}\n"
                 context_data += f"・L2正則化 (reg_lambda): {current_hp.get('reg_lambda', 0.0)}\n"
+                context_data += f"[LSTM 波読みモデル]\n"
+                context_data += f"・隠れ層サイズ (lstm_hidden_size): {current_hp.get('lstm_hidden_size', 64)}\n"
+                context_data += f"・学習率 (lstm_lr): {current_hp.get('lstm_lr', 0.001)}\n"
+                context_data += f"・学習回数 (lstm_epochs): {current_hp.get('lstm_epochs', 20)}\n"
 
             # --- 3. 最近甘く使われている機種 ---
             if not df_predict.empty and 'machine_30days_avg_diff' in df_predict.columns and '機種名' in df_predict.columns:
@@ -1084,6 +1088,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
    - 例：「過学習気味なので `max_depth` を3に下げ、`min_child_samples` を増やして汎化性能を上げましょう」
    - 例：「特徴量の相関が薄いものに引っ張られているため、`reg_alpha` (L1正則化) を上げてノイズを無視させましょう」
    - 例：「直近の店癖が大きく変わっている可能性があるため、学習期間を『直近1ヶ月』に短縮してみる価値があります」
+   - 【LSTMモデル（波読み）のチューニング】: 提供された「LSTM 波読みモデル」の設定についても、過学習や未学習の兆候があれば、「lstm_epochsを増やす」「lstm_hidden_sizeを下げる」などのアドバイスを行ってください。
 4. 【検証のアドバイス】: チューニング後にどのようなデータ（還元日の勝率など）に注目して結果を確認すべきかアドバイスしてください。
 5. 【簡潔さ】: 専門的でありながらも、冗長な説明は省き、要点を箇条書きでスマートにまとめてください。
 5. 【店舗未選択時の対応】: 提供されたデータの中に「AI予測実績」や「現在のAIモデル設定」が含まれていない（＝店舗が指定されていない）場合は、無理に推測せず、「具体的なチューニング提案を行うには、画面上部のプルダウンから分析対象の店舗を選択してください」と案内してください。

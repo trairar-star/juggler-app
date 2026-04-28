@@ -16,6 +16,10 @@ from config import BASE_FEATURES, FEATURE_NAME_MAP, MACHINE_SPECS
 from model_trainer import train_models
 from shop_trends import calculate_shop_trends, apply_trends_to_row
 from postprocessor import postprocess_predictions
+try:
+    from lstm_feature_extractor import add_lstm_features
+except ImportError:
+    add_lstm_features = None
 
 # 定数定義
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1108,7 +1112,7 @@ def delete_my_balance(target_timestamp):
 def load_shop_ai_settings():
     """店舗別のAI設定をスプレッドシートから読み込む"""
     default_settings = {
-        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0}
+        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}
     }
     try:
         gc = _get_gspread_client()
@@ -1134,6 +1138,9 @@ def load_shop_ai_settings():
                     'min_child_samples': int(record.get('min_child_samples')),
                     'reg_alpha': float(record.get('reg_alpha', 0.0)),
                     'reg_lambda': float(record.get('reg_lambda', 0.0)),
+                    'lstm_hidden_size': int(record.get('lstm_hidden_size', 64)),
+                    'lstm_lr': float(record.get('lstm_lr', 0.001)),
+                    'lstm_epochs': int(record.get('lstm_epochs', 20)),
                 }
             except (ValueError, TypeError):
                 continue
@@ -1157,7 +1164,7 @@ def save_shop_ai_settings(shop_hyperparams):
         sheet_name = 'shop_ai_settings'
         try: worksheet = sh.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="10")
-        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda']
+        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs']
         data_to_write = [header] + [[shop_name] + [params.get(k) for k in header[1:]] for shop_name, params in shop_hyperparams.items()]
         worksheet.clear(); worksheet.update('A1', data_to_write)
         return True
@@ -2457,6 +2464,20 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
             max_date = predict_df['対象日付'].max()
             predict_df = predict_df[predict_df['対象日付'] == max_date]
         
+    # --- LSTMによる時系列「波」特徴量の追加 ---
+    if add_lstm_features is not None:
+        try:
+            lstm_hp = shop_hyperparams.get("デフォルト", {})
+            l_hidden = lstm_hp.get('lstm_hidden_size', 64)
+            l_lr = lstm_hp.get('lstm_lr', 0.001)
+            l_epochs = lstm_hp.get('lstm_epochs', 20)
+            train_df = add_lstm_features(train_df, shop_col=shop_col, seq_length=7, hidden_size=l_hidden, lr=l_lr, epochs=l_epochs)
+            predict_df = add_lstm_features(predict_df, shop_col=shop_col, seq_length=7, hidden_size=l_hidden, lr=l_lr, epochs=l_epochs)
+            if 'lstm_wave_score' not in features:
+                features.append('lstm_wave_score')
+        except Exception as e:
+            print(f"LSTM特徴量の追加に失敗しました: {e}")
+
     if len(train_df) < 10 or len(predict_df) == 0:
         return predict_df, pd.DataFrame(), pd.DataFrame()
 

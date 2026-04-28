@@ -1555,12 +1555,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
         st.caption("AIのパラメータを手動で調整するか、「自動チューニング」を試してください。各項目の意味が分からない場合は、まずは「自動チューニング」の実行をおすすめします。")
         
         if "shop_hyperparams" not in st.session_state:
-            st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0}}
+            st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}}
             
         default_hp = st.session_state["shop_hyperparams"]["デフォルト"]
         current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
         
         with st.form(f"hp_form_{selected_shop}"):
+            st.markdown("**🌳 LightGBM (メイン予測) モデル設定**")
             hp_train_months = st.slider("学習データ期間 (直近〇ヶ月)", 1, 12, int(current_hp.get('train_months', 3)), step=1, help="店の傾向が頻繁に変わるなら短く（1〜3ヶ月）、安定しているなら長く（6ヶ月以上）設定するのが有効です。")
             hp_n_estimators = st.slider("学習回数 (n_estimators)", 50, 1000, int(current_hp.get('n_estimators', 300)), step=50, help="AIが同じデータで何回繰り返し学習するか。多いほど複雑なパターンを学習できますが、過学習のリスクが増えます。過学習を抑えるには、学習率を下げつつこの値を調整します。")
             hp_learning_rate = st.slider("学習率 (learning_rate)", 0.01, 0.3, float(current_hp.get('learning_rate', 0.03)), step=0.01, help="1回の学習でどれだけ賢くなるかの度合い。小さいほど慎重に学習し、過学習しにくくなります。基本的には0.01〜0.05の範囲が推奨されます。")
@@ -1569,6 +1570,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             hp_min_child_samples = st.slider("最小データ数 (min_child_samples)", 10, 200, int(current_hp.get('min_child_samples', 50)), step=10, help="1つの分岐（葉）を作るために必要な最小サンプル数。大きいほど、より一般的なルールを作るようになり、過学習を抑制します。")
             hp_reg_alpha = st.slider("L1正則化 (不要データの無視力)", 0.0, 5.0, float(current_hp.get('reg_alpha', 0.0)), step=0.1, help="値を大きくするほど、予測に不要な特徴量を無視しやすくなり、過学習を抑制します。")
             hp_reg_lambda = st.slider("L2正則化 (過学習の抑制力)", 0.0, 5.0, float(current_hp.get('reg_lambda', 0.0)), step=0.1, help="値を大きくするほど、AIが特定の特徴量に極端に依存するのを防ぎ、過学習を抑制します。")
+            
+            st.markdown("**🌊 LSTM (時系列・波読み) モデル設定**")
+            hp_lstm_hidden = st.selectbox("隠れ層のサイズ (hidden_size)", [16, 32, 64, 128], index=[16, 32, 64, 128].index(int(current_hp.get('lstm_hidden_size', 64))), help="AIの『脳の容量』。大きくすると複雑な波を記憶できますが、過学習しやすくなります。")
+            hp_lstm_lr = st.slider("学習率 (learning_rate) [LSTM]", 0.001, 0.010, float(current_hp.get('lstm_lr', 0.001)), step=0.001, format="%.3f")
+            hp_lstm_epochs = st.slider("学習回数 (epochs)", 5, 100, int(current_hp.get('lstm_epochs', 20)), step=5)
             
             test_period = st.selectbox("カンニングなしテストの検証期間", [30, 60, 90, 180], format_func=lambda x: f"直近 {x} 日間", index=0, help="テスト対象とする期間を選びます。期間を長くするとサンプル数が増え、結果の信頼度が高まります。")
             
@@ -1582,8 +1588,15 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             st.session_state["shop_hyperparams"][selected_shop] = {
                 'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
                 'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples,
-                'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda
+                'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda,
+                'lstm_hidden_size': hp_lstm_hidden, 'lstm_lr': hp_lstm_lr, 'lstm_epochs': hp_lstm_epochs
             }
+            # LSTMは全店舗共通モデルとして一括学習されるため、現在選択中の店舗の設定をデフォルトにも上書きしておく
+            if selected_shop != "デフォルト":
+                st.session_state["shop_hyperparams"]["デフォルト"]['lstm_hidden_size'] = hp_lstm_hidden
+                st.session_state["shop_hyperparams"]["デフォルト"]['lstm_lr'] = hp_lstm_lr
+                st.session_state["shop_hyperparams"]["デフォルト"]['lstm_epochs'] = hp_lstm_epochs
+                
             backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
             st.rerun()
             
@@ -1931,7 +1944,10 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     st.session_state["shop_hyperparams"][selected_shop] = {
                         'train_months': hp_train_months, 'n_estimators': best_params['n_estimators'], 'learning_rate': best_params['learning_rate'],
                         'num_leaves': best_params['num_leaves'], 'max_depth': best_params['max_depth'], 'min_child_samples': best_params['min_child_samples'],
-                        'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0)
+                        'reg_alpha': best_params.get('reg_alpha', 0.0), 'reg_lambda': best_params.get('reg_lambda', 0.0),
+                        'lstm_hidden_size': current_hp.get('lstm_hidden_size', 64),
+                        'lstm_lr': current_hp.get('lstm_lr', 0.001),
+                        'lstm_epochs': current_hp.get('lstm_epochs', 20)
                     }
                     backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                     st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")

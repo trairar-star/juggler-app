@@ -11,3 +11,4 @@ pyarrow
 google-generativeai
 tabulate
 optuna
+torch
