@@ -416,7 +416,7 @@ def postprocess_predictions(predict_df, train_df):
             set5_reg_prob_threshold = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
             set1_reg_prob_threshold = 1.0 / specs[matched_spec_key].get("設定1", {"REG": 400.0})["REG"]
             
-            exp_r1 = games * set1_reg_prob_threshold
+            exp_r1 = games * set1_reg_prob_threshold 
             std_r1 = math.sqrt(games * set1_reg_prob_threshold * (1.0 - set1_reg_prob_threshold))
             z_score = (reg - exp_r1) / std_r1 if std_r1 > 0 else 0
             

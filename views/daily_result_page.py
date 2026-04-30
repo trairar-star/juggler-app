@@ -165,7 +165,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         b = row.get('BIG', 0)
         r = row.get('REG', 0)
         diff = row.get('差枚', 0)
-        tot_prob = (b + r) / g if g > 0 else 0
+        tot_prob = (b + r) / g if g > 0 else 0.0
         
         # 低稼働かつ確率が死んでない台は免除 (0G、または1000G未満で合算1/200以上)
         if g < 1000 and (g == 0 or tot_prob >= (1/200.0)): return False

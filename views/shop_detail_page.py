@@ -96,7 +96,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                                     elif not is_avg and v in [0, 1]:
                                         is_bool_feature = True
                                 
-                                if is_bool_feature:
+                                if is_bool_feature: 
                                     if is_avg:
                                         return f"{v*100:.1f}%"
                                     else:
@@ -105,7 +105,7 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                                 elif '差枚' in f_name or '吸込み' in f_name: return f"{int(v):+d}枚"
                                 elif 'ゲーム' in f_name or 'G数' in f_name: return f"{int(v)}G"
                                 elif '割合' in f_name or '率' in f_name: return f"{v*100:.1f}%" if v <= 1.0 else f"{v:.1f}%"
-                                else: return str(int(v)) if float(v).is_integer() else f"{v:.2f}"
+                                else: return str(int(v)) if v.is_integer() else f"{v:.2f}"
                             return str(v)
 
                         val_str = format_feat(val)

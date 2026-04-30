@@ -1391,7 +1391,7 @@ def _generate_neighbor_features(df, shop_col):
     is_next_high = is_next & (next_g >= 3000) & ((next_reg / next_g.replace(0, np.nan)) >= 1.0/260.0)
     df['neighbor_high_setting_count'] = np.where(is_prev_high, 1, 0) + np.where(is_next_high, 1, 0)
     
-    df['is_neighbor_high_reg'] = ((df['neighbor_only_reg_prob'] >= 1.0/260.0) & (neighbor_g_sum >= 4000)).astype(int)
+    df['is_neighbor_high_reg'] = (df['neighbor_only_reg_prob'] >= 1.0/260.0) & (neighbor_g_sum >= 4000)
     df['neighbor_reg_reliability_score'] = np.clip(df['neighbor_only_reg_prob'] / (1.0/260.0), 0, 2.0) * (df['neighbor_only_avg_g'] / 1000.0)
 
     if 'island_id' in df.columns:
@@ -1970,8 +1970,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3'])) |
             (df['z_score_reg'] >= 1.64)
         ) &
-        (df['BIG分母'] <= df['spec_b6_den'] + 100)
-    ).astype(int)
+        (df['BIG分母'] <= df['spec_b6_den'] + 100))
 
     # --- 新規追加: 高設定率の計算において未稼働台(3000G未満)を分母から除外するためのフラグ ---
     # 3000G未満の台は np.nan にすることで、mean() 集計時に分母に含まれなくなる
@@ -1985,9 +1984,9 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3'])) |
             (df['z_score_reg'] >= 1.64)
         )
-    ).astype(int)
-    df['is_high_reg_plus_diff'] = ((df['is_prev_high_reg'] == 1) & (df['差枚'] > 0)).astype(int)
-    df['is_low_reg_plus_diff'] = ((df['is_prev_high_reg'] == 0) & (df['差枚'] > 0)).astype(int)
+    )
+    df['is_high_reg_plus_diff'] = (df['is_prev_high_reg'] == 1) & (df['差枚'] > 0)
+    df['is_low_reg_plus_diff'] = (df['is_prev_high_reg'] == 0) & (df['差枚'] > 0)
 
     # --- 新規追加: 時間軸と複合条件に基づく特徴量エンジニアリング ---
     if 'prev2_累計ゲーム' in df.columns and 'prev3_累計ゲーム' in df.columns:

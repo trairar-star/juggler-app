@@ -341,11 +341,11 @@ def render_my_balance_page(df_raw):
     # 通算の自力合算の計算
     import re
     def _extract_sum_data(x, kind):
-        if pd.isna(x): return 0
-        m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', str(x))
+        if pd.isna(x): return 0.0
+        m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', x)
         if m_new:
             return int(m_new.group(1)) if kind == 'G' else int(m_new.group(2)) if kind == 'B' else int(m_new.group(3))
-        m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', str(x))
+        m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', x)
         if m_old:
             return int(m_old.group(1)) if kind == 'G' else int(m_old.group(2)) if kind == 'B' else int(m_old.group(3))
         return 0
