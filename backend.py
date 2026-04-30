@@ -30,7 +30,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.63.0" 
+APP_VERSION = "v4.64.0" 
 
 def analyze_sueoki_and_change_triggers(df_train, shop_name, shop_col='店名'):
     from shop_trends import analyze_sueoki_and_change_triggers as _analyze
@@ -1163,6 +1163,7 @@ def load_shop_ai_settings():
     """店舗別のAI設定をスプレッドシートから読み込む"""
     default_settings = {
         "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 
+                   'k_train_months': 6, 'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
                    'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
                    'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}
     }
@@ -1190,6 +1191,7 @@ def load_shop_ai_settings():
                     'min_child_samples': int(record.get('min_child_samples')),
                     'reg_alpha': float(record.get('reg_alpha', 0.0)),
                     'reg_lambda': float(record.get('reg_lambda', 0.0)),
+                    'k_train_months': int(record.get('k_train_months', record.get('train_months', 6))),
                     'k_n_estimators': int(record.get('k_n_estimators', record.get('n_estimators', 300))),
                     'k_learning_rate': float(record.get('k_learning_rate', record.get('learning_rate', 0.03))),
                     'k_num_leaves': int(record.get('k_num_leaves', record.get('num_leaves', 15))),
@@ -1223,7 +1225,7 @@ def save_shop_ai_settings(shop_hyperparams):
         sheet_name = 'shop_ai_settings'
         try: worksheet = sh.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
-        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'k_n_estimators', 'k_learning_rate', 'k_num_leaves', 'k_max_depth', 'k_min_child_samples', 'k_reg_alpha', 'k_reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs']
+        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'k_train_months', 'k_n_estimators', 'k_learning_rate', 'k_num_leaves', 'k_max_depth', 'k_min_child_samples', 'k_reg_alpha', 'k_reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs']
         data_to_write = [header] + [[shop_name] + [params.get(k) for k in header[1:]] for shop_name, params in shop_hyperparams.items()]
         worksheet.clear(); worksheet.update('A1', data_to_write)
         return True

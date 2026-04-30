@@ -59,6 +59,9 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
 
     # 変更予測(上げ狙い: is_prev_high_reg=0) と 据え置き予測(据え狙い: is_prev_high_reg=1) でループ
     for mode in ['change', 'keep']:
+        p_prefix = "" if mode == 'change' else "k_"
+        t_m_key = 'train_months' if mode == 'change' else 'k_train_months'
+        default_t_m = default_hp.get(t_m_key, default_hp.get('train_months', 6 if mode == 'keep' else 3))
         target_val = 0 if mode == 'change' else 1
         mode_label = "変更予測" if mode == 'change' else "据え置き予測"
         version_prefix = "v3.0(変更)" if mode == 'change' else "v3.0(据え)"
@@ -96,7 +99,6 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
             days_diff = (max_date - train_df_common['対象日付']).dt.days
             sample_weights = 0.985 ** days_diff
 
-        p_prefix = "" if mode == 'change' else "k_"
 
         n_est = default_hp.get(f'{p_prefix}n_estimators', default_hp.get('n_estimators', 300))
         lr = default_hp.get(f'{p_prefix}learning_rate', default_hp.get('learning_rate', 0.03))
@@ -172,7 +174,7 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
                 shop_cat_features = [f for f in cat_features if f in shop_features]
 
                 shop_hp = shop_hyperparams.get(shop, default_hp)
-                t_m = shop_hp.get('train_months', default_t_m)
+                t_m = shop_hp.get(t_m_key, default_t_m)
                 s_n_est = shop_hp.get(f'{p_prefix}n_estimators', n_est)
                 s_lr = shop_hp.get(f'{p_prefix}learning_rate', lr)
                 s_nl = shop_hp.get(f'{p_prefix}num_leaves', nl)

@@ -84,11 +84,19 @@ def main():
             if premise == "NO":
                 sueoki_no_dates.add(pd.to_datetime(d))
         
+        current_hp = shop_hyperparams.get(shop_name, shop_hyperparams.get("デフォルト", {}))
+        
         for mode in ['change', 'keep']:
             target_val = 0 if mode == 'change' else 1
             m_train = mode_train_base[mode_train_base['is_prev_high_reg'] == target_val].copy()
             m_test = mode_test_base[mode_test_base['is_prev_high_reg'] == target_val].copy()
             
+            # モデル別の学習期間で絞り込み
+            t_m = current_hp.get('train_months', 3) if mode == 'change' else current_hp.get('k_train_months', 6)
+            if not m_train.empty:
+                m_train_cutoff = m_train['対象日付'].max() - pd.DateOffset(months=t_m)
+                m_train = m_train[m_train['対象日付'] >= m_train_cutoff].copy()
+                
             if mode == 'keep':
                 m_test = m_test[~m_test['対象日付'].isin(sueoki_no_dates)].copy()
             
@@ -165,7 +173,6 @@ def main():
                 if 'num_leaves' not in best_k_params: best_k_params['num_leaves'] = min(127, (2 ** best_k_params['max_depth']) - 1)
                 print(f"  [据え] 最適パラメータ: {best_k_params}")
             
-        current_hp = shop_hyperparams.get(shop_name, shop_hyperparams.get("デフォルト", {}))
         if best_c_params is None: best_c_params = current_hp
         if best_k_params is None: best_k_params = current_hp
         
@@ -178,6 +185,7 @@ def main():
             'min_child_samples': best_c_params.get('min_child_samples', current_hp.get('min_child_samples')),
             'reg_alpha': best_c_params.get('reg_alpha', current_hp.get('reg_alpha', 0.0)),
             'reg_lambda': best_c_params.get('reg_lambda', current_hp.get('reg_lambda', 0.0)),
+            'k_train_months': current_hp.get('k_train_months', 6),
             'k_n_estimators': best_k_params.get('n_estimators', current_hp.get('k_n_estimators')),
             'k_learning_rate': best_k_params.get('learning_rate', current_hp.get('k_learning_rate')),
             'k_num_leaves': best_k_params.get('num_leaves', current_hp.get('k_num_leaves')),
