@@ -355,6 +355,20 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
     merged_df = base_df[base_df[shop_col] == selected_shop].copy()
     st.subheader(f"📊 AIモデル バックテスト通算成績 ({selected_shop} / {selected_version})")
     
+    # --- 据え置き前提判定の事前計算 (全期間) ---
+    sueoki_no_dates = set()
+    df_raw_shop = df_raw[df_raw[shop_col] == selected_shop].copy() if not df_raw.empty and shop_col in df_raw.columns else pd.DataFrame()
+    if not df_raw_shop.empty:
+        pred_dates = merged_df['予測対象日_merge'].dropna().dt.date.unique()
+        for d in pred_dates:
+            tgt_date = pd.to_datetime(d)
+            premise, _ = backend.evaluate_sueoki_premise(df_raw_shop, tgt_date, df_events)
+            if premise == "NO":
+                sueoki_no_dates.add(tgt_date)
+                
+    if sueoki_no_dates and 'sueoki_score' in merged_df.columns:
+        merged_df.loc[merged_df['予測対象日_merge'].isin(sueoki_no_dates), 'sueoki_score'] = 0.0
+
     # --- 有効稼働フラグの追加 ---
     merged_df['valid_play'] = get_valid_play_mask(merged_df['結果_累計ゲーム'], merged_df['差枚_actual'])
     merged_df['valid_win'] = merged_df['valid_play'] & (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) > 0)
