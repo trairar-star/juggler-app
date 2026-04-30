@@ -81,6 +81,13 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
     if 'prediction_score' in base_df.columns:
         base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce')
         
+    if 'sueoki_score_saved' in base_df.columns:
+        base_df['sueoki_score'] = base_df['sueoki_score_saved']
+    if 'sueoki_score' in base_df.columns:
+        base_df['sueoki_score'] = pd.to_numeric(base_df['sueoki_score'], errors='coerce')
+    else:
+        base_df['sueoki_score'] = 0.0
+        
     if '予測差枚数_saved' in base_df.columns:
         base_df['予測差枚数'] = base_df['予測差枚数_saved']
     if '機種名_saved' in base_df.columns:
