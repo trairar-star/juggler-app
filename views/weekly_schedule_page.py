@@ -34,10 +34,15 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
             )
             
             if not df_pred.empty and '予測差枚数' in df_pred.columns and 'prediction_score' in df_pred.columns:
+                if 'sueoki_score' in df_pred.columns:
+                    df_pred['max_score'] = df_pred[['prediction_score', 'sueoki_score']].max(axis=1)
+                else:
+                    df_pred['max_score'] = df_pred['prediction_score']
+                    
                 # 店舗ごとの平均予測差枚を計算
                 shop_daily = df_pred.groupby(shop_col).agg(
                     平均予測差枚=('予測差枚数', 'mean'),
-                    平均期待度=('prediction_score', 'mean')
+                    平均期待度=('max_score', 'mean')
                 ).reset_index()
                 
                 shop_daily['予測対象日'] = target_date.strftime('%m/%d')

@@ -14,7 +14,7 @@ import time
 from utils import get_valid_play_mask, get_confidence_indicator, get_matched_spec_key, classify_shop_eval
 from config import BASE_FEATURES, FEATURE_NAME_MAP, MACHINE_SPECS
 from model_trainer import train_models
-from shop_trends import calculate_shop_trends, apply_trends_to_row
+from shop_trends import calculate_shop_trends, apply_trends_to_row, analyze_sueoki_and_change_triggers, diagnose_allocation_types, evaluate_sueoki_premise
 from postprocessor import postprocess_predictions
 try:
     from lstm_feature_extractor import add_lstm_features
@@ -30,7 +30,11 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.54.0" 
+APP_VERSION = "v4.63.0" 
+
+def analyze_sueoki_and_change_triggers(df_train, shop_name, shop_col='店名'):
+    from shop_trends import analyze_sueoki_and_change_triggers as _analyze
+    return _analyze(df_train, shop_name, shop_col)
 
 # ---------------------------------------------------------
 # 機種スペック情報
@@ -410,12 +414,18 @@ def load_prediction_log():
         # 古いカラム名「予想設定5以上確率」との互換性維持
         if '予想設定5以上確率' in df.columns and 'prediction_score' not in df.columns:
             df['prediction_score'] = pd.to_numeric(df['予想設定5以上確率'], errors='coerce')
+        if '変更期待度' in df.columns and 'prediction_score' not in df.columns:
+            df['prediction_score'] = pd.to_numeric(df['変更期待度'], errors='coerce')
+        if '据え置き期待度' in df.columns and 'sueoki_score' not in df.columns:
+            df['sueoki_score'] = pd.to_numeric(df['据え置き期待度'], errors='coerce')
             if df['prediction_score'].max() > 1.0:
                 df['prediction_score'] = df['prediction_score'] / 100.0
                 
         # 空文字などが混入して画面側で計算エラーになるのを防ぐため、確実に数値型に変換
         if 'prediction_score' in df.columns:
             df['prediction_score'] = pd.to_numeric(df['prediction_score'], errors='coerce')
+        if 'sueoki_score' in df.columns:
+            df['sueoki_score'] = pd.to_numeric(df['sueoki_score'], errors='coerce')
         return df
     except: return pd.DataFrame()
 
@@ -435,6 +445,10 @@ def load_daily_shop_scores():
             df['店舗平均期待度'] = pd.to_numeric(df['店舗平均期待度'], errors='coerce')
         if '予測平均差枚' in df.columns:
             df['予測平均差枚'] = pd.to_numeric(df['予測平均差枚'], errors='coerce')
+        if '変更平均期待度' in df.columns:
+            df['変更平均期待度'] = pd.to_numeric(df['変更平均期待度'], errors='coerce')
+        if '据え置き平均期待度' in df.columns:
+            df['据え置き平均期待度'] = pd.to_numeric(df['据え置き平均期待度'], errors='coerce')
         if '店舗台数' in df.columns:
             df['店舗台数'] = pd.to_numeric(df['店舗台数'], errors='coerce')
         return df
@@ -462,7 +476,7 @@ def save_prediction_log(df):
                     score_ws = sh.add_worksheet(title=score_sheet_name, rows="1000", cols="6")
                     existing_score_data = []
 
-                SCORE_HEADER = ['実行日時', '予測対象日', '店名', '店舗平均期待度', '予測平均差枚', '店舗台数']
+                SCORE_HEADER = ['実行日時', '予測対象日', '店名', '店舗平均期待度', '予測平均差枚', '店舗台数', '変更平均期待度', '据え置き平均期待度']
                 if existing_score_data and len(existing_score_data) > 1:
                     df_score_existing = pd.DataFrame(existing_score_data[1:], columns=existing_score_data[0])
                     for c in SCORE_HEADER:
@@ -481,9 +495,19 @@ def save_prediction_log(df):
                 if '予測差枚数' not in temp_df.columns:
                     temp_df['予測差枚数'] = np.nan
                     
+                if 'sueoki_score' in temp_df.columns:
+                    temp_df['max_score'] = temp_df[['prediction_score', 'sueoki_score']].max(axis=1)
+                else:
+                    temp_df['max_score'] = temp_df['prediction_score']
+                    
+                if 'sueoki_score' not in temp_df.columns:
+                    temp_df['sueoki_score'] = 0.0
+                    
                 df_score_new = temp_df.groupby([shop_col_for_score, '予測対象日']).agg(
-                    店舗平均期待度=('prediction_score', 'mean'),
+                    店舗平均期待度=('max_score', 'mean'),
                     予測平均差枚=('予測差枚数', 'mean'),
+                    変更平均期待度=('prediction_score', 'mean'),
+                    据え置き平均期待度=('sueoki_score', 'mean'),
                     店舗台数=('台番号', 'nunique')
                 ).reset_index()
                 df_score_new = df_score_new.rename(columns={shop_col_for_score: '店名'})
@@ -512,16 +536,34 @@ def save_prediction_log(df):
     # --- 2. 保存する前に、各店舗の上位10%（最低3台）に絞り込む ---
     if 'prediction_score' in save_df_initial.columns:
         shop_col = '店名' if '店名' in save_df_initial.columns else ('店舗名' if '店舗名' in save_df_initial.columns else None)
+        has_sueoki = 'sueoki_score' in save_df_initial.columns
+        
         if shop_col:
             df_list = []
             for shop_name, group in save_df_initial.groupby(shop_col):
-                df_list.append(group.sort_values('prediction_score', ascending=False).head(max(3, int(len(group) * 0.10))))
+                limit = max(3, int(len(group) * 0.10))
+                if has_sueoki:
+                    # 変更期待度の上位と据え置き期待度の上位を完全に独立して抽出
+                    change_top = group.sort_values('prediction_score', ascending=False).head(limit)
+                    sueoki_top = group.sort_values('sueoki_score', ascending=False).head(limit)
+                    # 結合して重複を排除（両方でランクインした台は1つにまとまる）
+                    combined_top = pd.concat([change_top, sueoki_top]).drop_duplicates(subset=['台番号'])
+                    df_list.append(combined_top)
+                else:
+                    df_list.append(group.sort_values('prediction_score', ascending=False).head(limit))
+                    
             if df_list:
                 save_df_initial = pd.concat(df_list, ignore_index=True)
             else:
                 save_df_initial = pd.DataFrame(columns=save_df_initial.columns)
         else:
-            save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(max(3, int(len(save_df_initial) * 0.10)))
+            limit = max(3, int(len(save_df_initial) * 0.10))
+            if has_sueoki:
+                change_top = save_df_initial.sort_values('prediction_score', ascending=False).head(limit)
+                sueoki_top = save_df_initial.sort_values('sueoki_score', ascending=False).head(limit)
+                save_df_initial = pd.concat([change_top, sueoki_top]).drop_duplicates(subset=['台番号'])
+            else:
+                save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(limit)
             
         if save_df_initial.empty:
             st.warning("保存する推奨台がありません。")
@@ -533,7 +575,7 @@ def save_prediction_log(df):
         log_sheet_name = 'prediction_log'
         
         # スプレッドシートのヘッダーが手動操作で壊れた場合（重複など）にも耐えられるように、保存する列を厳格に固定する
-        STANDARD_HEADER = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', 'prediction_score', '予測信頼度', 'おすすめ度', '予測差枚数', '根拠', 'ai_version', 'app_version']
+        STANDARD_HEADER = ['実行日時', '予測対象日', '対象日付', '店名', '台番号', '機種名', '変更期待度', '据え置き期待度', '予測信頼度', 'おすすめ度', '予測差枚数', '根拠', 'ai_version', 'app_version']
         
         try: 
             worksheet = sh.worksheet(log_sheet_name)
@@ -545,7 +587,8 @@ def save_prediction_log(df):
         # 既存データのパース (ユーザー操作による重複列や不要な列の混入を綺麗に掃除する)
         if existing_data and len(existing_data) > 1:
             raw_header = existing_data[0]
-            raw_header = ['prediction_score' if c == '予想設定5以上確率' else c for c in raw_header]
+            raw_header = ['変更期待度' if c in ['予想設定5以上確率', 'prediction_score'] else c for c in raw_header]
+            raw_header = ['据え置き期待度' if c == 'sueoki_score' else c for c in raw_header]
             
             df_existing = pd.DataFrame(existing_data[1:], columns=raw_header)
             
@@ -561,12 +604,19 @@ def save_prediction_log(df):
                     df_existing[c] = ''
             df_existing = df_existing[STANDARD_HEADER]
             
-            if 'prediction_score' in df_existing.columns:
-                df_existing['prediction_score'] = pd.to_numeric(df_existing['prediction_score'], errors='coerce')
+            if '変更期待度' in df_existing.columns:
+                df_existing['変更期待度'] = pd.to_numeric(df_existing['変更期待度'], errors='coerce')
+            if '据え置き期待度' in df_existing.columns:
+                df_existing['据え置き期待度'] = pd.to_numeric(df_existing['据え置き期待度'], errors='coerce')
         else:
             df_existing = pd.DataFrame(columns=STANDARD_HEADER)
             
         save_df = save_df_initial.copy()
+        if 'prediction_score' in save_df.columns:
+            save_df = save_df.rename(columns={'prediction_score': '変更期待度'})
+        if 'sueoki_score' in save_df.columns:
+            save_df = save_df.rename(columns={'sueoki_score': '据え置き期待度'})
+            
         save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:
             save_df['ai_version'] = "不明"
@@ -1112,7 +1162,9 @@ def delete_my_balance(target_timestamp):
 def load_shop_ai_settings():
     """店舗別のAI設定をスプレッドシートから読み込む"""
     default_settings = {
-        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}
+        "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 
+                   'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
+                   'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}
     }
     try:
         gc = _get_gspread_client()
@@ -1138,6 +1190,13 @@ def load_shop_ai_settings():
                     'min_child_samples': int(record.get('min_child_samples')),
                     'reg_alpha': float(record.get('reg_alpha', 0.0)),
                     'reg_lambda': float(record.get('reg_lambda', 0.0)),
+                    'k_n_estimators': int(record.get('k_n_estimators', record.get('n_estimators', 300))),
+                    'k_learning_rate': float(record.get('k_learning_rate', record.get('learning_rate', 0.03))),
+                    'k_num_leaves': int(record.get('k_num_leaves', record.get('num_leaves', 15))),
+                    'k_max_depth': int(record.get('k_max_depth', record.get('max_depth', 4))),
+                    'k_min_child_samples': int(record.get('k_min_child_samples', record.get('min_child_samples', 50))),
+                    'k_reg_alpha': float(record.get('k_reg_alpha', record.get('reg_alpha', 0.0))),
+                    'k_reg_lambda': float(record.get('k_reg_lambda', record.get('reg_lambda', 0.0))),
                     'lstm_hidden_size': int(record.get('lstm_hidden_size', 64)),
                     'lstm_lr': float(record.get('lstm_lr', 0.001)),
                     'lstm_epochs': int(record.get('lstm_epochs', 20)),
@@ -1163,8 +1222,8 @@ def save_shop_ai_settings(shop_hyperparams):
         sh = gc.open_by_key(SPREADSHEET_KEY)
         sheet_name = 'shop_ai_settings'
         try: worksheet = sh.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="10")
-        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs']
+        except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
+        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'k_n_estimators', 'k_learning_rate', 'k_num_leaves', 'k_max_depth', 'k_min_child_samples', 'k_reg_alpha', 'k_reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs']
         data_to_write = [header] + [[shop_name] + [params.get(k) for k in header[1:]] for shop_name, params in shop_hyperparams.items()]
         worksheet.clear(); worksheet.update('A1', data_to_write)
         return True
@@ -2081,6 +2140,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['shifted_reg'] = df.groupby(group_keys)['REG'].shift(1)
     group_levels = list(range(len(group_keys))) # インデックス操作用
     
+    df['mean_3days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=3, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['median_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).median().reset_index(level=group_levels, drop=True).fillna(0)
     df['std_7days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=7, min_periods=1).std().reset_index(level=group_levels, drop=True).fillna(0)
@@ -2088,10 +2148,16 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['mean_14days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=14, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_30days_diff'] = df.groupby(group_keys)['shifted_diff'].rolling(window=30, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
 
+    df['mean_3days_games'] = df.groupby(group_keys)['shifted_g'].rolling(window=3, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['mean_7days_games'] = df.groupby(group_keys)['shifted_g'].rolling(window=7, min_periods=1).mean().reset_index(level=group_levels, drop=True).fillna(0)
     df['is_prev_no_play'] = (df['shifted_g'] == 0).astype(int)
 
-    # --- 新規: 週間REG確率 ---
+    # --- 新規: 3日間/週間REG確率 ---
+    rolling_3d_reg_g = df.groupby(group_keys)[['shifted_reg', 'shifted_g']].rolling(window=3, min_periods=1)
+    sum_3d_reg = rolling_3d_reg_g['shifted_reg'].sum().reset_index(level=group_levels, drop=True).fillna(0)
+    sum_3d_g = rolling_3d_reg_g['shifted_g'].sum().reset_index(level=group_levels, drop=True).fillna(0)
+    df['mean_3days_reg_prob'] = np.where(sum_3d_g > 0, sum_3d_reg / sum_3d_g, 0)
+
     # 7日間の合計REG回数と合計ゲーム数から計算し、ノイズを低減
     rolling_7d_reg_g = df.groupby(group_keys)[['shifted_reg', 'shifted_g']].rolling(window=7, min_periods=1)
     sum_7d_reg = rolling_7d_reg_g['shifted_reg'].sum().reset_index(level=group_levels, drop=True).fillna(0)
@@ -2417,6 +2483,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
 def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, target_date=None):
+    df_raw_for_eval = df.copy() # 据え置き前提判定用の生データを確保
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
 
     # --- AI処理のローカルキャッシュ機構 ---
@@ -2493,6 +2560,31 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
     if 'valid_play_mask' in predict_df.columns:
         predict_df = predict_df.drop(columns=['valid_play_mask'], errors='ignore')
 
+    # --- 7. 据え置き前提判定の根本適用 (NOの日は sueoki_score を強制リセット) ---
+    if shop_col:
+        def apply_sueoki_premise_to_df(df_target):
+            if df_target.empty or 'sueoki_score' not in df_target.columns: return df_target
+            date_col_for_grp = 'next_date' if 'next_date' in df_target.columns else '対象日付'
+            
+            for (shop, tgt_date), group in df_target.groupby([shop_col, date_col_for_grp]):
+                # その日より前の生データで判定
+                past_raw = df_raw_for_eval[(df_raw_for_eval[shop_col] == shop) & (df_raw_for_eval['対象日付'] < tgt_date)].copy()
+                premise, reason = evaluate_sueoki_premise(past_raw, tgt_date, _df_events)
+                
+                if premise == "NO":
+                    df_target.loc[group.index, 'sueoki_score'] = 0.0
+                    def add_no_sue_reason(r):
+                        orig = str(r.get('根拠', ''))
+                        if orig == 'nan': orig = ''
+                        new_r = f"【据え置き無効】{reason}"
+                        if orig and orig != '-': return orig + " " + new_r
+                        return new_r
+                    df_target.loc[group.index, '根拠'] = df_target.loc[group.index].apply(add_no_sue_reason, axis=1)
+            return df_target
+
+        predict_df = apply_sueoki_premise_to_df(predict_df)
+        train_df = apply_sueoki_premise_to_df(train_df)
+
     # --- 処理の最後に計算結果をキャッシュとして保存 ---
     try:
         # 古いAIキャッシュファイルを掃除
@@ -2517,9 +2609,15 @@ def get_island_prediction_ranking(df):
         return pd.DataFrame()
     
     island_pred_df['島名'] = island_pred_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+    
+    if 'sueoki_score' in island_pred_df.columns:
+        island_pred_df['max_score'] = island_pred_df[['prediction_score', 'sueoki_score']].max(axis=1)
+    else:
+        island_pred_df['max_score'] = island_pred_df['prediction_score']
+        
     isl_stats = island_pred_df.groupby('島名').agg(
-        平均期待度=('prediction_score', 'mean'),
-        激アツ台数=('prediction_score', lambda x: (x >= 0.30).sum()),
+        平均期待度=('max_score', 'mean'),
+        激アツ台数=('max_score', lambda x: (x >= 0.30).sum()),
         全台数=('台番号', 'count')
     ).reset_index().sort_values('平均期待度', ascending=False)
     
@@ -2537,9 +2635,15 @@ def get_island_prediction_ranking(df):
 
 def get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, shop_col):
     """店舗別の予測期待度ランキングおよび実績勝率を集計する"""
-    shop_stats = df.groupby(shop_col).agg(
-        平均スコア=('prediction_score', 'mean'),
-        推奨台数=('prediction_score', lambda x: (x >= 0.30).sum()),
+    temp_df = df.copy()
+    if 'sueoki_score' in temp_df.columns:
+        temp_df['max_score'] = temp_df[['prediction_score', 'sueoki_score']].max(axis=1)
+    else:
+        temp_df['max_score'] = temp_df['prediction_score']
+        
+    shop_stats = temp_df.groupby(shop_col).agg(
+        平均スコア=('max_score', 'mean'),
+        推奨台数=('max_score', lambda x: (x >= 0.30).sum()),
         全台数=('台番号', 'nunique')
     ).reset_index()
     
@@ -2593,65 +2697,88 @@ def get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, sho
                 merged = merged[merged['予測対象日_merge'] > (merged['予測対象日_merge'].max() - pd.Timedelta(days=days))].copy()
             
             merged['prediction_score'] = pd.to_numeric(merged['prediction_score'], errors='coerce')
+            if 'sueoki_score' not in merged.columns:
+                merged['sueoki_score'] = 0.0
+            merged['sueoki_score'] = pd.to_numeric(merged['sueoki_score'], errors='coerce')
+            
             shop_machine_counts = df.groupby(shop_col)['台番号'].nunique().to_dict()
             merged['top_k_threshold'] = merged[shop_col].apply(lambda x: max(3, min(10, int(shop_machine_counts.get(x, 50) * 0.10))))
             
-            merged['daily_rank'] = merged.groupby(['予測対象日_merge', shop_col])['prediction_score'].rank(method='first', ascending=False)
-            high_expect_df = merged[merged['daily_rank'] <= merged['top_k_threshold']].copy()
+            merged['c_daily_rank'] = merged.groupby(['予測対象日_merge', shop_col])['prediction_score'].rank(method='first', ascending=False)
+            merged['s_daily_rank'] = merged.groupby(['予測対象日_merge', shop_col])['sueoki_score'].rank(method='first', ascending=False)
             
-            if not high_expect_df.empty:
-                act_b = pd.to_numeric(high_expect_df['BIG'], errors='coerce').fillna(0)
-                act_r = pd.to_numeric(high_expect_df['REG'], errors='coerce').fillna(0)
-                act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)
-                
-                spec_reg_val = high_expect_df['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-                spec_tot_val = high_expect_df['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                spec_reg3_val = high_expect_df['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
-                spec_reg1_val = high_expect_df['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
-                
-                reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
-                tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
-                
-                exp_r1 = act_g * (1.0 / spec_reg1_val)
-                std_r1 = np.sqrt(act_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
-                z_score = np.where(std_r1 > 0, (act_r - exp_r1) / std_r1, 0)
-                
-                high_expect_df['valid_high_play'] = (act_g >= 3000)
-                high_expect_df['is_high_setting'] = ((((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val) & (reg_prob_den > 0) & (reg_prob_den <= spec_reg3_val)) | (z_score >= 1.64))).astype(int)
-                
-                act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
-                high_expect_df['valid_play'] = get_valid_play_mask(act_g, act_diff)
-                high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
-                high_expect_df['valid_high'] = high_expect_df['valid_high_play'] & (high_expect_df['is_high_setting'] == 1)
+            act_b = pd.to_numeric(merged['BIG'], errors='coerce').fillna(0)
+            act_r = pd.to_numeric(merged['REG'], errors='coerce').fillna(0)
+            act_g = pd.to_numeric(merged['累計ゲーム'], errors='coerce').fillna(0)
+            act_diff = pd.to_numeric(merged['差枚'], errors='coerce').fillna(0)
+            
+            spec_reg_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+            spec_tot_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+            spec_reg3_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+            spec_reg1_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
+            
+            reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
+            tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
+            
+            exp_r1 = act_g * (1.0 / spec_reg1_val)
+            std_r1 = np.sqrt(act_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
+            z_score = np.where(std_r1 > 0, (act_r - exp_r1) / std_r1, 0)
+            
+            merged['valid_high_play'] = (act_g >= 3000)
+            merged['is_high_setting'] = ((((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val) & (reg_prob_den > 0) & (reg_prob_den <= spec_reg3_val)) | (z_score >= 1.64))).astype(int)
+            
+            merged['valid_play'] = get_valid_play_mask(act_g, act_diff)
+            merged['valid_win'] = merged['valid_play'] & (act_diff > 0)
+            merged['valid_high'] = merged['valid_high_play'] & (merged['is_high_setting'] == 1)
 
-                acc_stats = high_expect_df.groupby(shop_col).agg(
-                    正答数=('valid_high', 'sum'), 高設定有効数=('valid_high_play', 'sum'), 有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), サンプル数=('台番号', 'count')
+            c_high_expect_df = merged[merged['c_daily_rank'] <= merged['top_k_threshold']].copy()
+            s_high_expect_df = merged[merged['s_daily_rank'] <= merged['top_k_threshold']].copy()
+            
+            if not c_high_expect_df.empty:
+                c_acc_stats = c_high_expect_df.groupby(shop_col).agg(
+                    c_正答数=('valid_high', 'sum'), c_高設定有効数=('valid_high_play', 'sum'), c_有効稼働数=('valid_play', 'sum'), c_勝数=('valid_win', 'sum')
                 ).reset_index()
-                acc_stats['勝率'] = np.where(acc_stats['有効稼働数'] > 0, acc_stats['勝数'] / acc_stats['有効稼働数'], 0.0)
-                acc_stats['正答率'] = np.where(acc_stats['高設定有効数'] > 0, acc_stats['正答数'] / acc_stats['高設定有効数'], 0.0)
+                c_acc_stats['c_勝率'] = np.where(c_acc_stats['c_有効稼働数'] > 0, c_acc_stats['c_勝数'] / c_acc_stats['c_有効稼働数'], 0.0)
                 
-                ai_accuracy_map = dict(zip(acc_stats[shop_col], acc_stats['正答率']))
-                ai_win_rate_map = dict(zip(acc_stats[shop_col], acc_stats['勝率']))
-                for _, r in acc_stats.iterrows():
-                    shop = r[shop_col]
-                    ai_acc_str_map[shop] = f"{r['正答率']*100:.1f}% ({int(r['正答数'])}/{int(r['高設定有効数'])}台)"
-                    ai_win_str_map[shop] = f"{r['勝率']*100:.1f}% ({int(r['勝数'])}/{int(r['有効稼働数'])}台)"
+                c_ai_win_rate_map = dict(zip(c_acc_stats[shop_col], c_acc_stats['c_勝率']))
+                c_ai_win_str_map = {}
+                for _, r in c_acc_stats.iterrows():
+                    c_ai_win_str_map[r[shop_col]] = f"{r['c_勝率']*100:.1f}% ({int(r['c_勝数'])}/{int(r['c_有効稼働数'])}台)"
+            else:
+                c_ai_win_rate_map = {}
+                c_ai_win_str_map = {}
+
+            if not s_high_expect_df.empty:
+                s_acc_stats = s_high_expect_df.groupby(shop_col).agg(
+                    s_正答数=('valid_high', 'sum'), s_高設定有効数=('valid_high_play', 'sum'), s_有効稼働数=('valid_play', 'sum'), s_勝数=('valid_win', 'sum')
+                ).reset_index()
+                s_acc_stats['s_勝率'] = np.where(s_acc_stats['s_有効稼働数'] > 0, s_acc_stats['s_勝数'] / s_acc_stats['s_有効稼働数'], 0.0)
+                
+                s_ai_win_rate_map = dict(zip(s_acc_stats[shop_col], s_acc_stats['s_勝率']))
+                s_ai_win_str_map = {}
+                for _, r in s_acc_stats.iterrows():
+                    s_ai_win_str_map[r[shop_col]] = f"{r['s_勝率']*100:.1f}% ({int(r['s_勝数'])}/{int(r['s_有効稼働数'])}台)"
+            else:
+                s_ai_win_rate_map = {}
+                s_ai_win_str_map = {}
         
-    shop_stats['AI正答率_数値'] = shop_stats[shop_col].map(ai_accuracy_map).fillna(0.0) * 100
-    shop_stats['AI推奨台勝率_数値'] = shop_stats[shop_col].map(ai_win_rate_map).fillna(0.0) * 100
-    shop_stats['AI正答率'] = shop_stats[shop_col].map(ai_acc_str_map).fillna("- (0/0台)")
-    shop_stats['AI推奨台勝率'] = shop_stats[shop_col].map(ai_win_str_map).fillna("- (0/0台)")
+    shop_stats['変更勝率_数値'] = shop_stats[shop_col].map(c_ai_win_rate_map).fillna(0.0) * 100
+    shop_stats['据え置き勝率_数値'] = shop_stats[shop_col].map(s_ai_win_rate_map).fillna(0.0) * 100
+    shop_stats['変更勝率'] = shop_stats[shop_col].map(c_ai_win_str_map).fillna("- (0/0台)")
+    shop_stats['据え置き勝率'] = shop_stats[shop_col].map(s_ai_win_str_map).fillna("- (0/0台)")
     
     def calc_sort_score(row):
         score = row['平均スコア']
-        sample_count = int(str(row.get('AI正答率', '')).split('/')[1].split('台)')[0]) if '/' in str(row.get('AI正答率', '')) else 0
-        if sample_count >= 5:
-            if row['AI正答率_数値'] > 0:
-                if row['AI正答率_数値'] < 30: score -= 0.15
-                elif row['AI正答率_数値'] < 40: score -= 0.05
-            if row['AI推奨台勝率_数値'] > 0:
-                if row['AI推奨台勝率_数値'] < 30: score -= 0.15
-                elif row['AI推奨台勝率_数値'] < 40: score -= 0.05
+        sample_count_c = int(str(row.get('変更勝率', '')).split('/')[1].split('台)')[0]) if '/' in str(row.get('変更勝率', '')) else 0
+        sample_count_s = int(str(row.get('据え置き勝率', '')).split('/')[1].split('台)')[0]) if '/' in str(row.get('据え置き勝率', '')) else 0
+        
+        if sample_count_c >= 5 and row['変更勝率_数値'] > 0:
+            if row['変更勝率_数値'] < 30: score -= 0.15
+            elif row['変更勝率_数値'] < 40: score -= 0.05
+        if sample_count_s >= 5 and row['据え置き勝率_数値'] > 0:
+            if row['据え置き勝率_数値'] < 30: score -= 0.15
+            elif row['据え置き勝率_数値'] < 40: score -= 0.05
+            
         return score
 
     shop_stats['ソート用スコア'] = shop_stats.apply(calc_sort_score, axis=1)

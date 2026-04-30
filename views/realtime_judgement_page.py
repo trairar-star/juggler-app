@@ -98,13 +98,16 @@ def render_realtime_judgement_page(df_pred_log):
                 
                 if sel_shop and sel_mac:
                     target_row = df_today[(df_today[shop_col] == sel_shop) & (df_today['台番号'].astype(str) == str(sel_mac))].iloc[0]
-                    prior_high_prob = float(target_row.get('prediction_score', 0.5))
+                    c_prob = float(target_row.get('prediction_score', 0.0))
+                    s_prob = float(target_row.get('sueoki_score', 0.0))
+                    prior_high_prob = max(c_prob, s_prob)
+                    if prior_high_prob == 0: prior_high_prob = 0.5
                     mac_name = target_row.get('機種名', '')
                     matched = backend.get_matched_spec_key(mac_name, specs)
                     selected_machine = matched if matched else machine_list[0]
                     reason = target_row.get('根拠', '')
                         
-                    st.success(f"✅ AI事前期待度 **{prior_high_prob*100:.1f}%** をセットしました！ ({selected_machine})")
+                    st.success(f"✅ AI事前期待度 **{prior_high_prob*100:.1f}%** (変更:{c_prob*100:.1f}% / 据え置き:{s_prob*100:.1f}%) をセットしました！ ({selected_machine})")
                     if reason and reason != '-':
                         st.info(f"💡 **AI推奨根拠 (店癖など)**: {reason}")
                 else:

@@ -201,13 +201,35 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
         # --- アプリ内のデータをGemini用に文字列化して準備 ---
         context_data = ""
         
+        # --- 選択中の台の情報をコンテキストに追加 ---
+        if st.session_state.get('rt_sel_shop') and st.session_state.get('rt_sel_mac') and not df_predict.empty:
+            sel_s = st.session_state.rt_sel_shop
+            sel_m = st.session_state.rt_sel_mac
+            t_rows = df_predict[(df_predict[shop_col] == sel_s) & (df_predict['台番号'].astype(str) == str(sel_m))]
+            if not t_rows.empty:
+                t_r = t_rows.iloc[0]
+                c_prob = float(t_r.get('prediction_score', 0.0))
+                s_prob = float(t_r.get('sueoki_score', 0.0))
+                context_data += f"\n【現在選択中の台（{sel_s} #{sel_m}）のAI事前評価】\n・変更(上げ)期待度: {c_prob*100:.1f}%\n・据え置き期待度: {s_prob*100:.1f}%\n"
+                
         # --- カンニングなしテストを実行し、店舗の「スイートスポット」をAIに教える ---
         backtest_summary = ""
         if selected_shop != "店舗を選択してください" and not df_verify.empty:
             try:
                 shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
                 if len(shop_df) >= 50:
+                    from shop_trends import diagnose_allocation_types
+                    from config import MACHINE_SPECS
+                    alloc_types = diagnose_allocation_types(shop_df, shop_col, MACHINE_SPECS)
+                    is_point = alloc_types.get(selected_shop, {}).get("is_point", False)
+                    
                     actual_features = [f for f in BASE_FEATURES if f in shop_df.columns]
+                    if is_point:
+                        ignore_features = [
+                            'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+                            'past_island_reg_prob', 'is_main_island', 'is_wall_island'
+                        ]
+                        actual_features = [f for f in actual_features if f not in ignore_features]
                     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
                     
                     shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
@@ -217,36 +239,100 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                     test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
 
                     if len(train_data) >= 30 and len(test_data) >= 10:
-                        X_train, y_train = train_data[actual_features], train_data['target']
-                        X_test, y_test = test_data[actual_features], test_data['target']
                         
-                        days_diff = (train_data['対象日付'].max() - train_data['対象日付']).dt.days
-                        sample_weights = 0.995 ** days_diff
+                        keep_allowed_features = [
+                            '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
+                            'prev_bonus_balance', 'prev_unlucky_gap',
+                            'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
+                            'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
+                            'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
+                            'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
+                            '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days'
+                        ]
+                        keep_features = [f for f in actual_features if f in keep_allowed_features]
+                        change_features = actual_features.copy()
                         
-                        params = shop_hyperparams.get(selected_shop, shop_hyperparams.get("デフォルト", {}))
+                        test_data_processed = test_data.copy()
+                        test_data_processed['prediction_score'] = np.nan
+                        test_data_processed['sueoki_score'] = np.nan
+                        test_data_processed['予測差枚数'] = np.nan
+                        train_data_processed = train_data.copy()
+                        train_data_processed['prediction_score'] = np.nan
+                        train_data_processed['sueoki_score'] = np.nan
+                        train_data_processed['予測差枚数'] = np.nan
                         
-                        reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                        reg_model.fit(X_train, train_data['next_diff'], sample_weight=sample_weights, categorical_feature=cat_features)
+                        default_hp = shop_hyperparams.get("デフォルト", {})
+                        shop_hp = shop_hyperparams.get(selected_shop, default_hp)
                         
-                        X_train_st = X_train.copy(); X_train_st['predicted_diff'] = reg_model.predict(X_train)
-                        model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                        model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=cat_features)
-                        
-                        X_test_st = X_test.copy(); X_test_st['predicted_diff'] = reg_model.predict(X_test)
-                        preds = model.predict_proba(X_test_st)[:, 1]
-                        
-                        test_data_for_post = test_data.copy()
-                        test_data_for_post['prediction_score'] = preds
-                        if 'predicted_diff' in X_test_st.columns:
-                            test_data_for_post['予測差枚数'] = X_test_st['predicted_diff']
+                        for mode in ['change', 'keep']:
+                            target_val = 0 if mode == 'change' else 1
+                            target_col = 'prediction_score' if mode == 'change' else 'sueoki_score'
                             
-                        train_data_for_post = train_data.copy()
-                        train_data_for_post['prediction_score'] = model.predict_proba(X_train_st)[:, 1]
-                        if 'predicted_diff' in X_train_st.columns:
-                            train_data_for_post['予測差枚数'] = X_train_st['predicted_diff']
+                            train_mode_mask = train_data['is_prev_high_reg'] == target_val
+                            test_mode_mask = test_data['is_prev_high_reg'] == target_val
+                            
+                            mode_train = train_data[train_mode_mask].copy()
+                            mode_test = test_data[test_mode_mask].copy()
+                            
+                            if len(mode_train) < 30 or len(mode_test) == 0:
+                                continue
+                                
+                            current_features = change_features if mode == 'change' else keep_features
+                            current_cat_features = [f for f in cat_features if f in current_features]
+                            
+                            X_train, y_train = mode_train[current_features], mode_train['target']
+                            X_test, y_test = mode_test[current_features], mode_test['target']
+                            
+                            days_diff = (mode_train['対象日付'].max() - mode_train['対象日付']).dt.days
+                            sample_weights = 0.995 ** days_diff
+                            
+                            p_prefix = "" if mode == 'change' else "k_"
+                            params = {
+                                'n_estimators': shop_hp.get(f'{p_prefix}n_estimators', shop_hp.get('n_estimators', 300)),
+                                'learning_rate': shop_hp.get(f'{p_prefix}learning_rate', shop_hp.get('learning_rate', 0.03)),
+                                'num_leaves': shop_hp.get(f'{p_prefix}num_leaves', shop_hp.get('num_leaves', 15)),
+                                'max_depth': shop_hp.get(f'{p_prefix}max_depth', shop_hp.get('max_depth', 4)),
+                                'min_child_samples': shop_hp.get(f'{p_prefix}min_child_samples', shop_hp.get('min_child_samples', 50)),
+                                'reg_alpha': shop_hp.get(f'{p_prefix}reg_alpha', shop_hp.get('reg_alpha', 0.0)),
+                                'reg_lambda': shop_hp.get(f'{p_prefix}reg_lambda', shop_hp.get('reg_lambda', 0.0))
+                            }
+                            
+                            reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                            reg_model.fit(X_train, mode_train['next_diff'], sample_weight=sample_weights, categorical_feature=current_cat_features)
+                            
+                            X_train_st = X_train.copy(); X_train_st['predicted_diff'] = reg_model.predict(X_train)
+                            model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                            model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=current_cat_features)
+                            
+                            X_test_st = X_test.copy(); X_test_st['predicted_diff'] = reg_model.predict(X_test)
+                            preds = model.predict_proba(X_test_st)[:, 1]
+                            
+                            test_data_processed.loc[mode_test.index, target_col] = preds
+                            test_data_processed.loc[mode_test.index, '予測差枚数'] = X_test_st['predicted_diff'].values
+                            
+                            train_data_processed.loc[mode_train.index, target_col] = model.predict_proba(X_train_st)[:, 1]
+                            train_data_processed.loc[mode_train.index, '予測差枚数'] = X_train_st['predicted_diff'].values
                         
-                        test_data_processed, _ = postprocess_predictions(test_data_for_post, train_data_for_post)
-                        test_data['pred_score'] = test_data_processed['prediction_score'].values
+                        test_data_processed['prediction_score'] = test_data_processed['prediction_score'].fillna(0.0)
+                        test_data_processed['sueoki_score'] = test_data_processed['sueoki_score'].fillna(0.0)
+                        test_data_processed['予測差枚数'] = test_data_processed['予測差枚数'].fillna(0)
+                        train_data_processed['prediction_score'] = train_data_processed['prediction_score'].fillna(0.0)
+                        train_data_processed['sueoki_score'] = train_data_processed['sueoki_score'].fillna(0.0)
+                        train_data_processed['予測差枚数'] = train_data_processed['予測差枚数'].fillna(0)
+                        
+                        test_data_processed, _ = postprocess_predictions(test_data_processed, train_data_processed)
+                        
+                        # 据え置き前提NOの日をリセット (AIチャット用)
+                        sueoki_no_dates = set()
+                        for d in test_data_processed['対象日付'].dt.date.unique():
+                            tgt_date = pd.to_datetime(d) + pd.Timedelta(days=1)
+                            premise, _ = backend.evaluate_sueoki_premise(df_raw[df_raw[shop_col] == selected_shop], tgt_date, df_events)
+                            if premise == "NO":
+                                sueoki_no_dates.add(pd.to_datetime(d))
+                        for d in sueoki_no_dates:
+                            test_data_processed.loc[test_data_processed['対象日付'] == d, 'sueoki_score'] = 0.0
+
+                        test_data['pred_score'] = test_data_processed[['prediction_score', 'sueoki_score']].max(axis=1).values
 
                         test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
                         test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
@@ -331,6 +417,19 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             if rank_strs:
                                 context_data += f"  (イベントランク別実績: {', '.join(rank_strs)})\n"
             
+            # --- 1.1. 店アクティビティ指数の追加 ---
+            if not df_raw.empty:
+                shop_raw_act = df_raw[df_raw[shop_col] == selected_shop].copy()
+                if '対象日付' in shop_raw_act.columns and '累計ゲーム' in shop_raw_act.columns and '差枚' in shop_raw_act.columns:
+                    recent_kado_df = shop_raw_act[shop_raw_act['対象日付'] >= (pd.to_datetime(target_date_val) - pd.Timedelta(days=14))]
+                    if not recent_kado_df.empty:
+                        avg_g = recent_kado_df['累計ゲーム'].mean()
+                        win_rate = (recent_kado_df['差枚'] > 0).mean()
+                        if avg_g < 2000 and win_rate < 0.30:
+                            context_data += "\n【店アクティビティ指数】\n極めて低いです（無気力営業）。稼働が少なく出玉のメリハリもないため、設定判別すら困難な「見えない回収状態」に陥っています。\n"
+                        elif avg_g >= 4000 and win_rate >= 0.40:
+                            context_data += "\n【店アクティビティ指数】\n高いです。活気があり、店側のアピールが客層に伝わっている状態です。\n"
+
             # --- 1.8. 日替わり特定パターンの投入頻度（末尾・機種・並び・角台） ---
             if not df_raw.empty and shop_col in df_raw.columns:
                 shop_raw_pat = df_raw[df_raw[shop_col] == selected_shop].copy()
@@ -505,6 +604,25 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             for _, row in target_stats.iterrows():
                                 context_data += f"・{row['対象ステータス']}: 平均 {int(row['差枚']):+d} 枚 (サンプル {row['サンプル数']}件)\n"
 
+            # --- 1.95. 店舗の「配分型」完全マップ診断 ---
+            if not df_verify.empty:
+                from shop_trends import diagnose_allocation_types
+                specs = backend.get_machine_specs()
+                alloc_types = diagnose_allocation_types(df_verify, shop_col, specs)
+                shop_alloc = alloc_types.get(selected_shop, {})
+                if shop_alloc.get("messages"):
+                    context_data += f"\n【{selected_shop} の「配分型」完全マップ診断 (AIによる店舗の配分思想の結論)】\n"
+                    context_data += "※この店舗の配分思想（店長のクセ）の根本的な結論です。この前提に沿ってアドバイスしてください。\n"
+                    for msg in shop_alloc["messages"]:
+                        context_data += f"・{msg}\n"
+
+            # --- 1.96. 据え置き前提判定 ---
+            if not df_raw.empty:
+                sue_premise, sue_reason = backend.evaluate_sueoki_premise(df_raw[df_raw[shop_col] == selected_shop], target_date_val, df_events)
+                context_data += f"\n【{selected_shop} の {target_date_str} の据え置き前提判定 (今日は据え置きを期待していい日か？)】\n"
+                context_data += f"判定: {sue_premise}\n理由: {sue_reason}\n"
+                context_data += "※判定が「NO」の場合は、「今日は据え置きを狙う日ではない」と断言し、据え置きスコア(sueoki_score)が高くても推奨しないでください。\n"
+
             # --- 2. AIが分析した店舗の店癖（設定投入傾向） ---
             if df_importance is not None and not df_importance.empty:
                 imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
@@ -564,7 +682,13 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 
             # --- 4. 明日の予測データ (全台) ---
             if not df_predict.empty:
-                shop_pred = df_predict[df_predict[shop_col] == selected_shop].sort_values('prediction_score', ascending=False)
+                temp_pred = df_predict.copy()
+                if 'sueoki_score' in temp_pred.columns:
+                    temp_pred['max_score'] = temp_pred[['prediction_score', 'sueoki_score']].max(axis=1)
+                else:
+                    temp_pred['max_score'] = temp_pred['prediction_score']
+                    
+                shop_pred = temp_pred[temp_pred[shop_col] == selected_shop].sort_values('max_score', ascending=False)
                 if not shop_pred.empty:
                     # スプレッドシートから正確な店舗全体の平均期待度を取得
                     df_daily_scores = backend.load_daily_shop_scores()
@@ -577,7 +701,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             temp_scores['予測対象日_str'] = pd.to_datetime(temp_scores['予測対象日'], errors='coerce').dt.strftime('%Y-%m-%d')
                             shop_daily = temp_scores[(temp_scores['店名'] == selected_shop) & (temp_scores['予測対象日_str'] == target_dt_str)]
                             if not shop_daily.empty and '予測平均差枚' in shop_daily.columns:
-                                avg_pred_diff = shop_daily['予測平均差枚'].dropna().iloc[-1]
+                                avg_pred_diff = shop_daily['予測平均差枚'].dropna().iloc[-1] if len(shop_daily['予測平均差枚'].dropna()) > 0 else np.nan
                                 if '店舗台数' in shop_daily.columns and pd.notna(shop_daily['店舗台数'].iloc[-1]):
                                     shop_machine_count = shop_daily['店舗台数'].dropna().iloc[-1]
                         except Exception: pass
@@ -593,12 +717,14 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         context_data += "AI店舗評価: 不明\n"
 
                     context_data += f"\n【{selected_shop} の {target_date_str} の予測データ (期待度上位30台)】\n"
-                    cols = ['台番号', '機種名', 'prediction_score', '根拠']
+                    cols = ['台番号', '機種名', 'prediction_score', 'sueoki_score', '根拠']
                     available_cols = [c for c in cols if c in shop_pred.columns]
                     
                     display_df = shop_pred[available_cols].head(30).copy()
                     if 'prediction_score' in display_df.columns:
                         display_df['prediction_score'] = display_df['prediction_score'].apply(lambda x: f"{int(x*100)}%")
+                    if 'sueoki_score' in display_df.columns:
+                        display_df['sueoki_score'] = display_df['sueoki_score'].apply(lambda x: f"{int(x*100)}%")
                     
                     context_data += display_df.to_markdown(index=False) + "\n"
 
@@ -607,7 +733,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         island_pred = shop_pred[shop_pred['island_id'] != "Unknown"].copy()
                         if not island_pred.empty:
                             island_pred['島名'] = island_pred['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
-                            isl_stats = island_pred.groupby('島名')['prediction_score'].mean().sort_values(ascending=False)
+                            isl_stats = island_pred.groupby('島名')['max_score'].mean().sort_values(ascending=False)
                             context_data += f"\n【{selected_shop} の {target_date_str} の島(列)別 平均期待度 (どの島が熱いか)】\n"
                             for i_name, i_score in isl_stats.items():
                                 eval_str = "還元島" if i_score >= 0.20 else "通常" if i_score >= 0.10 else "回収島"
@@ -703,124 +829,79 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             cutoff_date = merged_acc['予測対象日_merge'].max() - pd.Timedelta(days=30)
                             merged_acc = merged_acc[merged_acc['予測対象日_merge'] > cutoff_date].copy()
                             merged_acc['prediction_score'] = pd.to_numeric(merged_acc['prediction_score'], errors='coerce')
+                            if 'sueoki_score' not in merged_acc.columns:
+                                merged_acc['sueoki_score'] = 0.0
+                            merged_acc['sueoki_score'] = pd.to_numeric(merged_acc['sueoki_score'], errors='coerce')
                             
-                            # 店舗の平均期待度を取得して結合
-                            df_daily_scores = backend.load_daily_shop_scores()
-                            if not df_daily_scores.empty and '予測対象日' in df_daily_scores.columns:
-                                df_daily_scores['予測対象日_merge'] = pd.to_datetime(df_daily_scores['予測対象日'], errors='coerce')
-                                daily_scores_shop = df_daily_scores[df_daily_scores['店名'] == selected_shop].copy()
-                                daily_scores_shop = daily_scores_shop.drop_duplicates(subset=['予測対象日_merge'], keep='last')
-                                merged_acc = pd.merge(merged_acc, daily_scores_shop[['予測対象日_merge', '店舗平均期待度']], on='予測対象日_merge', how='left')
-                            else:
-                                merged_acc['店舗平均期待度'] = np.nan
-                                
-                            def classify_day(score):
-                                if pd.isna(score): return "通常営業"
-                                if score >= 0.20: return "還元日"
-                                elif score < 0.10: return "回収日"
-                                else: return "通常営業"
-                                
-                            merged_acc['営業予測'] = merged_acc['店舗平均期待度'].apply(classify_day)
-                            
-                            # 店舗全体の平均差枚を日別に計算して結合
-                            daily_shop_diff = df_raw_temp.groupby('対象日付')['差枚'].mean().reset_index()
-                            daily_shop_diff = daily_shop_diff.rename(columns={'対象日付': '予測対象日_merge', '差枚': '店舗全体平均差枚'})
-                            merged_acc = pd.merge(merged_acc, daily_shop_diff, on='予測対象日_merge', how='left')
+                            merged_acc['c_daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
+                            merged_acc['s_daily_rank'] = merged_acc.groupby('予測対象日_merge')['sueoki_score'].rank(method='first', ascending=False)
 
-                            day_summary = merged_acc[['予測対象日_merge', '営業予測', '店舗全体平均差枚']].drop_duplicates()
-                            day_stats = day_summary.groupby('営業予測').agg(
-                                発生日数=('予測対象日_merge', 'count'),
-                                店舗平均差枚=('店舗全体平均差枚', 'mean')
-                            ).reset_index()
-                            day_stats_dict = day_stats.set_index('営業予測').to_dict('index')
-                            
-                            merged_acc['daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
                             top_k = max(3, min(10, int(df_raw_temp['台番号'].nunique() * 0.10)))
                             
-                            high_expect_df = merged_acc[merged_acc['daily_rank'] <= top_k].copy()
+                            act_g = pd.to_numeric(merged_acc['累計ゲーム'], errors='coerce').fillna(0)
+                            act_diff = pd.to_numeric(merged_acc['差枚'], errors='coerce').fillna(0)
+                            act_b = pd.to_numeric(merged_acc['BIG'], errors='coerce').fillna(0)
+                            act_r = pd.to_numeric(merged_acc['REG'], errors='coerce').fillna(0)
                             
-                            if not high_expect_df.empty:
-                                act_g = pd.to_numeric(high_expect_df['累計ゲーム'], errors='coerce').fillna(0)
-                                act_diff = pd.to_numeric(high_expect_df['差枚'], errors='coerce').fillna(0)
-                                act_b = pd.to_numeric(high_expect_df['BIG'], errors='coerce').fillna(0)
-                                act_r = pd.to_numeric(high_expect_df['REG'], errors='coerce').fillna(0)
-                                
-                                high_expect_df['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
-                                high_expect_df['valid_win'] = high_expect_df['valid_play'] & (act_diff > 0)
-                                
-                                specs = backend.get_machine_specs()
-                                spec_reg_val = high_expect_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-                                spec_tot_val = high_expect_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                                spec_reg3_val = high_expect_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
-                                spec_reg1_val = high_expect_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
-                                
-                                reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
-                                tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
-                                
-                                exp_r1 = act_g * (1.0 / spec_reg1_val)
-                                std_r1 = np.sqrt(act_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
-                                z_score = np.where(std_r1 > 0, (act_r - exp_r1) / std_r1, 0)
-                                
-                                high_expect_df['valid_high_play'] = (act_g >= 3000)
-                                high_expect_df['is_high_setting'] = ((((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val) & (reg_prob_den > 0) & (reg_prob_den <= spec_reg3_val)) | (z_score >= 1.64))).astype(int)
-                                high_expect_df['valid_high'] = high_expect_df['valid_high_play'] & (high_expect_df['is_high_setting'] == 1)
+                            merged_acc['valid_play'] = (act_g >= 3000) | ((act_g < 3000) & ((act_diff <= -750) | (act_diff >= 750)))
+                            merged_acc['valid_win'] = merged_acc['valid_play'] & (act_diff > 0)
 
-                                valid_count = high_expect_df['valid_play'].sum()
-                                win_count = high_expect_df['valid_win'].sum()
-                                win_rate = (win_count / valid_count * 100) if valid_count > 0 else 0
-                                
-                                context_data += f"\n【{selected_shop} のAI予測実績と還元/回収日の傾向 (直近1ヶ月)】\n"
-                                context_data += f"・全体: 推奨台勝率 {win_rate:.1f}% (有効稼働 {int(valid_count)}台中 {int(win_count)}台)\n"
-                                
-                                for day_type in ["還元日", "通常営業", "回収日"]:
-                                    type_df = high_expect_df[high_expect_df['営業予測'] == day_type]
-                                    t_val = type_df['valid_play'].sum()
-                                    t_win = type_df['valid_win'].sum()
-                                    t_high_val = type_df['valid_high_play'].sum()
-                                    t_high = type_df['valid_high'].sum()
-                                    
-                                    d_stats = day_stats_dict.get(day_type, {})
-                                    d_count = d_stats.get('発生日数', 0)
-                                    d_diff = d_stats.get('店舗平均差枚', np.nan)
-                                    
-                                    if d_count > 0:
-                                        diff_str = f"店舗全体平均 {int(d_diff):+d}枚" if pd.notna(d_diff) else "店舗差枚不明"
-                                        win_str = f"推奨台勝率 {(t_win/t_val*100):.1f}%" if t_val > 0 else "推奨台勝率 -%"
-                                        high_str = f"推奨台高設定率 {(t_high/t_high_val*100):.1f}%" if t_high_val > 0 else "推奨台高設定率 -%"
-                                        
-                                        context_data += f"・{day_type}予測 ({int(d_count)}日発生): {diff_str} / {win_str}, {high_str}\n"
-                                
-                                if valid_count < 30:
-                                    context_data += "AI自己評価: まだ直近1ヶ月の検証台数（有効稼働）が少なく、たまたまのヒキでブレている可能性が高い状態です。設定は変更せずにもう少し様子を見てください。\n"
-                                else:
-                                    hot_df = high_expect_df[high_expect_df['営業予測'] == '還元日']
-                                    hot_val = hot_df['valid_play'].sum()
-                                    hot_win = hot_df['valid_win'].sum()
-                                    hot_rate = (hot_win / hot_val * 100) if hot_val > 0 else win_rate
-                                    
-                                    if hot_rate >= 50:
-                                        context_data += "AI自己評価: 還元日の勝率は良好で、AIは店の傾向を正しく読めています。回収日のフェイクに騙されて全体勝率が下がっているだけなので、還元日のみに絞って稼働すれば勝てます！設定の変更は不要です。\n"
-                                    elif win_rate >= 50:
-                                        context_data += "AI自己評価: 予測が店舗の傾向とよく噛み合っており、非常に信頼できる状態です。\n"
-                                    elif win_rate >= 35:
-                                        context_data += "AI自己評価: 予測は標準的な精度です。店癖などの他要素も加味して狙い台を絞るのがおすすめです。\n"
-                                    else:
-                                        context_data += "AI自己評価: 還元日でも勝率が低迷しており、予測がフェイク設定等に騙されています。学習期間を短くするなど設定のチューニングをおすすめします。\n"
+                            specs = backend.get_machine_specs()
+                            spec_reg_val = merged_acc['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
+                            spec_tot_val = merged_acc['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
+                            spec_reg3_val = merged_acc['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
+                            spec_reg1_val = merged_acc['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
+                            
+                            reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
+                            tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
+                            
+                            exp_r1 = act_g * (1.0 / spec_reg1_val)
+                            std_r1 = np.sqrt(act_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
+                            z_score = np.where(std_r1 > 0, (act_r - exp_r1) / std_r1, 0)
+                            
+                            merged_acc['valid_high_play'] = (act_g >= 3000)
+                            merged_acc['is_high_setting'] = ((((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val) & (reg_prob_den > 0) & (reg_prob_den <= spec_reg3_val)) | (z_score >= 1.64))).astype(int)
+                            merged_acc['valid_high'] = merged_acc['valid_high_play'] & (merged_acc['is_high_setting'] == 1)
+
+                            c_df = merged_acc[merged_acc['c_daily_rank'] <= top_k].copy()
+                            s_df = merged_acc[merged_acc['s_daily_rank'] <= top_k].copy()
+
+                            c_valid = c_df['valid_play'].sum()
+                            c_win = c_df['valid_win'].sum()
+                            c_rate = (c_win / c_valid * 100) if c_valid > 0 else 0
+
+                            s_valid = s_df['valid_play'].sum()
+                            s_win = s_df['valid_win'].sum()
+                            s_rate = (s_win / s_valid * 100) if s_valid > 0 else 0
+
+                            context_data += f"\n【{selected_shop} のAI予測実績と還元/回収日の傾向 (直近1ヶ月)】\n"
+                            context_data += f"・変更(上げ)予測: 推奨台勝率 {c_rate:.1f}% (有効稼働 {int(c_valid)}台中 {int(c_win)}台)\n"
+                            context_data += f"・据え置き予測: 推奨台勝率 {s_rate:.1f}% (有効稼働 {int(s_valid)}台中 {int(s_win)}台)\n"
+                            
+                            if c_valid + s_valid < 30:
+                                context_data += "AI自己評価: まだ直近1ヶ月の検証台数（有効稼働）が少なく、たまたまのヒキでブレている可能性が高い状態です。\n"
+                            elif c_rate >= 50 or s_rate >= 50:
+                                context_data += "AI自己評価: 予測が店舗の傾向とよく噛み合っており、非常に信頼できる状態です。\n"
+                            elif c_rate >= 35 or s_rate >= 35:
+                                context_data += "AI自己評価: 予測は標準的な精度です。店癖などの他要素も加味して狙い台を絞るのがおすすめです。\n"
+                            else:
+                                context_data += "AI自己評価: 全体的に勝率が低迷しており、予測がフェイク設定等に騙されています。チューニングをおすすめします。\n"
                                         
                             # --- 5.5. AIの弱点分析（期待外れ台と逃したお宝台） ---
-                            bad_pred = merged_acc[(merged_acc['prediction_score'] >= 0.65) & (merged_acc['差枚'] <= -1000)].copy()
-                            missed_pred = merged_acc[(merged_acc['prediction_score'] < 0.20) & (merged_acc['差枚'] >= 2000)].copy()
+                            merged_acc['max_score'] = merged_acc[['prediction_score', 'sueoki_score']].max(axis=1)
+                            bad_pred = merged_acc[(merged_acc['max_score'] >= 0.65) & (merged_acc['差枚'] <= -1000)].copy()
+                            missed_pred = merged_acc[(merged_acc['max_score'] < 0.20) & (merged_acc['差枚'] >= 2000)].copy()
 
                             if not bad_pred.empty or not missed_pred.empty:
                                 context_data += f"\n【{selected_shop} のAI予測エラー分析 (直近1ヶ月)】\n"
                                 if not bad_pred.empty:
                                     context_data += "・期待外れ台 (高評価だったが大負けした台):\n"
                                     for _, r in bad_pred.sort_values('差枚').head(5).iterrows():
-                                        context_data += f"  - {r['予測対象日_merge'].strftime('%m/%d')} {r['機種名']} (台番号:{r['台番号']}) 期待度:{r['prediction_score']*100:.0f}% -> 結果:{int(r['差枚'])}枚 (総回転:{int(r['累計ゲーム'])}G BIG:{int(r['BIG'])} REG:{int(r['REG'])})\n"
+                                        context_data += f"  - {r['予測対象日_merge'].strftime('%m/%d')} {r['機種名']} (台番号:{r['台番号']}) 期待度:{r['max_score']*100:.0f}% -> 結果:{int(r['差枚'])}枚 (総回転:{int(r['累計ゲーム'])}G BIG:{int(r['BIG'])} REG:{int(r['REG'])})\n"
                                 if not missed_pred.empty:
                                     context_data += "・逃したお宝台 (低評価だったが大勝ちした台):\n"
                                     for _, r in missed_pred.sort_values('差枚', ascending=False).head(5).iterrows():
-                                        context_data += f"  - {r['予測対象日_merge'].strftime('%m/%d')} {r['機種名']} (台番号:{r['台番号']}) 期待度:{r['prediction_score']*100:.0f}% -> 結果:{int(r['差枚'])}枚 (総回転:{int(r['累計ゲーム'])}G BIG:{int(r['BIG'])} REG:{int(r['REG'])})\n"
+                                        context_data += f"  - {r['予測対象日_merge'].strftime('%m/%d')} {r['機種名']} (台番号:{r['台番号']}) 期待度:{r['max_score']*100:.0f}% -> 結果:{int(r['差枚'])}枚 (総回転:{int(r['累計ゲーム'])}G BIG:{int(r['BIG'])} REG:{int(r['REG'])})\n"
                 except Exception:
                     pass
 
@@ -837,8 +918,14 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
             # 店舗未選択時（全体的な相談・店舗選び）
             context_data += "\n【本日の各店舗の予測サマリー (店舗選びの参考にしてください)】\n"
             if not df_predict.empty and shop_col in df_predict.columns and '予測差枚数' in df_predict.columns and 'prediction_score' in df_predict.columns:
-                shop_summary = df_predict.groupby(shop_col).agg(
-                    平均期待度=('prediction_score', 'mean'),
+                temp_df_predict = df_predict.copy()
+                if 'sueoki_score' in temp_df_predict.columns:
+                    temp_df_predict['max_score'] = temp_df_predict[['prediction_score', 'sueoki_score']].max(axis=1)
+                else:
+                    temp_df_predict['max_score'] = temp_df_predict['prediction_score']
+                    
+                shop_summary = temp_df_predict.groupby(shop_col).agg(
+                    平均期待度=('max_score', 'mean'),
                     予測差枚数=('予測差枚数', 'mean')
                 ).reset_index()
                 
@@ -892,15 +979,23 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         context_data += f"・{shop}: {wd_text} / {digit_text}\n"
                 
                 # --- 全店舗の中から期待度上位の台（おすすめ台）を追加 ---
-                top_all = df_predict.sort_values('prediction_score', ascending=False).head(10)
+                temp_pred_all = df_predict.copy()
+                if 'sueoki_score' in temp_pred_all.columns:
+                    temp_pred_all['max_score'] = temp_pred_all[['prediction_score', 'sueoki_score']].max(axis=1)
+                else:
+                    temp_pred_all['max_score'] = temp_pred_all['prediction_score']
+                    
+                top_all = temp_pred_all.sort_values('max_score', ascending=False).head(10)
                 if not top_all.empty:
                     context_data += f"\n【全店舗の激アツ・おすすめ台 (期待度上位10台)】\n"
-                    cols = [shop_col, '台番号', '機種名', 'prediction_score', '根拠']
+                    cols = [shop_col, '台番号', '機種名', 'prediction_score', 'sueoki_score', '根拠']
                     available_cols = [c for c in cols if c in top_all.columns]
                     
                     display_df_all = top_all[available_cols].copy()
                     if 'prediction_score' in display_df_all.columns:
                         display_df_all['prediction_score'] = display_df_all['prediction_score'].apply(lambda x: f"{int(x*100)}%")
+                    if 'sueoki_score' in display_df_all.columns:
+                        display_df_all['sueoki_score'] = display_df_all['sueoki_score'].apply(lambda x: f"{int(x*100)}%")
                     
                     context_data += display_df_all.to_markdown(index=False) + "\n"
             else:
@@ -1051,6 +1146,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 4. 【具体的なアドバイス】: 状況に応じて、ヤメ時の目安や撤退基準、狙い目の台番号や機種などを具体的に提案してください。
 
 <分析・評価の重要ルール>
+- [「打たない」選択肢の明示]: 提示されたAI期待度の最高値が低い（例: 25%未満など絶対基準を満たさない）場合や、提供された【店アクティビティ指数】が極めて低く「無気力営業」と判断される場合は、相対比較で無理にマシな台を勧めるのではなく、「今日は打つべき絶対基準を満たす台がありません。『見送り（予測せず打たずに帰る）』が最も期待値の高い選択です」とキッパリ断言してください。負けを回避することも最良の立ち回りです。
+- [据え置き前提の遵守]: 提供された【据え置き前提判定】が「NO」の場合は、AIの据え置き期待度(sueoki_score)が高くても無視し、「本日は設定変更（リセット）が主役の日なので、据え置きは狙えません」とキッパリ切り捨ててください。
+- [配分型の前提]: 提供されている「配分型」完全マップ診断の結論（誤認誘導型、島型など）を最優先の前提として立ち回りをアドバイスしてください。「誤認誘導型」と診断されている場合は、REG確率が良いだけの台は危険であると強く警告し、差枚が伴っている本物の高設定だけを狙うよう促してください。「島型」なら周りの状況を、「単体型」なら周りを気にせず一点突破を推奨するなど、店舗の配分思想に沿った具体的なアドバイスを行ってください。
 - [イベント評価]: 「パチンコ専用」や「他機種」イベント時、システムは一旦「シワ寄せ回収リスク」としてマイナスのイベントスコアを与えます。しかし最終的な予測期待度は、そのスコアを踏まえて「過去その店舗が実際にどういう営業をしたか」をAIが学習して算出しています。アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
 - [シワ寄せの判断]: お客様が「他機種イベントの日の状況はどう？」と質問された場合、提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
@@ -1059,7 +1157,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 - [回収日の立ち回り]: お客様から「回収日に甘い機種」や「回収日でも打てる台」について質問された場合、提供されている「回収日に甘い機種ランキング」のデータを参照してください。平均差枚がプラスの機種や、高設定率・REG確率が比較的良い機種を「回収日でもワンチャンスある機種」として提案してください。
 - [店舗選び]: 店舗を指定されない相談では、各店舗の「予測差枚数」「AI期待度」「本日の属性（曜日/特定日）の過去実績」を比較し、最も期待値の高い店舗を理由とともに提案してください。全店舗がマイナスの場合は「休むのが無難」とアドバイスしつつも、「どうしても打ちたい場合は、期待度が30%を超えている〇〇店のこの台であればワンチャンスあります」のように提案してください。もし店舗が指定されていない状態で「個別の台のランキングやおすすめ台」を聞かれた場合は、「上のプルダウンから店舗を選択していただければ、詳細なランキングをご案内できますよ」と優しく促してください。
 - [スケジュール提案]: 「今後の予定」などを聞かれた場合、提供されている「向こう3日間のスケジュール検討用データ」を活用し、イベントや過去の実績（曜日・特定日）から各日のおすすめ店舗をピックアップして立ち回りスケジュールを提案してください。
-- [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
+- [個別台の相談]: 特定の「台番号」について相談された場合、提供されている予測データから事前期待度と根拠を確認し、上位であれば「個別データ(直近3日間の履歴)」も交えて推奨し、低評価なら撤退を促してください。また、期待度は「変更(上げ)期待度: prediction_score」と「据え置き期待度: sueoki_score」の2種類が提供されています。どちらのスコアが高いかを見て、「AIは変更（上げ）を狙っている」のか「据え置きを狙っている」のかを具体的にアドバイスしてください。稼働中のデータ（回転数、ボーナス回数など）を提示された場合は、提供されている「主要機種の設定5目安」を基準にして現在の確率を計算し、押し引きのアドバイスを行ってください。
 - [やめ時・撤退判断]: お客様から稼働中の台について「やめどきか」「捨てるべきか」相談された場合、以下の基準で厳しくジャッジしてください。1) 事前のAI期待度が低い場合や、総回転数が2000G以上でREG確率が設定4の目安（概ね1/300〜1/350以下）より大幅に悪い場合は「即撤退」を強く推奨してください。2) 回転数が1000G未満と少ない場合は「まだ確率が暴れる時期なので、もう少し様子を見るか、周りの台（並びや塊）の状況を見て判断」とアドバイスしてください。3) ピークから1000枚以上飲まれている場合は、合算確率が良くても「メダルがあるうちの利確・撤退」を視野に入れるよう提案してください。
 - [予測エラー分析]: お客様から「なぜこの台を外したのか」「逃したお宝台の原因は？」などと質問された場合、提供されている「AI予測エラー分析」のデータに基づき、結果のデータ（総回転数やボーナス確率から低設定の誤爆か本物の高設定か等）を推測し、論理的に回答してください。
 - [条件検索の対応]: お客様から「過去〇日でREG確率が〇〇以上で差枚が〇〇以下の台はある？」などのように、特定の条件で台を探すよう依頼された場合は、提供されている【全台の直近3日間の個別データ (条件検索・抽出用)】から該当する台を漏れなく探し出し、台番号・機種名・実際の日々のデータ（回転数、BIG、REG、差枚、およびそこから計算される確率）を提示して回答してください。計算が必要な確率（REG確率など）はデータ（回転数÷REG回数）からその場で計算して判定してください。
@@ -1093,6 +1191,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 5. 【簡潔さ】: 専門的でありながらも、冗長な説明は省き、要点を箇条書きでスマートにまとめてください。
 5. 【店舗未選択時の対応】: 提供されたデータの中に「AI予測実績」や「現在のAIモデル設定」が含まれていない（＝店舗が指定されていない）場合は、無理に推測せず、「具体的なチューニング提案を行うには、画面上部のプルダウンから分析対象の店舗を選択してください」と案内してください。
 6. 【予測エラー分析】: 「期待外れ台」や「逃したお宝台」のデータが提供されている場合、なぜモデルがそれらの台の評価を誤ったのか（特徴量の重み付けの偏り、過学習、未学習など）を考察し、再発防止のためのパラメータ調整や特徴量エンジニアリングのアイデアを提案してください。
+7. 【配分型の考慮】: 「配分型」完全マップ診断の結論が提供されている場合、その店舗の配分思想（誤認誘導型など）と現在のAIモデルの予測傾向にズレがないかを評価してください。「誤認誘導型」の店で過学習が起きている場合は、中間設定のフェイクにAIが騙されている可能性が高いため、その旨を指摘してペナルティや特徴量の調整を提案してください。
 
 現在日時: {now_str}
 ※提供されているデータは、対象店舗の予測データおよびAIのバックテスト実績・パラメータ設定です。

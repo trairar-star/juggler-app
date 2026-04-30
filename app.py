@@ -272,9 +272,14 @@ def main():
         st.caption(f"📈 過去データ集計期間: 〜 {target_date.strftime('%Y-%m-%d')} (これまでの全履歴の傾向から {predict_target_date.strftime('%Y-%m-%d')} の結果を予測しています)")
     
     # 必要なカラムの補完
-    for col in ['おすすめ度', 'prediction_score', '予測差枚数', '根拠']:
+    for col in ['おすすめ度', 'prediction_score', 'sueoki_score', '予測差枚数', '根拠']:
         if col not in df.columns:
-            df[col] = 0 if col == '予測差枚数' else '-'
+            if col in ['prediction_score', 'sueoki_score']:
+                df[col] = 0.0
+            elif col == '予測差枚数':
+                df[col] = 0
+            else:
+                df[col] = '-'
             
     # カラム名判定
     shop_col = '店名' if '店名' in df.columns else '店舗名'
@@ -296,7 +301,7 @@ def main():
             ai_chat_page.render_ai_chat_page(df, df_raw, shop_col, df_verify, df_events=df_events, df_importance=df_importance, shop_hyperparams=st.session_state["shop_hyperparams"])
         elif page == "📊 予測の実績検証・AI設定":
             df_pred_log = backend.load_prediction_log()
-            verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw)
+            verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw, df_events)
         elif page == "📅 日別 結果＆予測確認":
             daily_result_page.render_daily_result_page(df_raw, df_events, df_island, st.session_state["shop_hyperparams"])
         elif page == "📅 週間スケジュール予測":

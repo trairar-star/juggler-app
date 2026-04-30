@@ -63,66 +63,78 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
     
     # --- 新規追加: 店舗ごとの重要特徴量トップ5の動的表示 ---
     if df_importance is not None and not df_importance.empty:
-        imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
-        if not imp_shop.empty:
+        has_c = not df_importance[df_importance['shop_name'] == f'{selected_shop}(変更予測)'].empty
+        has_s = not df_importance[df_importance['shop_name'] == f'{selected_shop}(据え置き予測)'].empty
+        
+        if has_c or has_s:
             st.markdown(f"**🌟 この店舗のAI評価 決定要因 (トップ10):**")
             st.caption("AIはこの店舗の傾向として、以下の10個の指標を特に重視しています。")
             
-            top10 = imp_shop.head(10)
-            table_data = []
+            tab_c, tab_s = st.tabs(["🚀 変更予測の重視ポイント", "🔁 据え置き予測の重視ポイント"])
             
-            for idx, (_, imp_row) in enumerate(top10.iterrows()):
-                f_key = imp_row['feature']
-                corr = imp_row.get('correlation', 0)
-                val = row.get(f_key, '-')
-                
-                f_name = FEATURE_NAME_MAP.get(f_key, f_key)
-
-                def format_feat(v, is_avg=False):
-                    if isinstance(v, (int, float)) and not pd.isna(v):
-                        is_bool_feature = f_key.startswith('is_') or 'フラグ' in f_name
-                        if not is_bool_feature and '日' in f_name:
-                            if df_target is not None and f_key in df_target.columns:
-                                unique_vals = df_target[f_key].dropna().unique()
-                                if set(unique_vals).issubset({0, 1}):
-                                    is_bool_feature = True
-                            elif not is_avg and v in [0, 1]:
-                                is_bool_feature = True
-                        
-                        if is_bool_feature:
-                            if is_avg:
-                                return f"{v*100:.1f}%"
-                            else:
-                                return "あり" if v >= 0.5 else "なし"
-                        elif '確率' in f_name and v > 0 and v < 1: return f"1/{int(1/v)}"
-                        elif '差枚' in f_name or '吸込み' in f_name: return f"{int(v):+d}枚"
-                        elif 'ゲーム' in f_name or 'G数' in f_name: return f"{int(v)}G"
-                        elif '割合' in f_name or '率' in f_name: return f"{v*100:.1f}%" if v <= 1.0 else f"{v:.1f}%"
-                        else: return str(int(v)) if float(v).is_integer() else f"{v:.2f}"
-                    return str(v)
-
-                val_str = format_feat(val)
-                
-                avg_str = "-"
-                if df_target is not None and f_key in df_target.columns:
-                    if pd.api.types.is_numeric_dtype(df_target[f_key]):
-                        avg_val = df_target[f_key].mean()
-                        avg_str = format_feat(avg_val, is_avg=True)
+            def render_imp_table(mode_label):
+                imp_shop = df_importance[df_importance['shop_name'] == f'{selected_shop}({mode_label})'].sort_values('importance', ascending=False)
+                if not imp_shop.empty:
+                    top10 = imp_shop.head(10)
+                    table_data = []
                     
-                if corr >= 0:
-                    corr_text = "🔼 高いほど良い"
+                    for idx, (_, imp_row) in enumerate(top10.iterrows()):
+                        f_key = imp_row['feature']
+                        corr = imp_row.get('correlation', 0)
+                        val = row.get(f_key, '-')
+                        
+                        f_name = FEATURE_NAME_MAP.get(f_key, f_key)
+
+                        def format_feat(v, is_avg=False):
+                            if isinstance(v, (int, float)) and not pd.isna(v):
+                                is_bool_feature = f_key.startswith('is_') or 'フラグ' in f_name
+                                if not is_bool_feature and '日' in f_name:
+                                    if df_target is not None and f_key in df_target.columns:
+                                        unique_vals = df_target[f_key].dropna().unique()
+                                        if set(unique_vals).issubset({0, 1}):
+                                            is_bool_feature = True
+                                    elif not is_avg and v in [0, 1]:
+                                        is_bool_feature = True
+                                
+                                if is_bool_feature:
+                                    if is_avg:
+                                        return f"{v*100:.1f}%"
+                                    else:
+                                        return "あり" if v >= 0.5 else "なし"
+                                elif '確率' in f_name and v > 0 and v < 1: return f"1/{int(1/v)}"
+                                elif '差枚' in f_name or '吸込み' in f_name: return f"{int(v):+d}枚"
+                                elif 'ゲーム' in f_name or 'G数' in f_name: return f"{int(v)}G"
+                                elif '割合' in f_name or '率' in f_name: return f"{v*100:.1f}%" if v <= 1.0 else f"{v:.1f}%"
+                                else: return str(int(v)) if float(v).is_integer() else f"{v:.2f}"
+                            return str(v)
+
+                        val_str = format_feat(val)
+                        
+                        avg_str = "-"
+                        if df_target is not None and f_key in df_target.columns:
+                            if pd.api.types.is_numeric_dtype(df_target[f_key]):
+                                avg_val = df_target[f_key].mean()
+                                avg_str = format_feat(avg_val, is_avg=True)
+                            
+                        if corr >= 0:
+                            corr_text = "🔼 高いほど良い"
+                        else:
+                            corr_text = "🔽 低いほど良い"
+
+                        table_data.append({
+                            "順位": idx + 1,
+                            "重視ポイント": f_name,
+                            "この台のデータ": val_str,
+                            "店舗全体の平均": avg_str,
+                            "高設定の傾向": corr_text
+                        })
+
+                    st.dataframe(pd.DataFrame(table_data), hide_index=True, use_container_width=True)
                 else:
-                    corr_text = "🔽 低いほど良い"
+                    st.info(f"{mode_label}のデータがありません。")
 
-                table_data.append({
-                    "順位": idx + 1,
-                    "重視ポイント": f_name,
-                    "この台のデータ": val_str,
-                    "店舗全体の平均": avg_str,
-                    "高設定の傾向": corr_text
-                })
-
-            st.dataframe(pd.DataFrame(table_data), hide_index=True, use_container_width=True)
+            with tab_c: render_imp_table("変更予測")
+            with tab_s: render_imp_table("据え置き予測")
 
     # --- 新規追加: AI評価用 詳細特徴量データ ---
     st.markdown("**🔍 その他のサブ特徴量データ:**")
@@ -237,10 +249,18 @@ def _display_machine_detail_expander(row, index, shop_col, selected_shop, df_raw
                 else:
                     st.caption(f"※ 過去に{wd_name}曜日のデータが存在しません。")
 
-    if 'prediction_score' in row:
-        st.progress(float(row['prediction_score']), text=f"設定5以上確率: {float(row['prediction_score']) * 100:.1f}%")
-        st.markdown("**🎯 AI推定の設定期待度 (擬似分布):**")
-        score = float(row['prediction_score'])
+    if 'prediction_score' in row or 'sueoki_score' in row:
+        score_change = float(row.get('prediction_score', 0))
+        score_sueoki = float(row.get('sueoki_score', 0))
+        max_score = max(score_change, score_sueoki)
+        
+        st.progress(max_score, text=f"設定5以上確率 (総合): {max_score * 100:.1f}%")
+        
+        st.markdown("**🎯 AI推定の設定期待度 (完全分離評価):**")
+        st.text(f"変更(上げ)期待度：{score_change*100:.1f}%\n"
+                f"据え置き期待度：{score_sueoki*100:.1f}%")
+        
+        score = max_score
         
         games = float(row.get('累計ゲーム', 0))
         big_count = float(row.get('BIG', 0))
@@ -428,6 +448,13 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
     tab_pred, tab_trend = st.tabs(["🔮 明日の予測ランキング", "🔬 過去の傾向分析 (勝利の法則)"])
 
     with tab_pred:
+        # 予測対象日の取得
+        pred_date = pd.NaT
+        if 'next_date' in df.columns:
+            pred_date = df['next_date'].dropna().max()
+        elif '対象日付' in df.columns:
+            pred_date = df['対象日付'].dropna().max() + pd.Timedelta(days=1)
+
         # --- 🎊 周年記念イベント アラート & カウントダウン ---
         if selected_shop == '全て' and df_events is not None and not df_events.empty:
             pred_date = pd.NaT
@@ -521,17 +548,50 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 missing_date = pred_target_date - datetime.timedelta(days=1)
                 st.warning(f"⚠️ **前日データ欠損**: {missing_date.strftime('%m/%d')} のデータがありません。AIは2日前のデータで予測しているため、精度が低下している可能性があります。")
 
+        # --- 🏢 店舗の「配分型」完全マップ診断 ---
+        if selected_shop != '全て' and df_train is not None and not df_train.empty:
+            from shop_trends import diagnose_allocation_types
+            alloc_types = diagnose_allocation_types(df_train, shop_col, specs)
+            shop_alloc = alloc_types.get(selected_shop, {})
+            if shop_alloc.get("messages"):
+                st.markdown("### 🏢 店舗の「配分型」完全マップ診断")
+                st.info("💡 **AIの結論**: この店舗の配分思想のベースです。AIはこの思想を前提に予測ロジックを自動調整しています。\n\n" + "\n\n".join(shop_alloc["messages"]))
+                st.divider()
+
+        # --- 🤖 据え置き傾向 独立診断 ＆ 変更トリガー分析 ---
+        if selected_shop != '全て' and df_train is not None and not df_train.empty:
+            trigger_info = backend.analyze_sueoki_and_change_triggers(df_train, selected_shop, shop_col)
+            if trigger_info:
+                st.markdown("### 🤖 独立診断：据え置き傾向 ＆ 変更トリガー")
+                st.text(f"据え置き傾向：{trigger_info['sue_tendency']}\n"
+                        f"\n"
+                        f"変更トリガー候補：\n"
+                        f"- 差枚：{trigger_info['trigger_diff']}\n"
+                        f"- 曜日：{trigger_info['trigger_wd']}\n"
+                        f"- 稼働率：{trigger_info['trigger_kado']}\n"
+                        f"- その他：島単位の傾向や複数日連続凹みからの反発\n"
+                        f"総合判断：変更判断は {trigger_info['master_judge']}")
+                st.divider()
+
+        # --- 🎯 本日の据え置き前提成立判定 (Layer B) ---
+        sueoki_premise = "不明"
+        if selected_shop != '全て' and not df_raw_shop.empty and pd.notna(pred_date):
+            sueoki_premise, sueoki_premise_reason = backend.evaluate_sueoki_premise(df_raw_shop, pred_date, df_events)
+            st.markdown("### 🎯 本日の据え置き前提判定")
+            st.caption("今日は「据え置き」を期待していい日か？（前日の続きを見る日か？）を判定します。")
+            if sueoki_premise == "YES":
+                st.success(f"**判定: {sueoki_premise}**\n\n{sueoki_premise_reason}\n\n👉 本日は「据え置き期待度ランキング」を信頼して立ち回ることができます。")
+            elif sueoki_premise == "NO":
+                st.error(f"**判定: {sueoki_premise}**\n\n{sueoki_premise_reason}\n\n👉 本日は据え置きを期待してはいけない日（変更・リセットが主役の日）です。「据え置き期待度ランキング」は参考程度に留めてください。")
+            else:
+                st.info(f"**判定: {sueoki_premise}**\n\n{sueoki_premise_reason}")
+            st.divider()
+
         # --- � AI本日の立ち回りアドバイス (店舗個別) ---
         if selected_shop != '全て' and not df.empty:
             st.markdown("### 💬 AI本日の立ち回りアドバイス")
             advice_list = []
             
-            # 予測対象日の取得
-            pred_date = pd.NaT
-            if 'next_date' in df.columns:
-                pred_date = df['next_date'].dropna().max()
-            elif '対象日付' in df.columns:
-                pred_date = df['対象日付'].dropna().max() + pd.Timedelta(days=1)
                 
             # --- 1. 基本設定配分 (ベース高設定率) ---
             if base_win_rate > 0:
@@ -654,21 +714,147 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 
                 # 2. 明日AIが特に熱いと見ている機種
                 if 'prediction_score' in df.columns:
-                    mac_pred_stats = df.groupby('機種名').agg(avg_score=('prediction_score', 'mean'), count=('台番号', 'count')).reset_index()
+                    df_temp_mac = df.copy()
+                    if 'sueoki_score' in df_temp_mac.columns:
+                        df_temp_mac['max_score'] = df_temp_mac[['prediction_score', 'sueoki_score']].max(axis=1)
+                    else:
+                        df_temp_mac['max_score'] = df_temp_mac['prediction_score']
+
+                    mac_pred_stats = df_temp_mac.groupby('機種名').agg(avg_score=('max_score', 'mean'), count=('台番号', 'count')).reset_index()
                     mac_pred_stats = mac_pred_stats[mac_pred_stats['count'] >= 3]
                     mac_pred_stats = mac_pred_stats.dropna(subset=['avg_score'])
                     if not mac_pred_stats.empty:
                         best_mac_pred = mac_pred_stats.loc[mac_pred_stats['avg_score'].idxmax()]
-                        if best_mac_pred['avg_score'] >= 0.50 and not any(best_mac_pred['機種名'] in adv for adv in mac_advices):
+                        if best_mac_pred['avg_score'] >= 0.45 and not any(best_mac_pred['機種名'] in adv for adv in mac_advices):
                             mac_advices.append(f"『**{best_mac_pred['機種名']}**』(AI期待度 {int(best_mac_pred['avg_score']*100)}%)")
                                 
                 if mac_advices:
                     adv_str = " または ".join(mac_advices)
                     advice_list.append(f"🎰 **おすすめ機種**: ベースが高いと推測される **{adv_str}** から攻めるのがオススメです。")
 
-            # 表示
+            # --- 5. 店アクティビティ指数 (無気力営業の検知) ---
+            if not df_raw_shop.empty and '累計ゲーム' in df_raw_shop.columns and '差枚' in df_raw_shop.columns:
+                recent_kado_df = df_raw_shop[df_raw_shop['対象日付'] >= (pd.to_datetime(pred_date) - pd.Timedelta(days=14))]
+                if not recent_kado_df.empty:
+                    avg_g = recent_kado_df['累計ゲーム'].mean()
+                    win_rate = (recent_kado_df['差枚'] > 0).mean()
+                    
+                    if avg_g < 2000 and win_rate < 0.30:
+                        advice_list.append("💤 **店アクティビティ指数 [低]**: 稼働が少なく出玉のメリハリもない「無気力営業」の疑いがあります。設定を使っているアピールがなく、設定判別すら困難な『見えない回収状態』に陥っています。深追いは厳禁です。")
+                    elif avg_g < 3000 and win_rate < 0.35:
+                        advice_list.append("📉 **店アクティビティ指数 [やや低]**: 全体的に回されておらず、店側のやる気（設定アピール）が客に伝わっていない状態です。")
+                    elif avg_g >= 4000 and win_rate >= 0.40:
+                        advice_list.append("🔥 **店アクティビティ指数 [高]**: 稼働が高く、出玉のメリハリもしっかりついています。店側のアピールが客層に伝わっている活気ある状態です。")
+
+            # --- アドバイスリストの表示 ---
             st.info("\n\n".join([f"- {adv}" for adv in advice_list]))
+            
+            # --- 👑 絶対基準による【最終結論】の明示 ---
+            max_change_score = df['prediction_score'].max() if 'prediction_score' in df.columns else 0
+            max_sue_score = df['sueoki_score'].max() if 'sueoki_score' in df.columns else 0
+            
+            if max_change_score < 0.25 and max_sue_score < 0.25:
+                st.error("🛑 **【最終結論】本日の推奨アクション：「打たない（見送り）」**\n\n"
+                         f"変更(上げ)期待度の最高値({max_change_score*100:.1f}%)、据え置き期待度の最高値({max_sue_score*100:.1f}%)が、ともに絶対的な勝負ライン(25%)を下回っています。\n"
+                         "「相対的にマシな台」はありますが、勝つための絶対基準を満たす台がありません。本日は**『予測モデルを選ばず、打たずに店を去る』**がAIのベストアンサーです。")
+            else:
+                if max_change_score > max_sue_score + 0.10:
+                    master_action = f"本日は**「変更(上げ)予測」**のモデルを優先して狙い台を絞るのが有効です。(最高期待度: {max_change_score*100:.1f}%)"
+                elif max_sue_score > max_change_score + 0.10:
+                    master_action = f"本日は**「据え置き予測」**のモデルを優先して狙い台を絞るのが有効です。(最高期待度: {max_sue_score*100:.1f}%)"
+                else:
+                    master_action = f"本日は**変更狙い**と**据え置き狙い**の両方にチャンスがあります。個別の根拠と期待度を見て判断してください。(最高期待度: {max(max_change_score, max_sue_score)*100:.1f}%)"
+                st.success(f"🟢 **【最終結論】推奨予測モデルの選択**\n\n{master_action}")
+                
             st.divider()
+
+    with tab_pred:
+        # --- 🎊 周年記念イベント アラート & カウントダウン ---
+        if selected_shop == '全て' and df_events is not None and not df_events.empty:
+            if pd.notna(pred_date):
+                current_date = pred_date.date()
+                
+                # --- 周年イベントの毎年のループ処理 ---
+                valid_events = df_events.copy()
+                anniversary_events = valid_events[valid_events['イベント名'].astype(str).str.contains('周年')].copy()
+                
+                if not anniversary_events.empty:
+                    expanded_list = []
+                    for _, ev in anniversary_events.iterrows():
+                        ev_date = ev['イベント日付'].date()
+                        try: d_this = ev_date.replace(year=current_date.year)
+                        except ValueError: d_this = (ev['イベント日付'] + pd.offsets.DateOffset(years=(current_date.year - ev['イベント日付'].year))).date()
+                        ev_this = ev.copy(); ev_this['イベント日付'] = pd.Timestamp(d_this); expanded_list.append(ev_this)
+                        
+                        try: d_next = ev_date.replace(year=current_date.year + 1)
+                        except ValueError: d_next = (ev['イベント日付'] + pd.offsets.DateOffset(years=(current_date.year + 1 - ev['イベント日付'].year))).date()
+                        ev_next = ev.copy(); ev_next['イベント日付'] = pd.Timestamp(d_next); expanded_list.append(ev_next)
+                        
+                    valid_events = pd.concat([valid_events, pd.DataFrame(expanded_list)], ignore_index=True)
+                    valid_events = valid_events.drop_duplicates(subset=['店名', 'イベント日付', 'イベント名'])
+
+                # 今日〜30日後までの周年イベントを取得
+                future_events = valid_events[
+                    (valid_events['イベント日付'].dt.date >= current_date) & 
+                    (valid_events['イベント日付'].dt.date <= current_date + pd.Timedelta(days=30)) &
+                    ((valid_events['イベントランク'].astype(str) == 'SS (周年)') | (valid_events['イベント名'].astype(str).str.contains('周年|リニューアル|グランド')))
+                ].copy()
+                
+                if not future_events.empty:
+                    future_events['days_left'] = (future_events['イベント日付'].dt.date - current_date).dt.days
+                    future_events = future_events.sort_values('days_left')
+                    
+                    today_events = future_events[future_events['days_left'] == 0]
+                    upcoming_events = future_events[future_events['days_left'] > 0]
+                    
+                    if not today_events.empty:
+                        html_str = f"""
+                        <div style="background-color: #ffebee; border: 2px solid #f44336; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <h3 style="color: #c62828; margin-top: 0;">🎊 【特報】本日 特大イベント開催！ ({pred_date.strftime('%m/%d')})</h3>
+                            <p style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 10px;">本日は以下の店舗で「周年・リニューアル」クラスの超特大イベントが予定されています！お見逃しなく！</p>
+                            <ul style="color: #b71c1c; font-size: 1.1em; font-weight: bold; margin-bottom: 0;">
+                        """
+                        for _, r in today_events.iterrows():
+                            html_str += f"<li>{r['店名']}：{r['イベント名']}</li>"
+                        html_str += "</ul></div>"
+                        st.markdown(html_str, unsafe_allow_html=True)
+                        
+                    if not upcoming_events.empty:
+                        html_str = f"""
+                        <div style="background-color: #fff8e1; border: 2px solid #ffb300; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <h4 style="color: #f57f17; margin-top: 0; margin-bottom: 10px;">⏳ 開催間近！ 特大イベント カウントダウン</h4>
+                            <ul style="color: #e65100; font-size: 1.05em; font-weight: bold; margin-bottom: 0; padding-left: 20px;">
+                        """
+                        for _, r in upcoming_events.iterrows():
+                            days = r['days_left']
+                            date_str = r['イベント日付'].strftime('%m/%d')
+                            html_str += f"<li>{r['店名']}：{r['イベント名']} ({date_str}) ･･･ <span style='color: #d84315; font-size: 1.2em;'>あと {days} 日！</span></li>"
+                        html_str += "</ul></div>"
+                        st.markdown(html_str, unsafe_allow_html=True)
+
+        # --- 👑 本日のおすすめ店舗 ピックアップ ---
+        if selected_shop == '全て' and shop_col in df.columns and '予測差枚数' in df.columns:
+            shop_mean_diff = df.groupby(shop_col)['予測差枚数'].mean() if not df.empty else pd.Series()
+            if not shop_mean_diff.empty:
+                best_shop = shop_mean_diff.idxmax()
+                best_diff = shop_mean_diff.max()
+                
+                if best_diff >= 100:
+                    st.success(f"👑 **本日のおすすめ店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / 🔥還元予測)\n\n系列・登録店舗の中で最も出玉（差枚）が甘く、全体的に還元される可能性が高いとAIが推奨しています！")
+                elif best_diff >= 0:
+                    st.info(f"👍 **本日の注目店舗**: **{best_shop}** (予測店舗平均: **+{int(best_diff)}枚** / ⚖️通常営業)\n\n突出した還元予測の店舗はありませんが、登録店舗の中では一番差枚が甘いと予測されています。")
+                else:
+                    st.warning(f"🥶 **全店舗 回収警戒**: 本日は全店舗の予測平均差枚がマイナスで (一番マシな **{best_shop}** でも {int(best_diff)}枚)、厳しい戦いが予想されます。無理な勝負は避けるのが無難です。")
+
+        # --- 前日データ欠損アラート ---
+        if not df.empty and '対象日付' in df.columns:
+            latest_data_date = df['対象日付'].max().date()
+            pred_target_date = df['next_date'].max().date()
+            
+            if (pred_target_date - latest_data_date).days > 1:
+                import datetime
+                missing_date = pred_target_date - datetime.timedelta(days=1)
+                st.warning(f"⚠️ **前日データ欠損**: {missing_date.strftime('%m/%d')} のデータがありません。AIは2日前のデータで予測しているため、精度が低下している可能性があります。")
 
         # --- 島（列）別 期待度ランキング (追加) ---
         if selected_shop != '全て' and 'island_id' in df.columns:
@@ -699,7 +885,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 
                 st.caption(f"※{eval_period}の**ガチ予測（保存ログ）に対する正答率と勝率**です。この数値が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い等）と判断し、ランキング順位を下げるペナルティを適用しています。（※サンプル5台以上で適用）")
                 st.data_editor(
-                    shop_stats[[shop_col, '営業予測', '予測平均差枚', '平均スコア', '推奨台数', '全台数', '収集日数', 'AI正答率', 'AI推奨台勝率']],
+                    shop_stats[[shop_col, '営業予測', '予測平均差枚', '平均スコア', '推奨台数', '全台数', '収集日数', '変更勝率', '据え置き勝率']],
                     column_config={
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
                         "営業予測": st.column_config.TextColumn("営業予測", width="small", help="AIの店舗全体期待度に基づく明日の予測"),
@@ -708,8 +894,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         "推奨台数": st.column_config.NumberColumn("高期待", width="small", format="%d台", help="AI期待度が30%以上の激アツ台数"),
                         "全台数": st.column_config.NumberColumn("全台", width="small", format="%d台"),
                         "収集日数": st.column_config.ProgressColumn("進捗", width="small", format="%d日/30日", min_value=0, max_value=30, help="AIの信頼度が最大になる30日分のデータ収集までの進捗です。"),
-                        "AI正答率": st.column_config.TextColumn("正答率", width="small", help=f"{eval_period}にAIが推奨した台（上位約10%）が、実際に高設定挙動だった割合と台数です。この店でAIの予測がどれくらい通用するかを示します。"),
-                        "AI推奨台勝率": st.column_config.TextColumn("勝率", width="small", help="AIが推奨した台（上位約10%）が、実際に差枚プラスで終わった割合と台数です。"),
+                        "変更勝率": st.column_config.TextColumn("変更狙い勝率", width="small", help=f"{eval_period}に変更(上げ)を推奨した台（上位約10%）が、実際に差枚プラスで終わった割合と台数です。"),
+                        "据え置き勝率": st.column_config.TextColumn("据え狙い勝率", width="small", help=f"{eval_period}に据え置きを推奨した台（上位約10%）が、実際に差枚プラスで終わった割合と台数です。"),
                     },
                     hide_index=True,
                     width="stretch"
@@ -717,12 +903,18 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             
         # --- 🚨 激アツ台 アラート ---
         if 'prediction_score' in df.columns:
-            if '予測信頼度' in df.columns:
-                super_hot_df = df[(df['prediction_score'] >= 0.40) & (df['予測信頼度'] != '🔻低')]
+            temp_df_hot = df.copy()
+            if 'sueoki_score' in temp_df_hot.columns:
+                temp_df_hot['max_score'] = temp_df_hot[['prediction_score', 'sueoki_score']].max(axis=1)
             else:
-                super_hot_df = df[df['prediction_score'] >= 0.40]
+                temp_df_hot['max_score'] = temp_df_hot['prediction_score']
                 
-            super_hot_df = super_hot_df.sort_values('prediction_score', ascending=False)
+            if '予測信頼度' in temp_df_hot.columns:
+                super_hot_df = temp_df_hot[(temp_df_hot['max_score'] >= 0.40) & (temp_df_hot['予測信頼度'] != '🔻低')]
+            else:
+                super_hot_df = temp_df_hot[temp_df_hot['max_score'] >= 0.40]
+                
+            super_hot_df = super_hot_df.sort_values('max_score', ascending=False)
             
             if not super_hot_df.empty:
                 html_str = f"""
@@ -734,7 +926,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 for _, r in super_hot_df.iterrows():
                     s_name = r.get(shop_col, '')
                     shop_prefix = f"【{s_name}】 " if selected_shop == '全て' else ""
-                    html_str += f"<li>{shop_prefix}<b>#{r.get('台番号')} {r.get('機種名')}</b> (期待度: <b>{int(r.get('prediction_score', 0)*100)}%</b>)</li>"
+                    html_str += f"<li>{shop_prefix}<b>#{r.get('台番号')} {r.get('機種名')}</b> (期待度: <b>{int(r.get('max_score', 0)*100)}%</b>)</li>"
                 html_str += "</ul></div>"
                 st.markdown(html_str, unsafe_allow_html=True)
     
@@ -746,111 +938,125 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             with col_d2:
                 min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=0, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。", key="min_score_filter")
         
-            sort_cols = []
-            if 'prediction_score' in df.columns: sort_cols.append('prediction_score')
-            
-            ascending_list = [False] * len(sort_cols)
-            
-            if sort_cols:
-                df_sorted = df.sort_values(by=sort_cols, ascending=ascending_list).reset_index(drop=True)
-            else:
-                df_sorted = df
-        
-            if 'prediction_score' in df_sorted.columns:
-                df_sorted['予想設定5以上確率'] = (df_sorted['prediction_score'].fillna(0) * 100).astype(int)
-        
-            # --- ランク変動の計算 (前日差枚順位との比較) ---
-            if 'prediction_score' in df_sorted.columns and '差枚' in df_sorted.columns:
-                df_sorted['AI順位_num'] = df_sorted['prediction_score'].rank(method='min', ascending=False).fillna(999).astype(int)
-                df_sorted['前日差枚順位_num'] = df_sorted['差枚'].rank(method='min', ascending=False).fillna(999).astype(int)
-                
-                def format_rank_change(row):
-                    ai_r = row['AI順位_num']
-                    prev_r = row['前日差枚順位_num']
-                    if ai_r == 999: return "-"
-                    if prev_r == 999: return f"{ai_r}位"
-                    diff = prev_r - ai_r
-                    if diff > 0: return f"{ai_r}位 (🔼+{diff})"
-                    elif diff < 0: return f"{ai_r}位 (🔻{diff})"
-                    else: return f"{ai_r}位 (➖)"
-                    
-                df_sorted['AI順位'] = df_sorted.apply(format_rank_change, axis=1)
-            else:
-                df_sorted['AI順位'] = "-"
-        
-            # 表示件数の絞り込み
-            if display_mode == "厳選推奨台 (店舗別 上位10%)":
-                if shop_col in df_sorted.columns:
-                    df_list = []
-                    for shop_name, group in df_sorted.groupby(shop_col):
-                        valid_group = group[group['prediction_score'] >= 0.10] if 'prediction_score' in group.columns else group
-                        df_list.append(valid_group.head(max(3, int(len(group) * 0.10))))
-                    if df_list:
-                        df_display = pd.concat(df_list, ignore_index=True)
-                        if sort_cols:
-                            df_display = df_display.sort_values(by=sort_cols, ascending=ascending_list).reset_index(drop=True)
-                    else:
-                        df_display = pd.DataFrame(columns=df_sorted.columns)
-                else:
-                    limit = max(3, int(len(df_sorted) * 0.10))
-                    valid_group = df_sorted[df_sorted['prediction_score'] >= 0.10] if 'prediction_score' in df_sorted.columns else df_sorted
-                    df_display = valid_group.head(limit)
-            elif display_mode == "Top 10":
-                df_display = df_sorted.head(10)
-            elif display_mode == "Top 20":
-                df_display = df_sorted.head(20)
-            else:
-                df_display = df_sorted
-                
-            if df_display.empty:
-                st.info("推奨台がありません。")
-                
-            # --- スライダーによる期待度フィルターの適用 ---
-            if not df_display.empty and '予想設定5以上確率' in df_display.columns and min_score_filter > 0:
-                df_display = df_display[df_display['予想設定5以上確率'] >= min_score_filter]
-                if df_display.empty:
-                    st.warning(f"期待度が {min_score_filter}% 以上の台はありません。スライダーを下げてみてください。")
-        
-            # 常に「店名」を表示するようにカラムを厳選
-            base_cols = ['AI順位', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', '予想設定5以上確率']
-            display_cols = [c for c in base_cols if c in df_display.columns]
+            tab_change, tab_sueoki = st.tabs(["🚀 変更(上げ) 期待度ランキング", "🔁 据え置き 期待度ランキング"])
 
-            # データフレームの表示設定 (Pandas Stylerを使って緑いバーを描画)
-            styled_display = df_display[display_cols]
-            if '予想設定5以上確率' in display_cols:
-                styled_display = styled_display.style.bar(subset=['予想設定5以上確率'], color='rgba(76, 175, 80, 0.6)', vmin=0, vmax=100)
-        
-            st.dataframe(
-                styled_display,
-                column_config={
-                    "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
-                    shop_col: st.column_config.TextColumn("店舗", width="small"),
-                    "台番号": st.column_config.TextColumn("No.", width="small"),
-                    "機種名": st.column_config.TextColumn("機種", width="small"),
+            def render_ranking_tab(score_col, score_label, bar_color):
+                sort_cols = []
+                if score_col in df.columns: sort_cols.append(score_col)
+                
+                ascending_list = [False] * len(sort_cols)
+                
+                if sort_cols:
+                    df_sorted = df.sort_values(by=sort_cols, ascending=ascending_list).reset_index(drop=True)
+                else:
+                    df_sorted = df.copy()
+            
+                if score_col in df_sorted.columns:
+                    df_sorted[score_label] = (df_sorted[score_col].fillna(0) * 100).astype(int)
+            
+                # --- ランク変動の計算 (前日差枚順位との比較) ---
+                if score_col in df_sorted.columns and '差枚' in df_sorted.columns:
+                    df_sorted['AI順位_num'] = df_sorted[score_col].rank(method='min', ascending=False).fillna(999).astype(int)
+                    df_sorted['前日差枚順位_num'] = df_sorted['差枚'].rank(method='min', ascending=False).fillna(999).astype(int)
+                    
+                    def format_rank_change(row):
+                        ai_r = row['AI順位_num']
+                        prev_r = row['前日差枚順位_num']
+                        if ai_r == 999: return "-"
+                        if prev_r == 999: return f"{ai_r}位"
+                        diff = prev_r - ai_r
+                        if diff > 0: return f"{ai_r}位 (🔼+{diff})"
+                        elif diff < 0: return f"{ai_r}位 (🔻{diff})"
+                        else: return f"{ai_r}位 (➖)"
+                        
+                    df_sorted['AI順位'] = df_sorted.apply(format_rank_change, axis=1)
+                else:
+                    df_sorted['AI順位'] = "-"
+            
+                # 表示件数の絞り込み
+                if display_mode == "厳選推奨台 (店舗別 上位10%)":
+                    if shop_col in df_sorted.columns:
+                        df_list = []
+                        for shop_name, group in df_sorted.groupby(shop_col):
+                            valid_group = group[group[score_col] >= 0.10] if score_col in group.columns else group
+                            df_list.append(valid_group.head(max(3, int(len(group) * 0.10))))
+                        if df_list:
+                            df_display = pd.concat(df_list, ignore_index=True)
+                            if sort_cols:
+                                df_display = df_display.sort_values(by=sort_cols, ascending=ascending_list).reset_index(drop=True)
+                        else:
+                            df_display = pd.DataFrame(columns=df_sorted.columns)
+                    else:
+                        limit = max(3, int(len(df_sorted) * 0.10))
+                        valid_group = df_sorted[df_sorted[score_col] >= 0.10] if score_col in df_sorted.columns else df_sorted
+                        df_display = valid_group.head(limit)
+                elif display_mode == "Top 10":
+                    df_display = df_sorted.head(10)
+                elif display_mode == "Top 20":
+                    df_display = df_sorted.head(20)
+                else:
+                    df_display = df_sorted
+                    
+                if df_display.empty:
+                    st.info("推奨台がありません。")
+                    
+                # --- スライダーによる期待度フィルターの適用 ---
+                if not df_display.empty and score_label in df_display.columns and min_score_filter > 0:
+                    df_display = df_display[df_display[score_label] >= min_score_filter]
+                    if df_display.empty:
+                        st.warning(f"期待度が {min_score_filter}% 以上の台はありません。スライダーを下げてみてください。")
+            
+                # 常に「店名」を表示するようにカラムを厳選
+                base_cols = ['AI順位', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', score_label]
+                display_cols = [c for c in base_cols if c in df_display.columns]
+
+                # データフレームの表示設定 (Pandas Stylerを使ってバーを描画)
+                styled_display = df_display[display_cols]
+                if score_label in display_cols:
+                    styled_display = styled_display.style.bar(subset=[score_label], color=bar_color, vmin=0, vmax=100)
+            
+                st.dataframe(
+                    styled_display,
+                    column_config={
+                        "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
+                        shop_col: st.column_config.TextColumn("店舗", width="small"),
+                        "台番号": st.column_config.TextColumn("No.", width="small"),
+                        "機種名": st.column_config.TextColumn("機種", width="small"),
                         "店癖マッチ": st.column_config.TextColumn("店癖", width="small", help="AIが検知した激アツ(🔥)や警戒(⚠️)の条件"),
-                    "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
-                    "予想設定5以上確率": st.column_config.NumberColumn("期待度", format="%d%%", width="small", help="AIが予測する設定5以上の確率"),
-                },
-                width="stretch",
-                hide_index=True
-            )
-    
-        # --- 詳細分析: 上位台の根拠とスペック ---
-        if selected_shop != '全て' and not df_display.empty:
-            st.markdown("### 🧐 推奨台の詳細データ・根拠")
-            st.caption("AIが高く評価した推奨台について、判断根拠と詳細数値を表示します。")
-    
-            for i, row in df_display.iterrows():
-                shop_name = row.get(shop_col, '')
-                machine_no = row.get('台番号', 'Unknown')
-                machine_name = row.get('機種名', '')
-                prob_val = row.get('予想設定5以上確率', 0)
+                        "予測信頼度": st.column_config.TextColumn("信頼度", width="small", help="対象台の過去データ量に基づく予測の信頼度 (🔼高:30日~ / 🔸中:14~29日 / 🔻低:1~13日)"),
+                        score_label: st.column_config.NumberColumn("期待度", format="%d%%", width="small", help="AIが予測する設定5以上の確率"),
+                    },
+                    width="stretch",
+                    hide_index=True
+                )
+        
+                # 詳細データエキスパンダー
+                if selected_shop != '全て' and not df_display.empty:
+                    st.markdown("### 🧐 推奨台の詳細データ・根拠")
+                    st.caption("AIが高く評価した推奨台について、判断根拠と詳細数値を表示します。")
+            
+                    for i, row in df_display.iterrows():
+                        s_name = row.get(shop_col, '')
+                        m_no = row.get('台番号', 'Unknown')
+                        m_name = row.get('機種名', '')
+                        p_val = row.get(score_label, 0)
+                        
+                        label_prefix = f"【{s_name}】 " if selected_shop == '全て' else ""
+                        exp_label = f"{label_prefix}#{m_no} {m_name} ({p_val}%)"
+                        
+                        with st.expander(exp_label, expanded=(i == 0)):
+                            _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs, df_importance, df_shop_target)
+
+            with tab_change:
+                render_ranking_tab('prediction_score', '変更(上げ)期待度', 'rgba(255, 87, 34, 0.6)')
                 
-                label_prefix = f"【{shop_name}】 " if selected_shop == '全て' else ""
-                label = f"{label_prefix}#{machine_no} {machine_name} ({prob_val}%)"
-                
-                with st.expander(label, expanded=(i == 0)):
-                    _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs, df_importance, df_shop_target)
+            with tab_sueoki:
+                if selected_shop != '全て' and sueoki_premise == "NO":
+                    st.warning("⚠️ **据え置き前提判定: NO**\n\n本日は据え置きを狙うべき日ではありません。AIのモデル評価が歪むのを防ぐため、据え置きランキングの利用は非推奨です。")
+                    with st.expander("それでも参考として据え置きランキングを見る"):
+                        render_ranking_tab('sueoki_score', '据え置き期待度', 'rgba(33, 150, 243, 0.6)')
+                else:
+                    render_ranking_tab('sueoki_score', '据え置き期待度', 'rgba(33, 150, 243, 0.6)')
                     
             st.info("💡 **なぜこの台の期待度が高くなったか、もっと詳しく知りたいですか？**\nサイドバーの「🤖 AIチャット相談」を開き、データアナリストに「〇〇番台の評価理由を詳しく分析して」と質問すると、AIが全データをもとに論理的に解説してくれます！")
 

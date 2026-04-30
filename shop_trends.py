@@ -215,6 +215,7 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     
     # スコアの再計算（AIの予測スコアと、強力な店癖の過去実績確率をブレンドする）
     score = row.get('prediction_score', 0)
+    sue_score = row.get('sueoki_score', 0)
     
     # 強い店癖（トップトレンド）の実績勝率を加味してスコアを底上げ
     top_win_rates = [t_info['trend_win_rates'].get(tid, 0) for tid in matched_hot_ids]
@@ -223,6 +224,8 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         # AIの評価が実績より低い場合、実績確率側に歩み寄らせる（中間の値をとる）
         if score < max_trend_prob:
             score = (score + max_trend_prob) / 2.0
+        if sue_score < max_trend_prob:
+            sue_score = (sue_score + max_trend_prob) / 2.0
 
     # 悪い店癖（ワーストトレンド）の実績勝率を加味してスコアを引き下げ
     worst_win_rates = [t_info['trend_win_rates'].get(tid, 0) for tid in matched_cold_ids]
@@ -231,8 +234,11 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         # AIの評価が実績より高い場合、下方に歩み寄らせる
         if score > min_trend_prob:
             score = (score + min_trend_prob) / 2.0
+        if sue_score > min_trend_prob:
+            sue_score = (sue_score + min_trend_prob) / 2.0
             
     row['prediction_score'] = score
+    row['sueoki_score'] = sue_score
 
     # 根拠の追記
     reason = str(row.get('根拠', ''))
@@ -306,10 +312,189 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
             is_hard_to_predict = True
             
     # 予測スコアが一定以上（AIが推奨している）台にのみ、注意書きとして添える
-    if is_hard_to_predict and score >= 0.40:
+    if is_hard_to_predict and max(score, sue_score) >= 0.40:
         add_reasons.append(f"【💡店舗傾向】過去の実績から、{t_prefix_ha}特定の条件(角台や凹み台など)に偏って設定を入れる『分かりやすい癖』が少なく、的を絞りにくい（散らして入れている）傾向があります。")
 
     if add_reasons:
         row['根拠'] = (reason + " " + " ".join(add_reasons)).strip()
         
     return row
+
+def analyze_sueoki_and_change_triggers(df_train, shop_name, shop_col='店名'):
+    shop_df = df_train[df_train[shop_col] == shop_name].copy()
+    if len(shop_df) < 50:
+        return None
+        
+    # 1. 据え置き傾向の独立診断
+    prev_high = shop_df[shop_df['is_prev_high_reg'] == 1]
+    sueoki_rate = prev_high['target'].mean() if len(prev_high) > 0 else 0.0
+    
+    if sueoki_rate >= 0.30: sue_tendency = "強い"
+    elif sueoki_rate >= 0.15: sue_tendency = "混在"
+    else: sue_tendency = "弱い"
+
+    # 2. 変更(上げ)トリガーの分析
+    change_df = shop_df[(shop_df['is_prev_high_reg'] == 0) & (shop_df['target'] == 1)]
+    base_change_df = shop_df[shop_df['is_prev_high_reg'] == 0]
+    
+    trigger_diff = "弱"
+    trigger_wd = "影響なし"
+    trigger_kado = "影響なし"
+    master_judge = "ランダム"
+    
+    if len(change_df) > 0 and len(base_change_df) > 0:
+        base_rate = len(change_df) / len(base_change_df)
+        
+        # 差枚 (連続マイナス日数 >= 2 or prev_差枚 <= -1000)
+        base_diff_minus = base_change_df[(base_change_df.get('連続マイナス日数', 0) >= 2) | (base_change_df.get('prev_差枚', 0) <= -1000)]
+        diff_minus = change_df[(change_df.get('連続マイナス日数', 0) >= 2) | (change_df.get('prev_差枚', 0) <= -1000)]
+        rate_diff = len(diff_minus) / len(base_diff_minus) if len(base_diff_minus) > 0 else 0
+        if rate_diff > base_rate * 2.0 and len(diff_minus) >= 3: trigger_diff = "強"
+        elif rate_diff > base_rate * 1.5 and len(diff_minus) >= 2: trigger_diff = "中"
+
+        # 曜日
+        wd_counts = change_df.get('target_weekday', pd.Series(dtype=int)).value_counts()
+        if not wd_counts.empty and wd_counts.iloc[0] >= len(change_df) * 0.3 and wd_counts.iloc[0] >= 3:
+            trigger_wd = "影響あり"
+            
+        # 稼働率
+        base_low_kado = base_change_df[base_change_df.get('prev_累計ゲーム', 0) < 2000]
+        low_kado = change_df[change_df.get('prev_累計ゲーム', 0) < 2000]
+        rate_low_kado = len(low_kado) / len(base_low_kado) if len(base_low_kado) > 0 else 0
+        if rate_low_kado > base_rate * 1.5 and len(low_kado) >= 3: trigger_kado = "影響あり"
+            
+        if trigger_diff == "強" and trigger_wd == "影響あり": master_judge = "複合"
+        elif trigger_diff in ["強", "中"]: master_judge = "差枚主導"
+        elif trigger_wd == "影響あり": master_judge = "曜日主導"
+
+    return {
+        "sueoki_rate": sueoki_rate,
+        "sue_tendency": sue_tendency,
+        "trigger_diff": trigger_diff,
+        "trigger_wd": trigger_wd,
+        "trigger_kado": trigger_kado,
+        "master_judge": master_judge
+    }
+
+def diagnose_allocation_types(df_train, shop_col, specs):
+    """
+    店舗の「配分型」を過去データから診断し、辞書形式で返す関数。
+    誤認誘導型(中間多用)、島型/機種型(面配分)、単体型(点配分)、ローテーション型等のフラグを含む。
+    """
+    alloc_types = {}
+    for s in df_train[shop_col].unique():
+        shop_df = df_train[df_train[shop_col] == s].copy()
+        if len(shop_df) < 100:
+            alloc_types[s] = {"is_mislead": False, "is_point": False, "main_type": "不明", "messages": ["データ不足のため配分型を診断できません。"]}
+            continue
+            
+        messages = []
+        is_mislead = False
+        is_point = False
+        main_type = "不明"
+
+        valid_df = shop_df[shop_df['累計ゲーム'] >= 3000].copy()
+        if len(valid_df) < 50:
+            alloc_types[s] = {"is_mislead": False, "is_point": False, "main_type": "不明", "messages": ["稼働データ不足のため配分型を診断できません。"]}
+            continue
+
+        # 1. 誤認誘導型 (ミスリード・中間多用) の判定
+        valid_df['is_reg_good'] = valid_df['REG確率'] >= (1/300.0)
+        reg_good_df = valid_df[valid_df['is_reg_good']]
+        if not reg_good_df.empty:
+            mislead_rate = len(reg_good_df[(reg_good_df['差枚'] >= -500) & (reg_good_df['差枚'] <= 1000)]) / len(reg_good_df)
+            lose_rate_in_good_reg = len(reg_good_df[reg_good_df['差枚'] < 0]) / len(reg_good_df)
+            
+            if mislead_rate >= 0.50 or lose_rate_in_good_reg >= 0.35:
+                is_mislead = True
+                messages.append("🎭 **誤認誘導型 (ミスリード・中間多用)**\nREG確率は設定4水準を満たす台が多いですが、差枚が伴わない(勝てない)不発台が異常に多いです。「中間設定を多用して高設定(5,6)と誤認させる」配分思想の可能性が極めて高く、AIは**『REG単体での過大評価を防止(差枚の伴いを必須条件化)』**して予測を厳格化しています。")
+
+        # 2. 面配分 (島型・機種型) vs 点配分 (単体型) の判定
+        daily_island = valid_df.groupby(['対象日付', 'island_id'])['差枚'].mean().reset_index()
+        daily_mac = valid_df.groupby(['対象日付', '機種名'])['差枚'].mean().reset_index()
+        daily_shop = valid_df.groupby('対象日付')['差枚'].mean().reset_index().rename(columns={'差枚': 'shop_avg'})
+        
+        daily_island = pd.merge(daily_island, daily_shop, on='対象日付')
+        daily_mac = pd.merge(daily_mac, daily_shop, on='対象日付')
+        
+        island_hit_rate = len(daily_island[(daily_island['差枚'] > 1000) & (daily_island['差枚'] > daily_island['shop_avg'] + 500)]) / len(daily_shop) if not daily_island.empty else 0
+        mac_hit_rate = len(daily_mac[(daily_mac['差枚'] > 1000) & (daily_mac['差枚'] > daily_mac['shop_avg'] + 500)]) / len(daily_shop) if not daily_mac.empty else 0
+        
+        top_machines = valid_df.loc[valid_df.groupby('対象日付')['差枚'].idxmax()]
+        top_machines = pd.merge(top_machines, daily_island.rename(columns={'差枚': 'island_avg'}), on=['対象日付', 'island_id'], how='left')
+        point_hit_rate = len(top_machines[(top_machines['差枚'] >= 2500) & (top_machines['island_avg'] <= 0)]) / len(top_machines) if not top_machines.empty else 0
+
+        if island_hit_rate >= 0.20:
+            main_type = "島型 (面配分)"
+            messages.append("🏝️ **島型 (面配分)**\n同じ島(列)に合算やREGが似通う台が固まりやすく、島全体の平均が強くなる傾向があります。「周りの台の挙動(面)」が強力な判別要素になります。")
+        elif mac_hit_rate >= 0.20:
+            main_type = "機種型 (機種単位配分)"
+            messages.append("🎰 **機種型 (機種単位配分)**\n特定機種だけが明確に強くなる「全台系・半列系」の塊を作る傾向があります。機種全体のベースの高さに注目してください。")
+        elif point_hit_rate >= 0.40:
+            is_point = True
+            main_type = "単体型 (点配分)"
+            messages.append("📍 **単体型 (点配分)**\n島や機種全体は死んでいるのに、ポツンと1台だけ突出して出ている日が多いです。ヒキ依存や当て物(ピンポイント)の要素が強く、周りの状況はアテになりません。深追いは禁物です。")
+        else:
+            main_type = "複合型 (散らし配分)"
+            messages.append("🧩 **複合型 (散らし配分)**\n島・機種・単体が複雑に混ざっています。明確な「面」が形成されにくいため、複数の根拠(店癖や波)を掛け合わせて狙う必要があります。")
+
+        # 3. ローテーション型
+        age_rate = shop_df[(shop_df['連続マイナス日数'] >= 2) & (shop_df['累計ゲーム'] >= 3000)]['target'].mean()
+        sue_rate = shop_df[(shop_df['is_prev_high_reg'] == 1) & (shop_df['累計ゲーム'] >= 3000)]['target'].mean()
+        if pd.notna(age_rate) and pd.notna(sue_rate) and age_rate > (sue_rate * 1.2) and age_rate >= 0.15:
+            messages.append("🔄 **ローテーション型 (循環配分)**\n毎日強い場所が日替わりで移動し、前日弱かった島・機種・凹み台に設定が入りやすいです。AIの「過去特徴→翌日の変更(上げ)予測」が非常に機能しやすい環境です。")
+        
+        # 4. 客層反応型
+        low_kado_hit = shop_df[(shop_df['prev_累計ゲーム'] < 1500) & (shop_df['prev_累計ゲーム'] > 0)]['target'].mean()
+        if pd.notna(low_kado_hit) and low_kado_hit >= 0.20:
+            messages.append("👥 **客層反応型 (リアクティブ)**\n客に見切られて稼働が落ちた(空き台が増えた)台や島に対して、テコ入れで設定を入れてくる傾向が見られます。")
+
+        alloc_types[s] = {
+            "is_mislead": is_mislead,
+            "is_point": is_point,
+            "main_type": main_type,
+            "messages": messages
+        }
+        
+    return alloc_types
+
+def evaluate_sueoki_premise(df_raw_shop, target_date, df_events=None):
+    """
+    本日の「据え置き前提成立判定」を行う。
+    YES / NO / 不明 とその理由を返す。
+    """
+    if df_raw_shop.empty:
+        return "不明", "過去データが不足しているため判定できません。"
+        
+    target_dt = pd.to_datetime(target_date)
+    shop_col = '店名' if '店名' in df_raw_shop.columns else ('店舗名' if '店舗名' in df_raw_shop.columns else None)
+    if not shop_col:
+        return "不明", "店舗名データがありません。"
+        
+    shop_name = df_raw_shop[shop_col].iloc[0]
+    
+    reasons = []
+    is_no = False
+    
+    # 1. イベント日判定
+    if df_events is not None and not df_events.empty:
+        ev_today = df_events[(df_events['店名'] == shop_name) & (df_events['イベント日付'].dt.date == target_dt.date())]
+        if not ev_today.empty:
+            ev = ev_today.iloc[0]
+            if ev.get('イベントランク') in ['SS (周年)', 'S', 'A']:
+                is_no = True
+                reasons.append(f"本日は強いイベント（{ev.get('イベント名')}）が予定されており、設定の入れ替え（変更）がメインになると予想されます。")
+
+    # 2. 前日の回収状況（回収→還元の切り替え日か？）
+    prev_date = target_dt - pd.Timedelta(days=1)
+    df_prev = df_raw_shop[df_raw_shop['対象日付'].dt.date == prev_date.date()]
+    if not df_prev.empty:
+        prev_avg_diff = df_prev['差枚'].mean()
+        if prev_avg_diff <= -150:
+            is_no = True
+            reasons.append(f"前日が強めの回収営業（店舗平均 {int(prev_avg_diff)}枚）であり、本日は還元（上げリセット）にシフトする可能性が高い切り替え日です。")
+
+    if is_no:
+        return "NO", " ".join(reasons)
+    else:
+        return "YES", "設定変更の強いトリガー（特日や極端な回収など）が検知されていないため、据え置き(昨日の続き)を期待できる前提が成立しています。"

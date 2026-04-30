@@ -8,6 +8,20 @@ def render_manager_personality_analysis(selected_shop, top_trends_df, analysis_d
         
         personality_traits = []
         
+        # --- 0. 店舗の「配分型」完全マップ診断 ---
+        if analysis_df is not None and not analysis_df.empty:
+            import backend
+            from shop_trends import diagnose_allocation_types
+            specs = backend.get_machine_specs()
+            shop_col = '店名' if '店名' in analysis_df.columns else '店舗名'
+            alloc_types = diagnose_allocation_types(analysis_df, shop_col, specs)
+            shop_alloc = alloc_types.get(selected_shop, {})
+            
+            if shop_alloc.get("messages"):
+                st.markdown("##### 🏢 店舗の「配分型」完全マップ診断")
+                st.info("💡 **AIの結論**: この店舗の配分思想のベースです。AIはこの思想を前提に予測ロジックを自動調整しています。\n\n" + "\n\n".join(shop_alloc["messages"]))
+                st.divider()
+
         # --- 1. AIが発見した店癖に基づく性格診断 (リファクタリング) ---
         st.markdown("##### 💡 AIの分析による店癖")
         st.caption("スマートな実装への改善提案：診断ロジックをデータ構造として定義し、ループ処理で簡潔に記述しました。")

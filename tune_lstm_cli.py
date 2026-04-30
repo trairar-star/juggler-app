@@ -108,7 +108,15 @@ def main():
     study.optimize(lambda t: objective(t, X, y, input_size, device), n_trials=10)
     
     print(f"\n🎉 チューニング完了！ 最適なパラメータ: {study.best_params}")
-    print("設定をスプレッドシートに反映させるには、アプリの『AIモデル設定』画面のLSTM設定バーに手動で入力して保存してください。")
+    print("スプレッドシートに設定を自動保存しています...")
+    
+    for shop in shop_hyperparams.keys():
+        shop_hyperparams[shop]['lstm_hidden_size'] = study.best_params['hidden_size']
+        shop_hyperparams[shop]['lstm_lr'] = study.best_params['lr']
+        shop_hyperparams[shop]['lstm_epochs'] = study.best_params['epochs']
+        
+    backend.save_shop_ai_settings(shop_hyperparams)
+    print("✅ スプレッドシートへの自動保存が完了しました！アプリの画面をリロードすると即座に反映されます。")
 
 if __name__ == '__main__':
     main()

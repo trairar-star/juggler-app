@@ -71,7 +71,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             if not df_pred_target.empty:
                 df_pred_target['台番号'] = df_pred_target['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
                 # 必要なカラムだけ残す
-                cols_to_merge = ['台番号', 'prediction_score', '予測信頼度', '根拠']
+                cols_to_merge = ['台番号', 'prediction_score', 'sueoki_score', '予測信頼度', '根拠']
                 cols_to_merge = [c for c in cols_to_merge if c in df_pred_target.columns]
                 
                 df_target = pd.merge(df_target, df_pred_target[cols_to_merge], on='台番号', how='left')
@@ -81,9 +81,14 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     
     # 期待度をパーセント表記に
     if 'prediction_score' in display_df.columns:
-        display_df['期待度'] = display_df['prediction_score'].apply(lambda x: f"{int(x * 100)}%" if pd.notna(x) and x != '' else "-")
+        if 'sueoki_score' in display_df.columns:
+            display_df['max_score'] = display_df[['prediction_score', 'sueoki_score']].max(axis=1)
+        else:
+            display_df['max_score'] = display_df['prediction_score']
+            
+        display_df['期待度'] = display_df['max_score'].apply(lambda x: f"{int(x * 100)}%" if pd.notna(x) and x != '' else "-")
         # 期待度に基づくAI順位の計算
-        display_df['AI順位_num'] = display_df['prediction_score'].rank(method='min', ascending=False).fillna(999).astype(int)
+        display_df['AI順位_num'] = display_df['max_score'].rank(method='min', ascending=False).fillna(999).astype(int)
         display_df['AI順位'] = display_df['AI順位_num'].apply(lambda x: f"{x}位" if x != 999 else "-")
     else:
         display_df['期待度'] = "-"
@@ -151,8 +156,10 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # --- 期待外れ台のフラグ計算 (ハイライト用) ---
     def check_bad_pred(row):
-        score = row.get('prediction_score', 0)
-        if pd.isna(score) or score < 0.30: return False
+        c_score = row.get('prediction_score', 0)
+        s_score = row.get('sueoki_score', 0)
+        max_s = max(c_score, s_score)
+        if pd.isna(max_s) or max_s < 0.30: return False
         
         g = row.get('総回転', 0)
         b = row.get('BIG', 0)
@@ -215,8 +222,8 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     elif sort_by == "REG確率が良い順":
         display_df = display_df.sort_values('REG確率', ascending=False)
     elif sort_by == "AI期待度順":
-        if 'prediction_score' in display_df.columns:
-            display_df = display_df.sort_values('prediction_score', ascending=False)
+        if 'max_score' in display_df.columns:
+            display_df = display_df.sort_values('max_score', ascending=False)
     else:
         try:
             display_df['台番号_num'] = pd.to_numeric(display_df['台番号'])
@@ -250,7 +257,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         if 'AI順位_num' in display_df.columns:
             ai_target_df = display_df[display_df['AI順位_num'] <= limit]
         else:
-            ai_target_df = display_df.sort_values('prediction_score', ascending=False).head(limit)
+            ai_target_df = display_df.sort_values('max_score', ascending=False).head(limit)
         target_label = f"AI推奨台(上位10%・計{len(ai_target_df)}台)"
             
         if not ai_target_df.empty:

@@ -248,13 +248,37 @@ def render_my_balance_page(df_raw):
         df_balance['日付_merge'] = pd.to_datetime(df_balance['日付'])
         df_balance['台番号_str'] = df_balance['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
         df_pred_log_temp['prediction_score'] = pd.to_numeric(df_pred_log_temp['prediction_score'], errors='coerce')
+        if 'sueoki_score' not in df_pred_log_temp.columns:
+            df_pred_log_temp['sueoki_score'] = np.nan
+        df_pred_log_temp['sueoki_score'] = pd.to_numeric(df_pred_log_temp['sueoki_score'], errors='coerce')
         
-        df_balance = pd.merge(df_balance, df_pred_log_temp[['予測対象日_merge', '店名', '台番号', 'prediction_score']], left_on=['日付_merge', '店名', '台番号_str'], right_on=['予測対象日_merge', '店名', '台番号'], how='left', suffixes=('', '_pred'))
+        df_balance = pd.merge(df_balance, df_pred_log_temp[['予測対象日_merge', '店名', '台番号', 'prediction_score', 'sueoki_score']], left_on=['日付_merge', '店名', '台番号_str'], right_on=['予測対象日_merge', '店名', '台番号'], how='left', suffixes=('', '_pred'))
         df_balance = df_balance.drop(columns=['日付_merge', '台番号_str', '予測対象日_merge', '台番号_pred'], errors='ignore')
     else:
         df_balance['prediction_score'] = np.nan
+        df_balance['sueoki_score'] = np.nan
 
-    df_balance['期待度_pct'] = df_balance['prediction_score'] * 100
+    if 'sueoki_score' not in df_balance.columns:
+        df_balance['sueoki_score'] = np.nan
+
+    df_balance['期待度_pct'] = df_balance[['prediction_score', 'sueoki_score']].max(axis=1) * 100
+    
+    def format_pred_detail(row):
+        c = row.get('prediction_score')
+        s = row.get('sueoki_score')
+        if pd.isna(c) and pd.isna(s):
+            return "-"
+        c_val = float(c) * 100 if pd.notna(c) else 0.0
+        s_val = float(s) * 100 if pd.notna(s) else 0.0
+        
+        if c_val == 0 and s_val == 0:
+            return "-"
+        elif c_val >= s_val:
+            return f"変更(上げ)狙い ({c_val:.1f}%)"
+        else:
+            return f"据え狙い ({s_val:.1f}%)"
+            
+    df_balance['AI狙い目'] = df_balance.apply(format_pred_detail, axis=1)
 
     # --- 欠損している期待度を再計算する機能 ---
     missing_dates = df_balance[df_balance['prediction_score'].isna()]['日付'].dropna().dt.date.unique()
@@ -283,7 +307,9 @@ def render_my_balance_page(df_raw):
                             if shop_col_pred != '店名':
                                 df_pred_temp = df_pred_temp.rename(columns={shop_col_pred: '店名'})
                             df_pred_temp['台番号'] = df_pred_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
-                            new_preds.append(df_pred_temp[['予測対象日', '店名', '台番号', 'prediction_score']])
+                            if 'sueoki_score' not in df_pred_temp.columns:
+                                df_pred_temp['sueoki_score'] = 0.0
+                            new_preds.append(df_pred_temp[['予測対象日', '店名', '台番号', 'prediction_score', 'sueoki_score']])
                     except Exception:
                         pass
                     progress_bar.progress((i + 1) / len(missing_dates))
@@ -343,7 +369,7 @@ def render_my_balance_page(df_raw):
     k4.metric("稼働数", f"{total_count} 回")
     k5.metric("時給", f"{int(hourly_wage):,} 円/h" if total_hours > 0 else "-")
     
-    avg_pred_score = df_balance['prediction_score'].mean() if 'prediction_score' in df_balance.columns else np.nan
+    avg_pred_score = df_balance['期待度_pct'].mean() / 100.0 if '期待度_pct' in df_balance.columns else np.nan
     st.caption("稼働データ (メモ欄からの自動集計)")
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("総ゲーム数", f"{total_my_g:,} G")
@@ -633,7 +659,7 @@ def render_my_balance_page(df_raw):
 
     df_balance['自力合算'] = df_balance['メモ'].apply(extract_my_prob)
 
-    display_cols = ['日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', '期待度_pct', '自力合算', 'メモ']
+    display_cols = ['日付', '店名', '台番号', '機種名', '投資', '回収', '収支', '稼働時間', '期待度_pct', 'AI狙い目', '自力合算', 'メモ']
     available_cols = [c for c in display_cols if c in df_balance.columns]
     styled_balance = df_balance[available_cols].style.bar(subset=['収支'], align='mid', color=['rgba(66, 165, 245, 0.5)', 'rgba(255, 112, 67, 0.5)'], vmin=-30000, vmax=30000)
     st.dataframe(
@@ -644,7 +670,8 @@ def render_my_balance_page(df_raw):
             "回収": st.column_config.NumberColumn("回収", format="%d 円"),
             "収支": st.column_config.NumberColumn("収支", format="%+d 円"),
             "稼働時間": st.column_config.NumberColumn("時間", format="%.1f h"),
-            "期待度_pct": st.column_config.NumberColumn("事前AI期待度", format="%.1f%%", help="打った台の事前のAI予測期待度(保存ログから取得)"),
+            "期待度_pct": st.column_config.NumberColumn("事前AI期待度", format="%.1f%%", help="打った台の事前の総合AI期待度(高い方)"),
+            "AI狙い目": st.column_config.TextColumn("AI狙い目", help="AIが変更(上げ)と据え置きのどちらを高く評価していたか"),
             "自力合算": st.column_config.TextColumn("自力合算", help="メモ欄の入力から計算した自分が回した分の合算確率"),
         },
         width="stretch",

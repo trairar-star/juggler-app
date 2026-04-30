@@ -3,50 +3,85 @@ import numpy as np
 import re
 import math
 from utils import get_matched_spec_key, classify_shop_eval
-from shop_trends import calculate_shop_trends, apply_trends_to_row
+from shop_trends import calculate_shop_trends, apply_trends_to_row, diagnose_allocation_types
 from config import MACHINE_SPECS
 
 def postprocess_predictions(predict_df, train_df):
     specs = MACHINE_SPECS
+    shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
+    
+    # --- 誤認誘導型などの「配分型」の事前診断 ---
+    alloc_types = {}
+    if shop_col and not train_df.empty:
+        alloc_types = diagnose_allocation_types(train_df, shop_col, specs)
     
     def apply_setting5_boost(row):
         score = row.get('prediction_score', 0)
+        sue_score = row.get('sueoki_score', 0)
         machine_name = row.get('機種名', '')
         reg_prob = row.get('REG確率', 0)
         games = row.get('累計ゲーム', 0)
+        diff = row.get('差枚', 0)
+        s_name = row.get(shop_col)
+        is_mislead = alloc_types.get(s_name, {}).get("is_mislead", False)
         
-        if reg_prob <= 0 or games < 3000:
-            return score
-            
-        matched_spec_key = get_matched_spec_key(machine_name, specs)
-                    
-        if matched_spec_key and "設定5" in specs[matched_spec_key]:
-            set5_reg_prob = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
-            if reg_prob >= set5_reg_prob:
-                score = score + (1.0 - score) * 0.15 # 設定5以上なら残りの伸びしろの15%を加算
-        return score
+        if reg_prob > 0 and games >= 3000:
+            matched_spec_key = get_matched_spec_key(machine_name, specs)
+            if matched_spec_key and "設定5" in specs[matched_spec_key]:
+                set5_reg_prob = 1.0 / specs[matched_spec_key]["設定5"]["REG"]
+                if reg_prob >= set5_reg_prob:
+                    # 誤認誘導型店舗への厳格化処置（差枚が伴っていないフェイク台はブーストしない）
+                    if is_mislead and diff < 500:
+                        pass
+                    else:
+                        row['prediction_score'] = score + (1.0 - score) * 0.15
+                        row['sueoki_score'] = sue_score + (1.0 - sue_score) * 0.15
+        return row
 
-    if not predict_df.empty: predict_df['prediction_score'] = predict_df.apply(apply_setting5_boost, axis=1)
-    if not train_df.empty: train_df['prediction_score'] = train_df.apply(apply_setting5_boost, axis=1)
+    if not predict_df.empty: predict_df = predict_df.apply(apply_setting5_boost, axis=1)
+    if not train_df.empty: train_df = train_df.apply(apply_setting5_boost, axis=1)
 
     def apply_reliability_penalty(row):
         score = row.get('prediction_score', 0)
+        sue_score = row.get('sueoki_score', 0)
         hc = row.get('history_count', 1)
         games = row.get('累計ゲーム', 0)
         reg_prob = row.get('REG確率', 0)
+        diff = row.get('差枚', 0)
+        s_name = row.get(shop_col)
+        is_mislead = alloc_types.get(s_name, {}).get("is_mislead", False)
+        
+        factor = 1.0
+        reasons = []
         
         # 過去データが少ない場合は予測のブレが大きいためスコアを割り引く
-        if hc < 14: score *= 0.8
-        elif hc < 30: score *= 0.95
+        if hc < 14: factor *= 0.8
+        elif hc < 30: factor *= 0.95
         
+        # 誤認誘導型(フェイク多用店)の強制減点ペナルティ
+        if is_mislead and reg_prob > 0 and (1.0 / reg_prob) <= 300 and diff <= 0 and games >= 3000:
+            factor *= 0.80
+            reasons.append("【⚠️誤認誘導警戒】この店舗は「REGは引けるが勝てない中間設定(4)」を多用して高設定と誤認させる傾向があります。差枚が伴っていないためAI評価を厳しく下げました。")
+
         # 前日の稼働が少ない場合の減点（ただし、高設定挙動を示している場合は減点を緩和する）
         is_good_reg = reg_prob >= (1.0 / 280.0) if reg_prob > 0 else False
         
-        if games < 1000: score *= (0.85 if is_good_reg else 0.70)
-        elif games < 2000: score *= (0.95 if is_good_reg else 0.85)
-        elif games < 3000: score *= (1.0 if is_good_reg else 0.95)
+        if games < 1000: factor *= (0.85 if is_good_reg else 0.70)
+        elif games < 2000: factor *= (0.95 if is_good_reg else 0.85)
+        elif games < 3000: factor *= (1.0 if is_good_reg else 0.95)
         
-        return score
+        row['prediction_score'] = score * factor
+        row['sueoki_score'] = sue_score * factor
+        
+        if reasons:
+            existing_reason = str(row.get('根拠', ''))
+            if existing_reason == 'nan': existing_reason = ''
+            new_reason = " ".join(reasons)
+            if existing_reason and existing_reason != '-':
+                row['根拠'] = (existing_reason + " " + new_reason).strip()
+            else:
+                row['根拠'] = new_reason
+        return row
         
     def get_reliability_mark(row):
         hc = row.get('history_count', 1)
@@ -55,13 +90,13 @@ def postprocess_predictions(predict_df, train_df):
         return "🔼高"
 
     if not predict_df.empty: 
-        predict_df['prediction_score'] = predict_df.apply(apply_reliability_penalty, axis=1)
+        predict_df = predict_df.apply(apply_reliability_penalty, axis=1)
         predict_df['予測信頼度'] = predict_df.apply(get_reliability_mark, axis=1)
     if not train_df.empty: 
+        train_df = train_df.apply(apply_reliability_penalty, axis=1)
         train_df['予測信頼度'] = train_df.apply(get_reliability_mark, axis=1)
         
     # --- 営業状態（還元/通常/回収）の事前付与と店癖の適用 ---
-    shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     if shop_col and not train_df.empty:
         def _add_shop_status(df_target, is_actual=False):
             if df_target.empty: return df_target
@@ -118,8 +153,6 @@ def postprocess_predictions(predict_df, train_df):
             else:
                 reasons.append("【🔻減点】前日の総回転数が極端に少なく、データ不足のため期待度を少し割り引いています。")
 
-        score *= penalty_factor
-        
         if reasons:
             existing_reason = str(row.get('根拠', ''))
             if existing_reason == 'nan': existing_reason = ''
@@ -129,7 +162,8 @@ def postprocess_predictions(predict_df, train_df):
             else:
                 row['根拠'] = new_reason
                 
-        row['prediction_score'] = score
+        row['prediction_score'] = score * penalty_factor
+        row['sueoki_score'] = row.get('sueoki_score', 0) * penalty_factor
         return row
 
     if not predict_df.empty:
@@ -162,6 +196,8 @@ def postprocess_predictions(predict_df, train_df):
         
         def _correct(row):
             score = row.get('prediction_score', 0)
+            sue_score = row.get('sueoki_score', 0)
+            max_score = max(score, sue_score)
             s_raw_avg = row.get('temp_shop_avg', 0.15)
             s_diff = row.get('temp_shop_diff', 0)
             s_name = row.get(shop_col)
@@ -172,7 +208,7 @@ def postprocess_predictions(predict_df, train_df):
                 if is_betapin:
                     reasons.append(f"【⚠️絶対回収】過去のデータから、この店舗は回収日に高設定をほぼ100%使わない「完全ベタピン」の傾向が確認されています。")
                 else:
-                    if score >= 0.30:
+                    if max_score >= 0.30:
                         reasons.append(f"【💎一点突破】店舗全体は回収傾向ですが、AIはこの台に確かな高設定の根拠(見せ台)があると確信して強く推奨しています。")
                     else:
                         reasons.append("【🚨フェイク警戒】店舗全体が回収傾向です。普段なら強い根拠がある台ですが、今日はフェイク（罠）として使われるリスクが高いため慎重に判断してください。")
@@ -206,9 +242,66 @@ def postprocess_predictions(predict_df, train_df):
     if shop_col:
         all_df = all_df.sort_values([shop_col, '台番号', '対象日付']).reset_index(drop=True)
         all_df['past_prediction_score'] = all_df.groupby([shop_col, '台番号'])['prediction_score'].shift(1).fillna(0.0)
+        all_df['past_sueoki_score'] = all_df.groupby([shop_col, '台番号'])['sueoki_score'].shift(1).fillna(0.0)
     else:
         all_df = all_df.sort_values(['台番号', '対象日付']).reset_index(drop=True)
         all_df['past_prediction_score'] = all_df.groupby('台番号')['prediction_score'].shift(1).fillna(0.0)
+        all_df['past_sueoki_score'] = all_df.groupby('台番号')['sueoki_score'].shift(1).fillna(0.0)
+
+    # --- 「変更予測的中の意図的変更」を条件に据え置き期待度をブースト ---
+    def apply_intentional_change_boost(df_target):
+        def _boost(row):
+            sue_score = row.get('sueoki_score', 0)
+            past_c_score = row.get('past_prediction_score', 0)
+            diff = row.get('差枚', 0)
+            reg_prob = row.get('REG確率', 0)
+            games = row.get('累計ゲーム', 0)
+            s_name = row.get(shop_col)
+            island_diff = row.get('island_avg_diff', 0)
+            machine_diff = row.get('machine_avg_diff', 0)
+            
+            shop_info = alloc_types.get(s_name, {})
+            is_point = shop_info.get("is_point", False)
+            is_mislead = shop_info.get("is_mislead", False)
+            main_type = shop_info.get("main_type", "不明")
+            
+            reasons = []
+
+            # 変更予測(上げ狙い)が前日時点で高評価だったか
+            if past_c_score >= 0.30:
+                # 前日の結果が高設定挙動 (BIG偏向のまぐれ吹きではないか)
+                is_high_behavior = (games >= 3000) and (reg_prob > 0) and (reg_prob >= 1/300.0) and (diff > 0)
+                
+                if is_high_behavior:
+                    intentional_score = 0
+                    
+                    # 偶然のヒキ・点配分でなければ加点
+                    if not is_point: intentional_score += 1
+                    # 配分思想(店タイプ)と一致していれば加点
+                    if "島型" in main_type or "機種型" in main_type: intentional_score += 1
+                    # 島・機種全体の差枚がプラスなら加点
+                    if island_diff > 500 or machine_diff > 500: intentional_score += 1
+                    # 誤認誘導型の場合は差枚を厳格に見る
+                    if is_mislead and diff < 1000: intentional_score -= 1
+                        
+                    # 「意図的変更」と判定できた場合のみ据え置き期待度をブースト (15%〜20%)
+                    if intentional_score >= 1:
+                        boost_amount = 0.15 + (0.05 if intentional_score >= 2 else 0.0)
+                        sue_score = sue_score + (1.0 - sue_score) * boost_amount
+                        reasons.append("【🎯意図的変更→据え置き】前日AIが変更(上げ)を予測し、島や機種の状況からも「店側の意図的な高設定投入」と確信できる結果でした。本日はその『意思の継続(据え置き)』を高く評価しています。")
+                        
+            if reasons:
+                existing_reason = str(row.get('根拠', ''))
+                if existing_reason == 'nan': existing_reason = ''
+                new_reason = " ".join(reasons)
+                row['根拠'] = (existing_reason + " " + new_reason).strip() if existing_reason and existing_reason != '-' else new_reason
+                
+            row['sueoki_score'] = sue_score
+            return row
+            
+        return df_target.apply(_boost, axis=1)
+
+    all_df = apply_intentional_change_boost(all_df)
         
     train_df = all_df[all_df['_is_predict'] == False].sort_values('_uid').set_index('_orig_index').drop(columns=['_is_predict', '_uid'])
     predict_df = all_df[all_df['_is_predict'] == True].sort_values('_uid').set_index('_orig_index').drop(columns=['_is_predict', '_uid'])
@@ -226,16 +319,22 @@ def postprocess_predictions(predict_df, train_df):
     def get_reason(row):
         comments, reasons = [], []
         score = row.get('prediction_score', 0)
-        if score > 0.50: comments.append("【激アツ】AIの自信度が非常に高い(生確率で50%超え)です。")
+        sue_score = row.get('sueoki_score', 0)
+        max_score = max(score, sue_score)
+        if max_score > 0.50: comments.append("【激アツ】AIの自信度が非常に高い(生確率で50%超え)です。")
         
         past_score = row.get('past_prediction_score', 0)
+        past_sue_score = row.get('past_sueoki_score', 0)
+        max_past_score = max(past_score, past_sue_score)
         diff = row.get('差枚', 0)
         
-        if past_score >= 0.30:
+        if max_past_score >= 0.30:
             if diff <= -500:
-                reasons.append(f"【AIリベンジ狙い】前日もAIが推奨(期待度{past_score*100:.0f}%)していましたが不発でした。高設定据え置きのリベンジが期待できます。")
+                reasons.append(f"【AIリベンジ狙い】前日もAIが推奨(期待度{max_past_score*100:.0f}%)していましたが不発でした。高設定据え置きのリベンジが期待できます。")
             elif diff > 0:
-                reasons.append(f"【AI推奨継続】前日もAIが推奨(期待度{past_score*100:.0f}%)しており、好調のまま今日も強い根拠を維持しています。")
+                existing_reason = str(row.get('根拠', ''))
+                if "【🎯意図的変更→据え置き】" not in existing_reason:
+                    reasons.append(f"【AI推奨継続】前日もAIが推奨(期待度{max_past_score*100:.0f}%)しており、好調のまま今日も強い根拠を維持しています。")
         
         mean_7d = row.get('mean_7days_diff', 0)
         win_rate_7d = row.get('win_rate_7days', 0)
@@ -359,7 +458,7 @@ def postprocess_predictions(predict_df, train_df):
             elif evt_score > 0: reasons.append(f"店舗イベント「{evt_name}」{rank_str}対象日です(複合スコア: {evt_score})。")
 
         prev_evt_score = row.get('prev_event_rank_score', 0)
-        if evt_score <= 0 and prev_evt_score > 0 and score >= 0.60: reasons.append("【特日翌日】前日は特日でしたが、AIは本日の「据え置き」または「入れ直し」を有力視しています。")
+        if evt_score <= 0 and prev_evt_score > 0 and max_score >= 0.60: reasons.append("【特日翌日】前日は特日でしたが、AIは本日の「据え置き」または「入れ直し」を有力視しています。")
 
         w_avg = row.get('weekday_avg_diff', 0)
         if w_avg > 150:
@@ -392,8 +491,8 @@ def postprocess_predictions(predict_df, train_df):
         if reasons: comments.append(" ".join(reasons))
             
         if not has_strong_reason:
-            if score >= 0.40: comments.append("目立った特徴（特定の店癖など）には合致していませんが、様々なデータの全体バランスからAIが非常に高く評価しています。")
-            elif score >= 0.20: comments.append("目立った強い根拠はありませんが、複数の細かな要因（周りの状況や過去のわずかな傾向）の組み合わせにより、消去法的に期待度が底上げされています。")
+            if max_score >= 0.40: comments.append("目立った特徴（特定の店癖など）には合致していませんが、様々なデータの全体バランスからAIが非常に高く評価しています。")
+            elif max_score >= 0.20: comments.append("目立った強い根拠はありませんが、複数の細かな要因（周りの状況や過去のわずかな傾向）の組み合わせにより、消去法的に期待度が底上げされています。")
             else: comments.append("特筆すべき強い根拠はありません。")
             
         base_reason = " ".join(comments)
@@ -403,14 +502,14 @@ def postprocess_predictions(predict_df, train_df):
 
     if not predict_df.empty:
         predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
-        predict_df['おすすめ度'] = predict_df['prediction_score'].apply(get_rating)
+        predict_df['おすすめ度'] = predict_df[['prediction_score', 'sueoki_score']].max(axis=1).apply(get_rating)
         if '店名' in predict_df.columns:
-            shop_mean = predict_df.groupby('店名')['prediction_score'].transform('mean')
+            shop_mean = predict_df.groupby('店名')[['prediction_score', 'sueoki_score']].max(axis=1).groupby(predict_df['店名']).transform('mean')
             predict_df['店舗期待度'] = shop_mean.apply(get_rating)
         
     if not train_df.empty:
         train_df['根拠'] = train_df.apply(get_reason, axis=1)
-        train_df['おすすめ度'] = train_df['prediction_score'].apply(get_rating)
+        train_df['おすすめ度'] = train_df[['prediction_score', 'sueoki_score']].max(axis=1).apply(get_rating)
 
     def highlight_reasons(text):
         if not isinstance(text, str): return text
@@ -426,6 +525,7 @@ def postprocess_predictions(predict_df, train_df):
         text = text.replace('**【超不発】**', '**:orange[【超不発】]**')
         text = text.replace('**【波・推移】**', '**:green[【波・推移】]**')
         text = text.replace('**【AIリベンジ狙い】**', '**:orange[【AIリベンジ狙い】]**')
+        text = text.replace('**【🎯意図的変更→据え置き】**', '**:red[【🎯意図的変更→据え置き】]**')
         return text
 
     if not predict_df.empty and '根拠' in predict_df.columns:

@@ -116,7 +116,11 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 if '台番号' in df_shop_pred.columns and 'prediction_score' in df_shop_pred.columns:
                     df_shop_pred['台番号_str'] = df_shop_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
                     for _, r in df_shop_pred.iterrows():
-                        pred_dict[r['台番号_str']] = r['prediction_score']
+                        if 'sueoki_score' in r:
+                            max_s = max(r.get('prediction_score', 0), r.get('sueoki_score', 0))
+                        else:
+                            max_s = r.get('prediction_score', 0)
+                        pred_dict[r['台番号_str']] = max_s
 
     # df_predict が渡されなかった場合は既存の df_pred_log (上位10%のみ) をフォールバックとして使用
     if not pred_dict and not df_pred_log.empty:
@@ -146,7 +150,11 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 if '台番号' in df_latest_pred.columns and 'prediction_score' in df_latest_pred.columns:
                     df_latest_pred['台番号_str'] = df_latest_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
                     for _, r in df_latest_pred.iterrows():
-                        pred_dict[r['台番号_str']] = r['prediction_score']
+                        if 'sueoki_score' in r:
+                            max_s = max(r.get('prediction_score', 0), r.get('sueoki_score', 0))
+                        else:
+                            max_s = r.get('prediction_score', 0)
+                        pred_dict[r['台番号_str']] = max_s
 
     df_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
     df_shop['対象日付'] = pd.to_datetime(df_shop['対象日付'], errors='coerce')
@@ -171,8 +179,12 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                     temp_log['実行日時'] = pd.to_datetime(temp_log['実行日時'], errors='coerce')
                     temp_log = temp_log.sort_values('実行日時', ascending=False).drop_duplicates(subset=['予測対象日_merge', '台番号'])
                 
-                temp_log = temp_log[['予測対象日_merge', '台番号', 'prediction_score']].rename(columns={'予測対象日_merge': '対象日付'})
-                temp_log['prediction_score'] = pd.to_numeric(temp_log['prediction_score'], errors='coerce')
+                if 'sueoki_score' in temp_log.columns:
+                    temp_log['max_score'] = temp_log[['prediction_score', 'sueoki_score']].apply(pd.to_numeric, errors='coerce').max(axis=1)
+                else:
+                    temp_log['max_score'] = pd.to_numeric(temp_log['prediction_score'], errors='coerce')
+                    
+                temp_log = temp_log[['予測対象日_merge', '台番号', 'max_score']].rename(columns={'予測対象日_merge': '対象日付', 'max_score': 'prediction_score'})
                 
                 df_shop = pd.merge(df_shop, temp_log, on=['対象日付', '台番号'], how='left')
                 

@@ -1502,83 +1502,92 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
     with tab_detail.expander("🧠 AI特徴量重要度", expanded=False):
         if df_importance is not None and not df_importance.empty:
             st.markdown("### 🧠 AIが重視したポイント (特徴量重要度)")
-    
-            # 全店舗の重要度データを準備
-            imp_all = df_importance[df_importance['shop_name'] == '全店舗'].copy()
-            if not imp_all.empty:
-                imp_all['特徴量名'] = imp_all['feature'].map(lambda x: FEATURE_NAME_MAP.get(x, x))
-                imp_all = imp_all.sort_values('importance', ascending=False)
-    
-            # 店舗別の重要度データを準備
-            imp_shop = df_importance[df_importance['shop_name'] == selected_shop].copy()
-            if not imp_shop.empty:
-                imp_shop['特徴量名'] = imp_shop['feature'].map(lambda x: FEATURE_NAME_MAP.get(x, x))
-                imp_shop = imp_shop.sort_values('importance', ascending=False)
-    
             st.info("💡 **グラフの見方**: バーの長さが「重要度（予測への影響力）」を、**色**が「影響の方向（プラスかマイナスか）」を表します。\n\n"
                     "- 🟥 **赤系 (プラス)**: その値が大きいほど、高設定になりやすい（例: 前日差枚が多いほど据え置きされやすい）\n"
                     "- 🟦 **青系 (マイナス)**: その値が小さいほど、高設定になりやすい（例: 前日差枚が少ないほど上げられやすい）")
             
-            # 相関データが存在しない過去のキャッシュへのフォールバック
-            if 'correlation' not in imp_all.columns:
-                imp_all['correlation'] = 0.0
-            if not imp_shop.empty and 'correlation' not in imp_shop.columns:
-                imp_shop['correlation'] = 0.0
-
-            color_condition = alt.condition(
-                alt.datum.correlation >= 0,
-                alt.value("#FF7043"),  # プラスならオレンジ/赤系
-                alt.value("#42A5F5")   # マイナスなら青系
-            )
+            tab_imp_change, tab_imp_sueoki = st.tabs(["🚀 変更(上げ)予測", "🔁 据え置き予測"])
             
-            tooltip_def = [
-                alt.Tooltip('特徴量名:N', title='特徴量'),
-                alt.Tooltip('importance:Q', title='重要度'),
-                alt.Tooltip('correlation:Q', title='相関係数(方向)', format='+.2f')
-            ]
-
-            if not imp_shop.empty:
-                # 店舗別モデルの重要度順でリストを作成し、両方のグラフのY軸ソート順を統一する
-                sort_order = imp_shop['特徴量名'].tolist()
-                
-                # 店舗別モデルと全体モデルを比較表示
-                st.caption(f"AIが【{selected_shop}】の台を予測する際に重視したデータ（左）と、全店舗共通の傾向（右）を比較します。")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown(f"**【{selected_shop}】専用モデル**")
-                    chart_shop = alt.Chart(imp_shop).mark_bar().encode(
-                        x=alt.X('importance:Q', title='重要度スコア'),
-                        y=alt.Y('特徴量名:N', title='特徴量', sort=sort_order, axis=alt.Axis(labelLimit=0)),
-                        color=color_condition,
-                        tooltip=tooltip_def
-                    ).properties(height=500).interactive()
-                    st.altair_chart(chart_shop, width="stretch")
+            def render_importance_tab(mode_label):
+                # 全店舗の重要度データを準備
+                imp_all = df_importance[df_importance['shop_name'] == f'全店舗({mode_label})'].copy()
+                if not imp_all.empty:
+                    imp_all['特徴量名'] = imp_all['feature'].map(lambda x: FEATURE_NAME_MAP.get(x, x))
+                    imp_all = imp_all.sort_values('importance', ascending=False)
+        
+                # 店舗別の重要度データを準備
+                imp_shop = df_importance[df_importance['shop_name'] == f'{selected_shop}({mode_label})'].copy()
+                if not imp_shop.empty:
+                    imp_shop['特徴量名'] = imp_shop['feature'].map(lambda x: FEATURE_NAME_MAP.get(x, x))
+                    imp_shop = imp_shop.sort_values('importance', ascending=False)
                     
-                with col2:
-                    st.markdown("**【全店舗】共通モデル**")
-                    if not imp_all.empty:
-                        chart_all = alt.Chart(imp_all).mark_bar().encode(
+                # 相関データが存在しない過去のキャッシュへのフォールバック
+                if 'correlation' not in imp_all.columns:
+                    imp_all['correlation'] = 0.0
+                if not imp_shop.empty and 'correlation' not in imp_shop.columns:
+                    imp_shop['correlation'] = 0.0
+
+                color_condition = alt.condition(
+                    alt.datum.correlation >= 0,
+                    alt.value("#FF7043"),  # プラスならオレンジ/赤系
+                    alt.value("#42A5F5")   # マイナスなら青系
+                )
+                
+                tooltip_def = [
+                    alt.Tooltip('特徴量名:N', title='特徴量'),
+                    alt.Tooltip('importance:Q', title='重要度'),
+                    alt.Tooltip('correlation:Q', title='相関係数(方向)', format='+.2f')
+                ]
+
+                if not imp_shop.empty:
+                    # 店舗別モデルの重要度順でリストを作成し、両方のグラフのY軸ソート順を統一する
+                    sort_order = imp_shop['特徴量名'].tolist()
+                    
+                    # 店舗別モデルと全体モデルを比較表示
+                    st.caption(f"AIが【{selected_shop}】の{mode_label}を行う際に重視したデータ（左）と、全店舗共通の傾向（右）を比較します。")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown(f"**【{selected_shop}】専用モデル**")
+                        chart_shop = alt.Chart(imp_shop).mark_bar().encode(
                             x=alt.X('importance:Q', title='重要度スコア'),
-                            y=alt.Y('特徴量名:N', title=None, sort=sort_order, axis=alt.Axis(labelLimit=0)),
+                            y=alt.Y('特徴量名:N', title='特徴量', sort=sort_order, axis=alt.Axis(labelLimit=0)),
                             color=color_condition,
                             tooltip=tooltip_def
                         ).properties(height=500).interactive()
-                        st.altair_chart(chart_all, width="stretch")
-                    else:
-                        st.info("全店舗共通モデルのデータがありません。")
-    
-            elif not imp_all.empty:
-                # 店舗別モデルがなく、全体モデルのみの場合
-                st.caption(f"【{selected_shop}】専用の学習モデルはまだありません（データ不足）。代わりに全店舗共通の傾向を表示します。")
-                chart_imp = alt.Chart(imp_all).mark_bar().encode(
-                    x=alt.X('importance:Q', title='重要度スコア'),
-                    y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
-                    color=color_condition,
-                    tooltip=tooltip_def
-                ).properties(height=500).interactive()
-                
-                st.altair_chart(chart_imp, width="stretch")
+                        st.altair_chart(chart_shop, width="stretch")
+                        
+                    with col2:
+                        st.markdown("**【全店舗】共通モデル**")
+                        if not imp_all.empty:
+                            chart_all = alt.Chart(imp_all).mark_bar().encode(
+                                x=alt.X('importance:Q', title='重要度スコア'),
+                                y=alt.Y('特徴量名:N', title=None, sort=sort_order, axis=alt.Axis(labelLimit=0)),
+                                color=color_condition,
+                                tooltip=tooltip_def
+                            ).properties(height=500).interactive()
+                            st.altair_chart(chart_all, width="stretch")
+                        else:
+                            st.info("全店舗共通モデルのデータがありません。")
+        
+                elif not imp_all.empty:
+                    # 店舗別モデルがなく、全体モデルのみの場合
+                    st.caption(f"【{selected_shop}】専用の学習モデルはまだありません（データ不足）。代わりに全店舗共通の傾向を表示します。")
+                    chart_imp = alt.Chart(imp_all).mark_bar().encode(
+                        x=alt.X('importance:Q', title='重要度スコア'),
+                        y=alt.Y('特徴量名:N', title='特徴量', sort='-x', axis=alt.Axis(labelLimit=0)),
+                        color=color_condition,
+                        tooltip=tooltip_def
+                    ).properties(height=500).interactive()
+                    
+                    st.altair_chart(chart_imp, width="stretch")
+                else:
+                    st.info(f"{mode_label}の特徴量重要度のデータがありません。")
+
+            with tab_imp_change:
+                render_importance_tab("変更予測")
+            with tab_imp_sueoki:
+                render_importance_tab("据え置き予測")
         else:
             st.info("特徴量重要度のデータがありません。")

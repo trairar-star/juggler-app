@@ -214,7 +214,12 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         
                     # 保存されている予測ログはすでに上位10%に絞られているため、そのまま使用する
                     valid_pred_df = base_eval_df.copy()
-                    valid_pred_df['ai_daily_rank'] = valid_pred_df.groupby(['実際の稼働日', shop_col])['prediction_score'].rank(method='first', ascending=False)
+                    if 'sueoki_score' in valid_pred_df.columns:
+                        valid_pred_df['max_score'] = valid_pred_df[['prediction_score', 'sueoki_score']].max(axis=1)
+                    else:
+                        valid_pred_df['max_score'] = valid_pred_df['prediction_score']
+                        
+                    valid_pred_df['ai_daily_rank'] = valid_pred_df.groupby(['実際の稼働日', shop_col])['max_score'].rank(method='first', ascending=False)
                     
                     if not top3_machines.empty:
                         match_df = pd.merge(valid_pred_df, top3_machines, on=['実際の稼働日', shop_col, '台番号'], how='left')
@@ -279,7 +284,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         total_top3 = rank_stats['トップ3獲得数'].sum()
                         avg_diff = total_diff / total_valid if total_valid > 0 else 0
                         total_win_rate = (total_win / total_valid) * 100 if total_valid > 0 else 0.0
-                        total_avg_score = match_df['prediction_score'].mean() * 100 if not match_df.empty else 0.0
+                        total_avg_score = match_df['max_score'].mean() * 100 if not match_df.empty else 0.0
                         
                         rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(str) + "位"
                         total_row = pd.DataFrame([{
@@ -329,7 +334,11 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                 # AI予測ランキング のデータ準備
                 pred_df_day = merged_df[merged_df['対象日付'].dt.date == selected_date].copy()
-                pred_df_day = pred_df_day.sort_values('prediction_score', ascending=False)
+                if 'sueoki_score' in pred_df_day.columns:
+                    pred_df_day['max_score'] = pred_df_day[['prediction_score', 'sueoki_score']].max(axis=1)
+                else:
+                    pred_df_day['max_score'] = pred_df_day['prediction_score']
+                pred_df_day = pred_df_day.sort_values('max_score', ascending=False)
                 
                 shop_avg_g_actual = actual_df_day['累計ゲーム'].mean() if not actual_df_day.empty else 4000
 
@@ -380,7 +389,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     actual_top_machines = actual_top_df['台番号'].tolist()
                     
                 # 当日の店舗全体の答え合わせサマリー
-                avg_pred_score = pred_df_day['prediction_score'].mean() if not pred_df_day.empty and 'prediction_score' in pred_df_day.columns else np.nan
+                avg_pred_score = pred_df_day['max_score'].mean() if not pred_df_day.empty and 'max_score' in pred_df_day.columns else np.nan
                 day_eval_str = "🔥 還元日予測" if pd.notna(avg_pred_score) and avg_pred_score >= 0.20 else "🥶 回収日予測" if pd.notna(avg_pred_score) and avg_pred_score < 0.10 else "⚖️ 通常営業予測" if pd.notna(avg_pred_score) else "不明"
                 actual_avg_diff = actual_df_day['差枚'].mean() if not actual_df_day.empty and '差枚' in actual_df_day.columns else np.nan
                 actual_diff_str = f"{int(actual_avg_diff):+d} 枚" if pd.notna(actual_avg_diff) else "不明"
@@ -408,8 +417,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     else:
                         show_complete_victory_only = st.checkbox("「完全勝利」(的中🎯 & 高挙動🌟)のみ表示", key="complete_victory_filter")
 
-                        if 'prediction_score' in pred_df_day.columns:
-                            pred_df_day['予想設定5以上確率'] = (pred_df_day['prediction_score'].fillna(0) * 100).astype(int)
+                        if 'max_score' in pred_df_day.columns:
+                            pred_df_day['予想設定5以上確率'] = (pred_df_day['max_score'].fillna(0) * 100).astype(int)
                         else:
                             pred_df_day['予想設定5以上確率'] = 0
 

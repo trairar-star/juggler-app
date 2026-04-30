@@ -21,9 +21,14 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     # --- 1. 明日の店舗期待度ランキング ---
     st.subheader(f"🔮 【{target_date.strftime('%Y-%m-%d')}】のAI店舗推奨度")
     if not df_predict.empty and shop_col in df_predict.columns and 'prediction_score' in df_predict.columns:
+        if 'sueoki_score' in df_predict.columns:
+            df_predict['max_score'] = df_predict[['prediction_score', 'sueoki_score']].max(axis=1)
+        else:
+            df_predict['max_score'] = df_predict['prediction_score']
+            
         agg_dict = {
-            '平均期待度': ('prediction_score', 'mean'),
-            '高期待台数': ('prediction_score', lambda x: (x >= 0.30).sum()),
+            '平均期待度': ('max_score', 'mean'),
+            '高期待台数': ('max_score', lambda x: (x >= 0.30).sum()),
             '全台数': ('台番号', 'nunique')
         }
         if '予測差枚数' in df_predict.columns:
