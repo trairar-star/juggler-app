@@ -2506,6 +2506,31 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
     
     shop_col = '店名' if '店名' in df_verify.columns else ('店舗名' if '店舗名' in df_verify.columns else '店名')
 
+    # --- 据え置き前提判定の事前計算 ---
+    sueoki_no_dates = set()
+    df_raw_shop = df_raw[df_raw[shop_col] == selected_shop].copy() if not df_raw.empty and shop_col in df_raw.columns else pd.DataFrame()
+    if not df_raw_shop.empty and not df_verify.empty and '対象日付' in df_verify.columns:
+        for d in df_verify[df_verify[shop_col] == selected_shop]['対象日付'].dt.date.unique():
+            tgt_date = pd.to_datetime(d) + pd.Timedelta(days=1)
+            premise, _ = backend.evaluate_sueoki_premise(df_raw_shop, tgt_date, df_events)
+            if premise == "NO":
+                sueoki_no_dates.add(tgt_date)
+                
+    # --- 営業区分の事前計算 ---
+    shop_daily_eval_map = pd.DataFrame()
+    if not df_raw_shop.empty:
+        shop_raw_temp_all = df_raw_shop.copy()
+        shop_raw_temp_all['日付キー'] = pd.to_datetime(shop_raw_temp_all['対象日付'], errors='coerce').dt.normalize()
+        shop_daily_actual_all = shop_raw_temp_all.groupby('日付キー').agg(店舗全体平均差枚=('差枚', 'mean')).reset_index()
+        def determine_eval_all(row):
+            diff = row.get('店舗全体平均差枚')
+            if pd.isna(diff): return "⚖️ 通常営業"
+            if diff >= 100: return "🔥 還元日"
+            elif diff <= -100: return "🥶 回収日"
+            else: return "⚖️ 通常営業"
+        shop_daily_actual_all['営業区分'] = shop_daily_actual_all.apply(determine_eval_all, axis=1)
+        shop_daily_eval_map = shop_daily_actual_all[['日付キー', '営業区分']].copy()
+
     if "shop_hyperparams" not in st.session_state:
         st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 
                                                            'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
@@ -2593,15 +2618,6 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             if len(shop_df) < 50:
                 st.error("データが少なすぎてテストを実行できません。")
             else:
-                # --- 据え置き前提判定の事前計算 ---
-                sueoki_no_dates = set()
-                df_raw_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
-                for d in shop_df['対象日付'].dt.date.unique():
-                    tgt_date = pd.to_datetime(d) + pd.Timedelta(days=1)
-                    premise, _ = backend.evaluate_sueoki_premise(df_raw_shop, tgt_date, df_events)
-                    if premise == "NO":
-                        sueoki_no_dates.add(pd.to_datetime(d))
-                        
                 shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
                 max_date = shop_df['対象日付'].max()
                 cutoff_date = max_date - pd.Timedelta(days=test_period)
@@ -2704,7 +2720,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                         
                         # 据え置き前提NOの日の sueoki_score を強制リセット
                         for d in sueoki_no_dates:
-                            test_data_processed.loc[test_data_processed['対象日付'] == d, 'sueoki_score'] = 0.0
+                            test_data_processed.loc[test_data_processed['対象日付'] == (d - pd.Timedelta(days=1)), 'sueoki_score'] = 0.0
                         test_data['prediction_score'] = test_data_processed['prediction_score'].values
                         test_data['sueoki_score'] = test_data_processed['sueoki_score'].values
                         test_data['pred_score'] = test_data_processed[['prediction_score', 'sueoki_score']].max(axis=1).values
@@ -2916,15 +2932,6 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             if len(shop_df) < 150:
                 st.error("データが少なすぎて自動チューニングを実行できません。150件以上のデータが必要です。")
             else:
-                # --- 据え置き前提判定の事前計算 ---
-                sueoki_no_dates = set()
-                df_raw_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
-                for d in shop_df['対象日付'].dt.date.unique():
-                    tgt_date = pd.to_datetime(d) + pd.Timedelta(days=1)
-                    premise, _ = backend.evaluate_sueoki_premise(df_raw_shop, tgt_date, df_events)
-                    if premise == "NO":
-                        sueoki_no_dates.add(pd.to_datetime(d))
-                        
                 from shop_trends import diagnose_allocation_types
                 from config import MACHINE_SPECS
                 alloc_types = diagnose_allocation_types(shop_df, shop_col, MACHINE_SPECS)
@@ -2973,7 +2980,8 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                     
                     # 据え置きモデルの場合、前提NOの日はテスト評価から除外する（チューニング評価を歪ませないため）
                     if mode == 'keep':
-                        mode_test = mode_test[~mode_test['対象日付'].isin(sueoki_no_dates)].copy()
+                        sueoki_no_obj_dates = [d - pd.Timedelta(days=1) for d in sueoki_no_dates]
+                        mode_test = mode_test[~mode_test['対象日付'].isin(sueoki_no_obj_dates)].copy()
                     
                     if len(mode_train) < 30 or len(mode_test) < 5:
                         progress_idx += len(param_candidates)
