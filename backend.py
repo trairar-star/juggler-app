@@ -2544,8 +2544,8 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
         except Exception as e:
             print(f"LSTM特徴量の追加に失敗しました: {e}")
 
-    if len(train_df) < 10 or len(predict_df) == 0:
-        return predict_df, pd.DataFrame(), pd.DataFrame()
+    if len(train_df) < 10:
+        return predict_df, train_df, pd.DataFrame()
 
     # 4 & 5. モデル学習と推論 (店舗ごとのパラメータで独立して実行される)
     predict_df, train_df, feature_importances = train_models(train_df, predict_df, features, shop_hyperparams)
@@ -2662,6 +2662,9 @@ def get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, sho
     # --- ガチ予測ログベースのAI正答率・勝率計算 ---
     ai_accuracy_map, ai_win_rate_map = {}, {}
     ai_acc_str_map, ai_win_str_map = {}, {}
+
+    c_ai_win_rate_map, s_ai_win_rate_map = {}, {}
+    c_ai_win_str_map, s_ai_win_str_map = {}, {}
     
     if df_pred_log is not None and not df_pred_log.empty and not df_raw.empty:
         df_pred_log_temp = df_pred_log.copy()

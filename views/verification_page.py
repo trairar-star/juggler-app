@@ -17,6 +17,10 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw, df_even
     
     # 共通の店舗フィルターをページ上部に配置
     shops = []
+    if not df_raw.empty:
+        shop_col_raw = '店名' if '店名' in df_raw.columns else ('店舗名' if '店舗名' in df_raw.columns else '店名')
+        if shop_col_raw in df_raw.columns:
+            shops.extend(df_raw[shop_col_raw].dropna().unique().tolist())
     if not df_verify.empty and shop_col in df_verify.columns:
         shops.extend(df_verify[shop_col].dropna().unique().tolist())
     if not df_pred_log.empty:
