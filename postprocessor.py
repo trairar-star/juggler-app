@@ -504,7 +504,7 @@ def postprocess_predictions(predict_df, train_df):
         predict_df['根拠'] = predict_df.apply(get_reason, axis=1)
         predict_df['おすすめ度'] = predict_df[['prediction_score', 'sueoki_score']].max(axis=1).apply(get_rating)
         if '店名' in predict_df.columns:
-            shop_mean = predict_df.groupby('店名')[['prediction_score', 'sueoki_score']].max(axis=1).groupby(predict_df['店名']).transform('mean')
+            shop_mean = predict_df[['prediction_score', 'sueoki_score']].max(axis=1).groupby(predict_df['店名']).transform('mean')
             predict_df['店舗期待度'] = shop_mean.apply(get_rating)
         
     if not train_df.empty:
