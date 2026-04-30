@@ -47,7 +47,7 @@ def render_verification_page(df_pred_log, df_verify, df_predict, df_raw, df_even
 
     with tab_rank:
         from views import ranking_comparison_page
-        ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, selected_shop)
+        ranking_comparison_page.render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, selected_shop, df_events)
 
     with tab_stats:
         _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_setting, selected_shop, df_events)
@@ -1929,7 +1929,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                             # 据え置き前提NOの日の sueoki_score を強制リセット
                             for d in sueoki_no_dates:
                                 test_data_processed.loc[test_data_processed['対象日付'] == d, 'sueoki_score'] = 0.0
-                            
+                            test_data['prediction_score'] = test_data_processed['prediction_score'].values
+                            test_data['sueoki_score'] = test_data_processed['sueoki_score'].values
                             test_data['pred_score'] = test_data_processed[['prediction_score', 'sueoki_score']].max(axis=1).values
                             
                             test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
@@ -1994,8 +1995,54 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             test_period_disp = st.session_state.get('last_test_period', 30)
             st.success(f"✅ 直近{test_period_disp}日間のカンニングなしテスト結果")
             st.caption(f"現在設定されているパラメータで過去データのみを学習し、直近{test_period_disp}日間の結果を予測した「本物の実力」です。この表の上位の期待度帯（20%以上など）の勝率が高くなる設定を探してください。")
+            
+            test_detail_df = st.session_state['backtest_details'].copy()
+            score_type_options_test = {"総合 (高い方)": "pred_score", "変更(上げ)期待度": "prediction_score", "据え置き期待度": "sueoki_score"}
+            selected_score_label_test = st.radio("集計する期待度の種類", list(score_type_options_test.keys()), index=0, horizontal=True, key="test_score_type")
+            target_score_col_test = score_type_options_test[selected_score_label_test]
+            
+            if target_score_col_test == 'sueoki_score' and sueoki_no_dates:
+                test_detail_df['tmp_pred_date'] = pd.to_datetime(test_detail_df['対象日付']).dt.normalize() + pd.Timedelta(days=1)
+                test_detail_df = test_detail_df[~test_detail_df['tmp_pred_date'].isin(sueoki_no_dates)].copy()
+            
+            def get_prob_band_test(score):
+                if score >= 0.50: return '50%以上'
+                elif score >= 0.40: return '40%〜49%'
+                elif score >= 0.30: return '30%〜39%'
+                elif score >= 0.20: return '20%〜29%'
+                elif score >= 0.15: return '15%〜19%'
+                elif score >= 0.10: return '10%〜14%'
+                else: return '10%未満'
+                
+            test_detail_df['確率帯'] = test_detail_df[target_score_col_test].apply(get_prob_band_test)
+            test_stats_current = test_detail_df.groupby('確率帯').agg(
+                台数=('台番号', 'count'),
+                高設定数=('valid_high', 'sum'),
+                高設定有効数=('valid_high_play', 'sum'),
+                有効稼働数=('valid_play', 'sum'),
+                勝数=('valid_win', 'sum'),
+                平均差枚=('next_diff', 'mean'),
+                合計差枚=('next_diff', 'sum'),
+                平均期待度=(target_score_col_test, 'mean'),
+                合計G=('all_G', 'sum'),
+                合計B=('all_B', 'sum'),
+                合計R=('all_R', 'sum')
+            ).reset_index()
+            test_stats_current['平均REG確率'] = np.where(test_stats_current['合計R'] > 0, test_stats_current['合計G'] / test_stats_current['合計R'], 0)
+            test_stats_current['平均合算確率'] = np.where((test_stats_current['合計B'] + test_stats_current['合計R']) > 0, test_stats_current['合計G'] / (test_stats_current['合計B'] + test_stats_current['合計R']), 0)
+            test_stats_current['高設定率'] = np.where(test_stats_current['高設定有効数'] > 0, test_stats_current['高設定数'] / test_stats_current['高設定有効数'] * 100, 0.0)
+            test_stats_current['勝率'] = np.where(test_stats_current['有効稼働数'] > 0, test_stats_current['勝数'] / test_stats_current['有効稼働数'] * 100, 0.0)
+            test_stats_current['平均期待度'] = test_stats_current['平均期待度'] * 100
+            test_stats_current['REG確率'] = test_stats_current['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
+            test_stats_current['合算確率'] = test_stats_current['平均合算確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
+            
+            rank_order = {'50%以上': 1, '40%〜49%': 2, '30%〜39%': 3, '20%〜29%': 4, '15%〜19%': 5, '10%〜14%': 6, '10%未満': 7}
+            test_stats_current['sort'] = test_stats_current['確率帯'].map(rank_order).fillna(99)
+            test_stats_current = test_stats_current.sort_values('sort').drop('sort', axis=1)
+            test_stats_current['信頼度'] = test_stats_current['台数'].apply(get_confidence_indicator)
+
             st.dataframe(
-                st.session_state['backtest_result'][['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
+                test_stats_current[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                 column_config={
                     "確率帯": st.column_config.TextColumn("期待度"),
                     "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
@@ -2069,7 +2116,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
             if 'backtest_details' in st.session_state:
                 with st.expander("🔍 カンニングなしテストの詳細データを確認", expanded=False):
                     st.caption("テストで各確率帯に分類された台の具体的な日付と結果を確認できます。なぜ差枚が沈んだのか（不発か、稼働不足か）の分析に役立ててください。")
-                    detail_df = st.session_state['backtest_details'].copy()
+                    detail_df = test_detail_df.copy()
                     
                     band_options_test = ['すべて', '50%以上', '40%〜49%', '30%〜39%', '20%〜29%', '15%〜19%', '10%〜14%', '10%未満']
                     selected_band_test = st.selectbox("表示する確率帯を選択", band_options_test, index=0, key="test_band_select_detail")
@@ -2080,7 +2127,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     if detail_df.empty:
                         st.info("該当するデータがありません。")
                     else:
-                        detail_df['予想設定5以上確率'] = (detail_df['pred_score'].fillna(0) * 100).astype(int)
+                        detail_df['予想設定5以上確率'] = (detail_df[target_score_col_test].fillna(0) * 100).astype(int)
                         if 'next_date' in detail_df.columns:
                             detail_df['予測対象日'] = pd.to_datetime(detail_df['next_date'])
                         else:
@@ -2288,6 +2335,14 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     sim_df['sueoki_score'] = 0.0
                 sim_df['max_score'] = sim_df[['prediction_score', 'sueoki_score']].max(axis=1)
                 
+                score_type_options_sim = {"総合 (高い方)": "max_score", "変更(上げ)期待度": "prediction_score", "据え置き期待度": "sueoki_score"}
+                selected_score_label_sim = st.radio("集計する期待度の種類", list(score_type_options_sim.keys()), index=0, horizontal=True, key="sim_score_type_radio")
+                target_score_col_sim = score_type_options_sim[selected_score_label_sim]
+                
+                if target_score_col_sim == 'sueoki_score' and sueoki_no_dates:
+                    sim_df['tmp_pred_date'] = pd.to_datetime(sim_df['next_date']).dt.normalize()
+                    sim_df = sim_df[~sim_df['tmp_pred_date'].isin(sueoki_no_dates)].copy()
+                
                 def get_prob_band(score):
                     if score >= 0.50: return '50%以上'
                     elif score >= 0.40: return '40%〜49%'
@@ -2296,7 +2351,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     elif score >= 0.15: return '15%〜19%'
                     elif score >= 0.10: return '10%〜14%'
                     else: return '10%未満'
-                sim_df['確率帯'] = sim_df['max_score'].apply(get_prob_band)
+                sim_df['確率帯'] = sim_df[target_score_col_sim].apply(get_prob_band)
                 sim_df['valid_play'] = get_valid_play_mask(sim_df['next_累計ゲーム'], sim_df['next_diff'])
                 sim_df['valid_win'] = sim_df['valid_play'] & (pd.to_numeric(sim_df['next_diff'], errors='coerce').fillna(0) > 0)
                 sim_df['valid_high_play'] = pd.to_numeric(sim_df['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000
@@ -2338,7 +2393,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                         勝数=('valid_win', 'sum'),
                         平均差枚=('next_diff', 'mean'),
                         合計差枚=('next_diff', 'sum'),
-                        平均期待度=('max_score', 'mean'),
+                        平均期待度=(target_score_col_sim, 'mean'),
                         合計G=('all_G', 'sum'),
                         合計B=('all_B', 'sum'),
                         合計R=('all_R', 'sum')
@@ -2392,7 +2447,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, tab_s
                     if sim_display_df.empty:
                         st.info("該当するデータがありません。")
                     else:
-                        sim_display_df['予想設定5以上確率'] = (sim_display_df['max_score'].fillna(0) * 100).astype(int)
+                        sim_display_df['予想設定5以上確率'] = (sim_display_df[target_score_col_sim].fillna(0) * 100).astype(int)
                         if 'next_date' in sim_display_df.columns:
                             sim_display_df['予測対象日'] = pd.to_datetime(sim_display_df['next_date'])
                         else:
