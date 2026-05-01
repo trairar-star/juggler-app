@@ -346,23 +346,38 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         c_test_stats = test_data.groupby('c_確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
                         c_test_stats['勝率'] = np.where(c_test_stats['有効稼働数'] > 0, c_test_stats['勝数'] / c_test_stats['有効稼働数'] * 100, 0.0)
                         
+                        all_test_valid = test_data['valid_play'].sum()
+                        all_test_win = test_data['valid_win'].sum()
+                        overall_test_win_rate = (all_test_win / all_test_valid * 100) if all_test_valid > 0 else 0.0
+                        
                         test_data['s_確率帯'] = test_data_processed['sueoki_score'].apply(get_prob_band)
                         s_test_stats = test_data.groupby('s_確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
                         s_test_stats['勝率'] = np.where(s_test_stats['有効稼働数'] > 0, s_test_stats['勝数'] / s_test_stats['有効稼働数'] * 100, 0.0)
                         
-                        backtest_summary = "\n【最重要・カンニングなしテストによるAI実力分析】\nこの店舗のAI予測（カンニングなしのバックテスト）では、以下の確率帯を狙うのが最も勝率・期待値が高くなりました。AIに相談する際は、この期待度以上を狙うように指示すると効果的です。\n"
+                        c_test_stats['全体勝率'] = overall_test_win_rate
+                        c_test_stats['勝率リフト'] = np.where(c_test_stats['全体勝率'] > 0, c_test_stats['勝率'] / c_test_stats['全体勝率'], 0.0)
+                        s_test_stats['全体勝率'] = overall_test_win_rate
+                        s_test_stats['勝率リフト'] = np.where(s_test_stats['全体勝率'] > 0, s_test_stats['勝率'] / s_test_stats['全体勝率'], 0.0)
+                        
+                        backtest_summary = f"\n【最重要・カンニングなしテストによるAI実力分析】\nこの店舗のテスト期間全体の勝率(適当に座った場合の勝率)は {overall_test_win_rate:.1f}% です。\nAI予測（カンニングなしのバックテスト）では、以下の確率帯を狙うのが最も勝率・期待値が高くなりました。AIに相談する際は、この期待度以上を狙うように指示すると効果的です。\n"
                         
                         c_filtered = c_test_stats[c_test_stats['有効稼働数'] >= 5]
                         if not c_filtered.empty:
                             best_c = c_filtered.loc[c_filtered['勝率'].idxmax()]
-                            backtest_summary += f"・変更(上げ)予測: 期待度が「{best_c['c_確率帯']}」の台を狙うのが最も勝率が高く({best_c['勝率']:.1f}%)、平均差枚も{int(best_c['平均差枚']):+d}枚と優秀です。\n"
+                            backtest_summary += f"・変更(上げ)予測: 期待度が「{best_c['c_確率帯']}」の台を狙うのが最も勝率が高く({best_c['勝率']:.1f}% / リフト {best_c['勝率リフト']:.2f}倍)、平均差枚も{int(best_c['平均差枚']):+d}枚と優秀です。\n"
+                            backtest_summary += "  [変更予測 各確率帯の成績]\n"
+                            for _, r in c_filtered.iterrows():
+                                backtest_summary += f"    - {r['c_確率帯']}: 勝率 {r['勝率']:.1f}% (リフト {r['勝率リフト']:.2f}倍) / 平均 {int(r['平均差枚']):+d}枚\n"
                         else:
                             backtest_summary += "・変更(上げ)予測: 有効なテストデータが不足しています。\n"
                             
                         s_filtered = s_test_stats[s_test_stats['有効稼働数'] >= 5]
                         if not s_filtered.empty:
                             best_s = s_filtered.loc[s_filtered['勝率'].idxmax()]
-                            backtest_summary += f"・据え置き予測: 期待度が「{best_s['s_確率帯']}」の台を狙うのが最も勝率が高く({best_s['勝率']:.1f}%)、平均差枚も{int(best_s['平均差枚']):+d}枚と優秀です。\n"
+                            backtest_summary += f"・据え置き予測: 期待度が「{best_s['s_確率帯']}」の台を狙うのが最も勝率が高く({best_s['勝率']:.1f}% / リフト {best_s['勝率リフト']:.2f}倍)、平均差枚も{int(best_s['平均差枚']):+d}枚と優秀です。\n"
+                            backtest_summary += "  [据え置き予測 各確率帯の成績]\n"
+                            for _, r in s_filtered.iterrows():
+                                backtest_summary += f"    - {r['s_確率帯']}: 勝率 {r['勝率']:.1f}% (リフト {r['勝率リフト']:.2f}倍) / 平均 {int(r['平均差枚']):+d}枚\n"
                         else:
                             backtest_summary += "・据え置き予測: 有効なテストデータが不足しています。\n"
             except Exception:
@@ -931,10 +946,18 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             s_valid = s_df['valid_play'].sum()
                             s_win = s_df['valid_win'].sum()
                             s_rate = (s_win / s_valid * 100) if s_valid > 0 else 0
+                            
+                            all_acc_valid = merged_acc['valid_play'].sum()
+                            all_acc_win = merged_acc['valid_win'].sum()
+                            all_acc_rate = (all_acc_win / all_acc_valid * 100) if all_acc_valid > 0 else 0
+                            
+                            c_lift = c_rate / all_acc_rate if all_acc_rate > 0 else 0
+                            s_lift = s_rate / all_acc_rate if all_acc_rate > 0 else 0
 
                             context_data += f"\n【{selected_shop} のAI予測実績と還元/回収日の傾向 (直近1ヶ月)】\n"
-                            context_data += f"・変更(上げ)予測: 推奨台勝率 {c_rate:.1f}% (有効稼働 {int(c_valid)}台中 {int(c_win)}台)\n"
-                            context_data += f"・据え置き予測: 推奨台勝率 {s_rate:.1f}% (有効稼働 {int(s_valid)}台中 {int(s_win)}台)\n"
+                            context_data += f"・期間中の全体勝率 (適当に座った場合): {all_acc_rate:.1f}%\n"
+                            context_data += f"・変更(上げ)予測: 推奨台勝率 {c_rate:.1f}% (リフト値: {c_lift:.2f}倍 / 有効稼働 {int(c_valid)}台中 {int(c_win)}台)\n"
+                            context_data += f"・据え置き予測: 推奨台勝率 {s_rate:.1f}% (リフト値: {s_lift:.2f}倍 / 有効稼働 {int(s_valid)}台中 {int(s_win)}台)\n"
                             
                             if c_valid + s_valid < 30:
                                 context_data += "AI自己評価: まだ直近1ヶ月の検証台数（有効稼働）が少なく、たまたまのヒキでブレている可能性が高い状態です。\n"
@@ -1241,17 +1264,18 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 
 <回答のガイドライン>
 1. 【現状のモデル評価】: 提供された「AI予測実績 (直近1ヶ月)」の勝率や有効稼働数を見て、現在のモデルが店舗の傾向を正しく捉えられているか、またはフェイクに騙されているか（過学習・未学習）を診断してください。
-2. 【特徴量の分析】: 提供された「AIが重視している特徴量上位10件」を見て、特定のノイズ（例えば、たまたま1回出た末尾や、店舗状況と合わない特徴量）にモデルが引っ張られていないか考察してください。
-3. 【具体的なチューニング提案】: 「現在のAIモデル設定 (パラメータ)」を確認し、精度を向上させるための具体的なアクションを提案してください。
+2. 【勝率リフトの評価】: 提供されたデータに「勝率リフト（全体勝率との比較）」が含まれる場合、高い期待度の確率帯（または推奨台）でリフト値が1.5倍を超えていれば「AIは適当に座るより効果的に機能している」と高く評価し、逆に1.0倍前後なら「AIが機能しておらずフェイクに騙されている（過学習など）」と指摘してください。
+3. 【特徴量の分析】: 提供された「AIが重視している特徴量上位10件」を見て、特定のノイズ（例えば、たまたま1回出た末尾や、店舗状況と合わない特徴量）にモデルが引っ張られていないか考察してください。
+4. 【具体的なチューニング提案】: 「現在のAIモデル設定 (パラメータ)」を確認し、精度を向上させるための具体的なアクションを提案してください。
    - 例：「過学習気味なので `max_depth` を3に下げ、`min_child_samples` を増やして汎化性能を上げましょう」
    - 例：「特徴量の相関が薄いものに引っ張られているため、`reg_alpha` (L1正則化) を上げてノイズを無視させましょう」
    - 例：「直近の店癖が大きく変わっている可能性があるため、学習期間を『直近1ヶ月』に短縮してみる価値があります」
    - 【LSTMモデル（波読み）のチューニング】: 提供された「LSTM 波読みモデル」の設定についても、過学習や未学習の兆候があれば、「lstm_epochsを増やす」「lstm_hidden_sizeを下げる」などのアドバイスを行ってください。
-4. 【検証のアドバイス】: チューニング後にどのようなデータ（還元日の勝率など）に注目して結果を確認すべきかアドバイスしてください。
-5. 【簡潔さ】: 専門的でありながらも、冗長な説明は省き、要点を箇条書きでスマートにまとめてください。
-5. 【店舗未選択時の対応】: 提供されたデータの中に「AI予測実績」や「現在のAIモデル設定」が含まれていない（＝店舗が指定されていない）場合は、無理に推測せず、「具体的なチューニング提案を行うには、画面上部のプルダウンから分析対象の店舗を選択してください」と案内してください。
-6. 【予測エラー分析】: 「期待外れ台」や「逃したお宝台」のデータが提供されている場合、なぜモデルがそれらの台の評価を誤ったのか（特徴量の重み付けの偏り、過学習、未学習など）を考察し、再発防止のためのパラメータ調整や特徴量エンジニアリングのアイデアを提案してください。
-7. 【配分型の考慮】: 「配分型」完全マップ診断の結論が提供されている場合、その店舗の配分思想（誤認誘導型など）と現在のAIモデルの予測傾向にズレがないかを評価してください。「誤認誘導型」の店で過学習が起きている場合は、中間設定のフェイクにAIが騙されている可能性が高いため、その旨を指摘してペナルティや特徴量の調整を提案してください。
+5. 【検証のアドバイス】: チューニング後にどのようなデータ（還元日の勝率など）に注目して結果を確認すべきかアドバイスしてください。
+6. 【簡潔さ】: 専門的でありながらも、冗長な説明は省き、要点を箇条書きでスマートにまとめてください。
+7. 【店舗未選択時の対応】: 提供されたデータの中に「AI予測実績」や「現在のAIモデル設定」が含まれていない（＝店舗が指定されていない）場合は、無理に推測せず、「具体的なチューニング提案を行うには、画面上部のプルダウンから分析対象の店舗を選択してください」と案内してください。
+8. 【予測エラー分析】: 「期待外れ台」や「逃したお宝台」のデータが提供されている場合、なぜモデルがそれらの台の評価を誤ったのか（特徴量の重み付けの偏り、過学習、未学習など）を考察し、再発防止のためのパラメータ調整や特徴量エンジニアリングのアイデアを提案してください。
+9. 【配分型の考慮】: 「配分型」完全マップ診断の結論が提供されている場合、その店舗の配分思想（誤認誘導型など）と現在のAIモデルの予測傾向にズレがないかを評価してください。「誤認誘導型」の店で過学習が起きている場合は、中間設定のフェイクにAIが騙されている可能性が高いため、その旨を指摘してペナルティや特徴量の調整を提案してください。
 
 現在日時: {now_str}
 ※提供されているデータは、対象店舗の予測データおよびAIのバックテスト実績・パラメータ設定です。

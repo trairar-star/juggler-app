@@ -261,18 +261,21 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                                 mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
                                 mac_df['高設定挙動'] = ((mac_df['累計ゲーム'] >= 3000) & calculate_high_setting_mask(mac_df, specs)).astype(int)
                                 mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
+                                mac_df['is_win'] = mac_df['valid_play'] & (mac_df['差枚'] > 0)
                                 
                                 mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
                                 mac_df['valid_REG確率'] = np.where(mac_df['valid_play'], mac_df['REG確率_val'], np.nan)
 
                                 cold_mac_stats = mac_df.groupby('機種名').agg(
-                                    平均差枚=('valid_差枚', 'mean'), 高設定率=('高設定率', 'mean'), 平均REG確率=('valid_REG確率', 'mean'), サンプル数=('台番号', 'count')
+                                    平均差枚=('valid_差枚', 'mean'), 高設定率=('高設定率', 'mean'), 平均REG確率=('valid_REG確率', 'mean'), サンプル数=('台番号', 'count'), 勝数=('is_win', 'sum'), 有効稼働数=('valid_play', 'sum')
                                 ).reset_index().sort_values('平均差枚', ascending=False)
                                 
+                                cold_mac_stats['勝率'] = np.where(cold_mac_stats['有効稼働数'] > 0, cold_mac_stats['勝数'] / cold_mac_stats['有効稼働数'] * 100, 0.0)
                                 cold_mac_stats['信頼度'] = cold_mac_stats['サンプル数'].apply(get_confidence_indicator)
                                 cold_mac_stats['REG確率'] = cold_mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                                 
                                 st.dataframe(cold_mac_stats[['機種名', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']], column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("平均REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度")}, hide_index=True, use_container_width=True)
+                                st.dataframe(cold_mac_stats[['機種名', '平均差枚', '高設定率', '勝率', 'REG確率', 'サンプル数', '信頼度']], column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("平均REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度")}, hide_index=True, use_container_width=True)
                             else:
                                 st.info(f"過去の回収日に稼働データがありませんでした。（回収日: {len(cold_dates)}日）")
                         else:
@@ -297,6 +300,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
                     mac_df['高設定挙挙動'] = ((mac_df['累計ゲーム'] >= 3000) & calculate_high_setting_mask(mac_df, specs)).astype(int)
                     mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
+                    mac_df['is_win'] = mac_df['valid_play'] & (mac_df['差枚'] > 0)
                     
                     mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)
                     mac_df['valid_設定5近似度'] = np.where(mac_df['valid_play'], mac_df['設定5近似度'], np.nan)
@@ -307,11 +311,14 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         平均差枚=('valid_差枚', 'mean'),
                         設定5近似度=('valid_設定5近似度', 'mean'),
                         高設定率=('高設定率', 'mean'),
+                        勝数=('is_win', 'sum'),
+                        有効稼働数=('valid_play', 'sum'),
                         平均REG確率=('valid_REG確率', 'mean'),
                         平均回転数=('valid_累計ゲーム', 'mean'),
                         サンプル数=('台番号', 'count')
                     ).reset_index().sort_values('設定5近似度', ascending=False)
                     
+                    mac_stats['勝率'] = np.where(mac_stats['有効稼働数'] > 0, mac_stats['勝数'] / mac_stats['有効稼働数'] * 100, 0.0)
                     mac_stats['信頼度'] = mac_stats['サンプル数'].apply(get_confidence_indicator)
                     mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                     
@@ -418,10 +425,12 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                         with col_m2:
                             st.dataframe(
                                 mac_stats,
+                                mac_stats[['機種名', '設定5近似度', '高設定率', '勝率', '平均差枚', 'REG確率', '平均回転数', 'サンプル数', '信頼度']],
                                 column_config={
                                     "機種名": st.column_config.TextColumn("機種"),
                                     "設定5近似度": st.column_config.NumberColumn("設定5近似度", format="%.1f点", help="100点満点での平均的な設定5近似度"),
                                     "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                                    "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
                                     "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
                                     "REG確率": st.column_config.TextColumn("平均REG確率"),
                                     "平均回転数": st.column_config.NumberColumn("平均回転", format="%d G"),

@@ -968,6 +968,11 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                 if target_df.empty:
                     st.info("該当するデータがありません。")
                     return
+                    
+                all_valid = target_df['valid_play'].sum()
+                all_win = target_df['valid_win'].sum()
+                overall_win_rate = (all_win / all_valid * 100) if all_valid > 0 else 0.0
+                
                 r_stats = target_df.groupby('確率帯').agg(
                     台数=('台番号', 'count'),
                     高設定数=('valid_high', 'sum'),
@@ -984,6 +989,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                 r_stats['平均REG確率'] = np.where(r_stats['合計R'] > 0, r_stats['合計G'] / r_stats['合計R'], 0)
                 r_stats['平均合算確率'] = np.where((r_stats['合計B'] + r_stats['合計R']) > 0, r_stats['合計G'] / (r_stats['合計B'] + r_stats['合計R']), 0)
                 r_stats['勝率'] = np.where(r_stats['有効稼働数'] > 0, r_stats['勝数'] / r_stats['有効稼働数'] * 100, 0.0)
+                r_stats['全体勝率'] = overall_win_rate
+                r_stats['勝率差分'] = r_stats['勝率'] - r_stats['全体勝率']
+                r_stats['勝率リフト'] = np.where(r_stats['全体勝率'] > 0, r_stats['勝率'] / r_stats['全体勝率'], 0.0)
                 r_stats['高設定率'] = np.where(r_stats['高設定有効数'] > 0, r_stats['高設定数'] / r_stats['高設定有効数'] * 100, 0.0)
                 r_stats['平均期待度'] = r_stats['平均期待度'] * 100
                 r_stats['REG確率'] = r_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
@@ -995,14 +1003,17 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                 
                 r_stats['信頼度'] = r_stats['台数'].apply(get_confidence_indicator)
                 st.dataframe(
-                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
+                    r_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '全体勝率', '勝率', '勝率差分', '勝率リフト', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                     column_config={
                         "確率帯": st.column_config.TextColumn("期待度"),
                         "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                         "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
                         "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
                         "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                        "全体勝率": st.column_config.NumberColumn("全体勝率", format="%.1f%%", help="シミュレーション対象データ全体の勝率"),
+                        "勝率": st.column_config.ProgressColumn("対象台 勝率", format="%.1f%%", min_value=0, max_value=100),
+                        "勝率差分": st.column_config.NumberColumn("勝率差分", format="%+.1fpt", help="全体勝率と比べた勝率のプラス幅"),
+                        "勝率リフト": st.column_config.NumberColumn("リフト値", format="%.2f倍", help="全体勝率に対して何倍勝ちやすくなっているか (Lift値)"),
                         "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                         "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                         "REG確率": st.column_config.TextColumn("平均REG確率"),
@@ -1017,6 +1028,71 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
             with tabs_1[1]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['営業区分'] == "🔥 還元日"])
             with tabs_1[2]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['営業区分'] == "⚖️ 通常営業"])
             with tabs_1[3]: render_rank_stats_top(prob_analysis_df[prob_analysis_df['営業区分'] == "🥶 回収日"])
+
+            # --- 追加: AI推奨台 (期待度30%以上) の機種別 成績 ---
+            st.divider()
+            st.markdown(f"**🎰 AI推奨台 (期待度30%以上) の機種別 成績 ({selected_period})**")
+            st.caption("AIが「期待度30%以上」と判定した台の実際の成績を機種別に比較します。AIがどの機種を得意とし、どの機種（波が荒い・判別が難しい機種など）で騙されやすいかを確認できます。")
+            
+            # 期待度30%以上の台を抽出
+            recom_mac_df = prob_analysis_df[prob_analysis_df[target_score_col] >= 0.30].copy()
+            
+            if recom_mac_df.empty:
+                st.info("指定期間内に期待度30%以上の推奨台がありません。")
+            else:
+                # 全体の成績を集計 (リフト値計算用)
+                mac_all_stats = prob_analysis_df.groupby('機種名').agg(
+                    全体有効稼働数=('valid_play', 'sum'),
+                    全体勝数=('valid_win', 'sum')
+                ).reset_index()
+                mac_all_stats['全体勝率'] = np.where(mac_all_stats['全体有効稼働数'] > 0, mac_all_stats['全体勝数'] / mac_all_stats['全体有効稼働数'] * 100, 0.0)
+
+                # 推奨台の成績を集計
+                mac_recom_stats = recom_mac_df.groupby('機種名').agg(
+                    推奨台数=('台番号', 'count'),
+                    高設定数=('valid_high', 'sum'),
+                    高設定有効数=('valid_high_play', 'sum'),
+                    有効稼働数=('valid_play', 'sum'),
+                    勝数=('valid_win', 'sum'),
+                    平均差枚=('差枚_actual', 'mean'),
+                    平均期待度=(target_score_col, 'mean'),
+                    合計G=('all_G', 'sum'),
+                    合計B=('all_B', 'sum'),
+                    合計R=('all_R', 'sum')
+                ).reset_index()
+                
+                mac_recom_stats = pd.merge(mac_recom_stats, mac_all_stats[['機種名', '全体勝率']], on='機種名', how='left')
+                
+                mac_recom_stats['平均REG確率'] = np.where(mac_recom_stats['合計R'] > 0, mac_recom_stats['合計G'] / mac_recom_stats['合計R'], 0)
+                mac_recom_stats['勝率'] = np.where(mac_recom_stats['有効稼働数'] > 0, mac_recom_stats['勝数'] / mac_recom_stats['有効稼働数'] * 100, 0.0)
+                mac_recom_stats['高設定率'] = np.where(mac_recom_stats['高設定有効数'] > 0, mac_recom_stats['高設定数'] / mac_recom_stats['高設定有効数'] * 100, 0.0)
+                mac_recom_stats['勝率差分'] = mac_recom_stats['勝率'] - mac_recom_stats['全体勝率']
+                mac_recom_stats['勝率リフト'] = np.where(mac_recom_stats['全体勝率'] > 0, mac_recom_stats['勝率'] / mac_recom_stats['全体勝率'], 0.0)
+                mac_recom_stats['平均期待度'] = mac_recom_stats['平均期待度'] * 100
+                mac_recom_stats['REG確率'] = mac_recom_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
+                mac_recom_stats['信頼度'] = mac_recom_stats['推奨台数'].apply(get_confidence_indicator)
+                
+                mac_recom_stats = mac_recom_stats.sort_values('勝率', ascending=False)
+                
+                st.dataframe(
+                    mac_recom_stats[['機種名', '推奨台数', '有効稼働数', '高設定率', '全体勝率', '勝率', '勝率差分', '勝率リフト', '平均差枚', '平均期待度', 'REG確率', '信頼度']],
+                    column_config={
+                        "機種名": st.column_config.TextColumn("機種名"),
+                        "推奨台数": st.column_config.NumberColumn("推奨台数", format="%d台"),
+                        "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
+                        "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
+                        "全体勝率": st.column_config.NumberColumn("全体勝率", format="%.1f%%", help="その機種のAI推奨に関わらない全体の勝率"),
+                        "勝率": st.column_config.ProgressColumn("推奨台 勝率", format="%.1f%%", min_value=0, max_value=100),
+                        "勝率差分": st.column_config.NumberColumn("勝率差分", format="%+.1fpt", help="全体勝率と比べた勝率のプラス幅"),
+                        "勝率リフト": st.column_config.NumberColumn("リフト値", format="%.2f倍", help="全体勝率に対して何倍勝ちやすくなっているか (Lift値)"),
+                        "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d枚"),
+                        "平均期待度": st.column_config.NumberColumn("事前期待度", format="%.1f%%"),
+                        "REG確率": st.column_config.TextColumn("平均REG確率"),
+                        "信頼度": st.column_config.TextColumn("信頼度")
+                    },
+                    width="stretch",
+                    hide_index=True
+                )
 
             # --- 変更 vs 据え置き 精度比較 ---
             st.divider()
@@ -1986,6 +2062,11 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             else: return '10%未満'
             
         test_detail_df['確率帯'] = test_detail_df[target_score_col_test].apply(get_prob_band_test)
+        
+        all_test_valid = test_detail_df['valid_play'].sum()
+        all_test_win = test_detail_df['valid_win'].sum()
+        overall_test_win_rate = (all_test_win / all_test_valid * 100) if all_test_valid > 0 else 0.0
+        
         test_stats_current = test_detail_df.groupby('確率帯').agg(
             台数=('台番号', 'count'),
             高設定数=('valid_high', 'sum'),
@@ -2003,6 +2084,9 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
         test_stats_current['平均合算確率'] = np.where((test_stats_current['合計B'] + test_stats_current['合計R']) > 0, test_stats_current['合計G'] / (test_stats_current['合計B'] + test_stats_current['合計R']), 0)
         test_stats_current['高設定率'] = np.where(test_stats_current['高設定有効数'] > 0, test_stats_current['高設定数'] / test_stats_current['高設定有効数'] * 100, 0.0)
         test_stats_current['勝率'] = np.where(test_stats_current['有効稼働数'] > 0, test_stats_current['勝数'] / test_stats_current['有効稼働数'] * 100, 0.0)
+        test_stats_current['全体勝率'] = overall_test_win_rate
+        test_stats_current['勝率差分'] = test_stats_current['勝率'] - test_stats_current['全体勝率']
+        test_stats_current['勝率リフト'] = np.where(test_stats_current['全体勝率'] > 0, test_stats_current['勝率'] / test_stats_current['全体勝率'], 0.0)
         test_stats_current['平均期待度'] = test_stats_current['平均期待度'] * 100
         test_stats_current['REG確率'] = test_stats_current['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
         test_stats_current['合算確率'] = test_stats_current['平均合算確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
@@ -2013,14 +2097,17 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
         test_stats_current['信頼度'] = test_stats_current['台数'].apply(get_confidence_indicator)
 
         st.dataframe(
-            test_stats_current[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
+            test_stats_current[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '全体勝率', '勝率', '勝率差分', '勝率リフト', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
             column_config={
                 "確率帯": st.column_config.TextColumn("期待度"),
                 "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                 "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
                 "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
                 "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                "全体勝率": st.column_config.NumberColumn("全体勝率", format="%.1f%%", help="AI推奨に関わらないテスト期間全体の勝率"),
+                "勝率": st.column_config.ProgressColumn("対象台 勝率", format="%.1f%%", min_value=0, max_value=100),
+                "勝率差分": st.column_config.NumberColumn("勝率差分", format="%+.1fpt", help="全体勝率と比べた勝率のプラス幅"),
+                "勝率リフト": st.column_config.NumberColumn("リフト値", format="%.2f倍", help="全体勝率に対して何倍勝ちやすくなっているか (Lift値)"),
                 "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                 "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                 "REG確率": st.column_config.TextColumn("平均REG確率"),
@@ -2345,6 +2432,11 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                 if target_df.empty:
                     st.info("該当するデータがありません。")
                     return
+                    
+                all_sim_valid = target_df['valid_play'].sum()
+                all_sim_win = target_df['valid_win'].sum()
+                overall_sim_win_rate = (all_sim_win / all_sim_valid * 100) if all_sim_valid > 0 else 0.0
+                
                 s_stats = target_df.groupby('確率帯').agg(
                     台数=('台番号', 'count'),
                     高設定数=('valid_high', 'sum'),
@@ -2361,6 +2453,9 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                 s_stats['平均REG確率'] = np.where(s_stats['合計R'] > 0, s_stats['合計G'] / s_stats['合計R'], 0)
                 s_stats['平均合算確率'] = np.where((s_stats['合計B'] + s_stats['合計R']) > 0, s_stats['合計G'] / (s_stats['合計B'] + s_stats['合計R']), 0)
                 s_stats['勝率'] = np.where(s_stats['有効稼働数'] > 0, s_stats['勝数'] / s_stats['有効稼働数'] * 100, 0.0)
+                s_stats['全体勝率'] = overall_sim_win_rate
+                s_stats['勝率差分'] = s_stats['勝率'] - s_stats['全体勝率']
+                s_stats['勝率リフト'] = np.where(s_stats['全体勝率'] > 0, s_stats['勝率'] / s_stats['全体勝率'], 0.0)
                 s_stats['高設定率'] = np.where(s_stats['高設定有効数'] > 0, s_stats['高設定数'] / s_stats['高設定有効数'] * 100, 0.0)
                 s_stats['平均期待度'] = s_stats['平均期待度'] * 100
                 s_stats['REG確率'] = s_stats['平均REG確率'].apply(lambda x: f"1/{int(x)}" if x > 0 else "-")
@@ -2372,14 +2467,17 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                 s_stats['信頼度'] = s_stats['台数'].apply(get_confidence_indicator)
                 
                 st.dataframe(
-                    s_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '勝率', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
+                    s_stats[['確率帯', '平均期待度', '台数', '有効稼働数', '高設定率', '全体勝率', '勝率', '勝率差分', '勝率リフト', '平均差枚', '合計差枚', 'REG確率', '合算確率', '信頼度']],
                     column_config={
                         "確率帯": st.column_config.TextColumn("期待度"),
                         "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
                         "台数": st.column_config.NumberColumn("台数", format="%d台", help="検証数"),
                         "有効稼働数": st.column_config.NumberColumn("有効稼働", format="%d台"),
                         "高設定率": st.column_config.ProgressColumn("高設定率", format="%.1f%%", min_value=0, max_value=100),
-                        "勝率": st.column_config.ProgressColumn("勝率(差枚)", format="%.1f%%", min_value=0, max_value=100),
+                        "全体勝率": st.column_config.NumberColumn("全体勝率", format="%.1f%%", help="その期間/営業区分の全体の勝率"),
+                        "勝率": st.column_config.ProgressColumn("対象台 勝率", format="%.1f%%", min_value=0, max_value=100),
+                        "勝率差分": st.column_config.NumberColumn("勝率差分", format="%+.1fpt", help="全体勝率と比べた勝率のプラス幅"),
+                        "勝率リフト": st.column_config.NumberColumn("リフト値", format="%.2f倍", help="全体勝率に対して何倍勝ちやすくなっているか (Lift値)"),
                         "平均差枚": st.column_config.NumberColumn("平均", format="%+d枚", help="平均結果(差枚)"),
                         "合計差枚": st.column_config.NumberColumn("合計", format="%+d枚", help="合計収支(差枚)"),
                         "REG確率": st.column_config.TextColumn("平均REG確率"),
