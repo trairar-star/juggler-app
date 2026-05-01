@@ -1291,11 +1291,17 @@ def _apply_island_features(df, df_island, shop_col):
             is_main_cor = 0
             is_main_isl = 0
             is_wall_isl = 0
+            
+            try:
+                m_num_int = int(float(m_num))
+            except Exception:
+                m_num_int = None
+                
             for pi in parsed_islands:
-                if pi['shop'] == s_name and m_num in pi['machines']:
+                if pi['shop'] == s_name and (m_num in pi['machines'] or m_num_int in pi['machines']):
                     i_id = pi['island_id']
-                    if m_num == pi['corner_min'] or m_num == pi['corner_max']: is_cor = 1
-                    if str(m_num) == pi['main_corner']: is_main_cor = 1
+                    if m_num == pi['corner_min'] or m_num == pi['corner_max'] or m_num_int == pi['corner_min'] or m_num_int == pi['corner_max']: is_cor = 1
+                    if str(m_num) == pi['main_corner'] or (m_num_int is not None and str(m_num_int) == pi['main_corner']): is_main_cor = 1
                     if pi['island_type'] == 'メイン通路沿い (目立つ)': is_main_isl = 1
                     elif pi['island_type'] == '壁側・奥 (目立たない)': is_wall_isl = 1
                     break
