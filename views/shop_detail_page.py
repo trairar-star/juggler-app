@@ -657,9 +657,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
 
             # 並び・島・特殊パターンに関するアドバイス (特徴量重要度から攻略ポイントを自動生成)
             if df_importance is not None and not df_importance.empty:
-                imp_shop = df_importance[df_importance['shop_name'] == selected_shop]
+                imp_shop = df_importance[df_importance['shop_name'].str.startswith(f"{selected_shop}(")].copy()
                 if not imp_shop.empty:
-                    imp_shop_sorted = imp_shop.sort_values('importance', ascending=False).reset_index(drop=True)
+                    imp_shop_sorted = imp_shop.groupby('feature').agg({'importance': 'mean'}).reset_index().sort_values('importance', ascending=False).reset_index(drop=True)
                     top_features = imp_shop_sorted.head(8)['feature'].tolist()
                     
                     imp_advices = []

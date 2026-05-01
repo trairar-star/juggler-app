@@ -699,8 +699,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 
             # --- 2. AIが分析した店舗の店癖（設定投入傾向） ---
             if df_importance is not None and not df_importance.empty:
-                imp_shop = df_importance[df_importance['shop_name'] == selected_shop].sort_values('importance', ascending=False)
+                imp_shop = df_importance[df_importance['shop_name'].str.startswith(f"{selected_shop}(")].copy()
                 if not imp_shop.empty:
+                    imp_shop = imp_shop.groupby('feature').agg({'importance': 'mean', 'correlation': 'mean'}).reset_index().sort_values('importance', ascending=False)
                     context_data += f"\n【{selected_shop} の設定投入のクセ (AIが重視している特徴量上位10件)】\n"
                     context_data += "※ 相関がプラスなら「その値が大きいほど高設定になりやすい」、マイナスなら「値が小さいほど高設定になりやすい」ことを示します。\n"
                     count = 0
