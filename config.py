@@ -22,7 +22,14 @@ BASE_FEATURES = [
     'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate',
     'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff',
     'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 
-    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'weekday_avg_diff'
+    'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'weekday_avg_diff',
+    'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
+    'reg_efficiency_penalty', 'machine_3days_avg_diff', 
+    'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
+    'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
+    'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
+    'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
+    'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
 ]
 
 FEATURE_NAME_MAP = {
@@ -59,7 +66,26 @@ FEATURE_NAME_MAP = {
     'hidden_high_setting_pattern': '複合: 隠れ高設定パターン',
     'is_low_play_high_reg': '複合: 低稼働&高設定挙動', 'is_hot_wd_and_heavy_lose': '複合: 還元曜&週間大凹み',
     'trend_v_recovery': '波: V字反発(負→勝)', 'trend_cont_lose': '波: 連続凹み(負→負)', 'trend_cont_win': '波: 連続据え(勝→勝)', 'trend_down_rebound': '波: 上げ戻し(勝→負)',
-    'shop_pred_diff_7d_avg': '店舗 AI予測7日平均差枚', 'predicted_diff': 'AI予測 差枚数'
+    'shop_pred_diff_7d_avg': '店舗 AI予測7日平均差枚', 'predicted_diff': 'AI予測 差枚数',
+    'island_high_setting_ratio': '島内 高設定率',
+    'reg_diff_interaction': 'REG×差枚 インタラクション',
+    'big_reg_ratio_gap': 'BB/REG 比率乖離',
+    'reg_efficiency_penalty': 'REG 効率性ペナルティ',
+    'machine_3days_avg_diff': '機種 3日平均差枚',
+    'machine_3days_high_setting_ratio': '機種 3日高設定率',
+    'machine_prev_avg_games': '機種 前日平均稼働G数',
+    'days_since_last_high': '最終高設定からの経過日数',
+    'rotation_priority_rank': '投入優先度ランク',
+    'island_unexplored_flag': '複合: 島好調＆低稼働(未発掘)',
+    'prev_shop_fake_rate': '店舗 前日フェイク率',
+    'is_sandwich_target': '複合: 両隣高設定(オセロ)',
+    'relative_abandon_score': '相対的放置スコア',
+    'island_win_rate': '島内 勝率',
+    'island_fake_ratio': '島内 フェイク率',
+    'past_island_fake_rate': '島 過去フェイク率',
+    'is_corner_showpiece': '複合: 角台見せ台フェイク',
+    'heavy_play_fake_penalty': '複合: タコ粘り罠フラグ',
+    'post_ev_sueoki_trust': '店舗 特日翌日据え置き信頼度'
 }
 
 # ---------------------------------------------------------

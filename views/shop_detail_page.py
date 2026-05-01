@@ -599,6 +599,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 advice_list.append(f"📊 **基本配分**: 通常時の高設定率は約 **{base_win_rate:.1f}%**（約 **{ratio}台に1台**）。")
 
             # --- 2. 特定日・曜日の傾向 ---
+            wd_avg_diff = 0
+            digit_avg_diff = 0
             if pd.notna(pred_date) and not df_raw_shop.empty and '対象日付' in df_raw_shop.columns:
                 target_wd = pred_date.dayofweek
                 target_digit = pred_date.day % 10
@@ -638,12 +640,14 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 advice_list.append(f"📉 **週間トレンド**: 店舗全体がマイナス推移 (平均 **{int(shop_7d_diff)}枚**)。強い台以外は深追い厳禁です。")
                 
             # イベント状況
+            is_event_day = False
             if 'イベント名' in df.columns:
                 event_names = df['イベント名'].dropna().unique()
                 event_names = [e for e in event_names if e != '通常' and str(e).strip() != '']
                 if event_names:
                     ev_str = "、".join(event_names)
                     advice_list.append(f"🎉 **イベント**: 本日は「**{ev_str}**」対象日です。")
+                    is_event_day = True
 
             # 店癖に基づく立ち回り
             if top_trends_df is not None and not top_trends_df.empty:
@@ -753,10 +757,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             max_change_score = df['prediction_score'].max() if 'prediction_score' in df.columns else 0
             max_sue_score = df['sueoki_score'].max() if 'sueoki_score' in df.columns else 0
             
+            is_point = shop_alloc.get("is_point", False) if 'shop_alloc' in locals() else False
+            main_type = shop_alloc.get("main_type", "不明") if 'shop_alloc' in locals() else "不明"
+            
             if max_change_score < 0.25 and max_sue_score < 0.25:
                 st.error("🛑 **【最終結論】本日の推奨アクション：「打たない（見送り）」**\n\n"
                          f"変更(上げ)期待度の最高値({max_change_score*100:.1f}%)、据え置き期待度の最高値({max_sue_score*100:.1f}%)が、ともに絶対的な勝負ライン(25%)を下回っています。\n"
                          "「相対的にマシな台」はありますが、勝つための絶対基準を満たす台がありません。本日は**『予測モデルを選ばず、打たずに店を去る』**がAIのベストアンサーです。")
+            elif abs(max_change_score - max_sue_score) <= 0.10 and not is_point and max(max_change_score, max_sue_score) < 0.50 and not is_event_day and wd_avg_diff < 100 and digit_avg_diff < 100:
+                st.warning("👁️ **【最終結論】本日は『当日観測更新日』です（後ヅモ前提）**\n\n"
+                           f"変更(上げ)最高期待度: {max_change_score*100:.1f}% / 据え置き最高期待度: {max_sue_score*100:.1f}%\n\n"
+                           "変更・据え置きどちらの世界線も否定できず、AIの事前予測が一つに収束していません（店側が意図的に当たりを隠している可能性が高い日です）。\n"
+                           f"配分タイプが「{main_type}」のため、**朝イチからの決め打ちは避け、当日の現場で島・機種・並びの『挙動が揃い始めた』のを確認してから後ヅモを狙う**立ち回りを推奨します。\n"
+                           "（※後ヅモで取れればラッキー、取れなければ無理に触らず帰るのが正解の日です）\n\n"
+                           "💡 **現場で何を確認すべき？**\n"
+                           "サイドバーの「🤖 AIチャット相談」で『今日は当日観測更新日みたいだけど、現場で具体的にどんな挙動が見えれば攻めていい？』と質問すると、AIが過去の店癖から「確認すべきサイン（観測ポイント）」を教えてくれます！")
             else:
                 if max_change_score > max_sue_score + 0.10:
                     master_action = f"本日は**「変更(上げ)予測」**のモデルを優先して狙い台を絞るのが有効です。(最高期待度: {max_change_score*100:.1f}%)"

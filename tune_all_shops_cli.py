@@ -47,7 +47,14 @@ def main():
         'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
         'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
         'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
-        '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days'
+        '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days',
+        'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
+        'reg_efficiency_penalty', 'machine_3days_avg_diff', 
+        'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
+        'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
+        'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
+        'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
+        'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
     ]
     keep_features = [f for f in actual_features if f in keep_allowed_features]
     change_features = actual_features.copy()
@@ -67,10 +74,12 @@ def main():
         shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
         shop_df = shop_df.sort_values('対象日付')
         max_date = shop_df['対象日付'].max()
-        cutoff_date = max_date - pd.Timedelta(days=30)
         
-        mode_train_base = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
-        mode_test_base = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+        # 時系列交差検証 (Time Series Split) 用データチェック (3fold x 14days = 42days)
+        cutoff_check = max_date - pd.Timedelta(days=42)
+        if len(shop_df[shop_df['対象日付'] <= cutoff_check]) < 30:
+            print(f"  -> 時系列交差検証に必要な過去データ不足のためスキップします。")
+            continue
         
         best_c_params = None
         best_k_params = None
@@ -88,21 +97,7 @@ def main():
         
         for mode in ['change', 'keep']:
             target_val = 0 if mode == 'change' else 1
-            m_train = mode_train_base[mode_train_base['is_prev_high_reg'] == target_val].copy()
-            m_test = mode_test_base[mode_test_base['is_prev_high_reg'] == target_val].copy()
-            
-            # モデル別の学習期間で絞り込み
-            t_m = current_hp.get('train_months', 3) if mode == 'change' else current_hp.get('k_train_months', 6)
-            if not m_train.empty:
-                m_train_cutoff = m_train['対象日付'].max() - pd.DateOffset(months=t_m)
-                m_train = m_train[m_train['対象日付'] >= m_train_cutoff].copy()
-                
-            if mode == 'keep':
-                m_test = m_test[~m_test['対象日付'].isin(sueoki_no_dates)].copy()
-            
-            if len(m_train) < 30 or len(m_test) < 5:
-                print(f"  -> {mode}予測のテストデータが不足しているためスキップします。")
-                continue
+            mode_full_data = shop_df[shop_df['is_prev_high_reg'] == target_val].copy()
                 
             current_features = change_features if mode == 'change' else keep_features
             if is_point:
@@ -110,11 +105,6 @@ def main():
                 current_features = [f for f in current_features if f not in ignore_features]
                 
             current_cat_features = [f for f in cat_features if f in current_features]
-            
-            X_train, y_train = m_train[current_features], m_train['target']
-            X_test, y_test = m_test[current_features], m_test['target']
-            days_diff = (m_train['対象日付'].max() - m_train['対象日付']).dt.days
-            sample_weights = 0.995 ** days_diff
             
             def objective_mode(trial):
                 params = {
@@ -128,38 +118,68 @@ def main():
                 max_leaves = min(127, (2 ** params['max_depth']) - 1)
                 params['num_leaves'] = trial.suggest_int('num_leaves', min(7, max_leaves), max_leaves)
                 
-                try:
-                    reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                    reg_model.fit(X_train, m_train['next_diff'], sample_weight=sample_weights, categorical_feature=current_cat_features)
-                    X_train_st = X_train.copy()
-                    X_train_st['predicted_diff'] = reg_model.predict(X_train)
-                    model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                    model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=current_cat_features)
+                n_splits = 3
+                test_days = 14
+                fold_scores = []
+                
+                for fold in range(n_splits):
+                    fold_cutoff_end = max_date - pd.Timedelta(days=fold * test_days)
+                    fold_cutoff_start = fold_cutoff_end - pd.Timedelta(days=test_days)
                     
-                    X_test_st = X_test.copy()
-                    X_test_st['predicted_diff'] = reg_model.predict(X_test)
-                    preds = model.predict_proba(X_test_st)[:, 1]
+                    fold_train = mode_full_data[mode_full_data['対象日付'] <= fold_cutoff_start].copy()
+                    fold_test = mode_full_data[(mode_full_data['対象日付'] > fold_cutoff_start) & (mode_full_data['対象日付'] <= fold_cutoff_end)].copy()
                     
-                    if len(np.unique(preds)) <= 1: return -1.0
+                    if mode == 'keep':
+                        sueoki_no_obj_dates = [d - pd.Timedelta(days=1) for d in sueoki_no_dates]
+                        fold_test = fold_test[~fold_test['対象日付'].isin(sueoki_no_obj_dates)].copy()
+                        
+                    if len(fold_train) < 30 or len(fold_test) < 5:
+                        continue
+                        
+                    X_fold_train, y_fold_train = fold_train[current_features], fold_train['target']
+                    X_fold_test, y_fold_test = fold_test[current_features], fold_test['target']
                     
-                    valid_play = backend.get_valid_play_mask(m_test['next_累計ゲーム'], m_test['next_diff'])
-                    valid_win = valid_play & (pd.to_numeric(m_test['next_diff'], errors='coerce').fillna(0) > 0)
-                    threshold = pd.Series(preds).quantile(0.85)
-                    target_idx = np.where(preds >= threshold)[0]
+                    fold_max_date = fold_train['対象日付'].max()
+                    days_diff = (fold_max_date - fold_train['対象日付']).dt.days
+                    sample_weights = 0.995 ** days_diff
                     
-                    if len(target_idx) == 0: return -1.0
-                    valid_target = valid_play.iloc[target_idx]
-                    if valid_target.sum() == 0: return -1.0
-                    
-                    win_rate = valid_win.iloc[target_idx].sum() / valid_target.sum()
-                    avg_diff = m_test['next_diff'].iloc[target_idx][valid_target].mean()
-                    
-                    base_win_rate = valid_win.sum() / valid_play.sum() if valid_play.sum() > 0 else 0
-                    win_lift = max(0, win_rate - base_win_rate)
-                    
-                    return (win_rate * 100) + (win_lift * 200) + (avg_diff / 10)
-                except Exception:
-                    return -1.0
+                    try:
+                        reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                        reg_model.fit(X_fold_train, fold_train['next_diff'], sample_weight=sample_weights, categorical_feature=current_cat_features)
+                        X_train_st = X_fold_train.copy()
+                        X_train_st['predicted_diff'] = reg_model.predict(X_fold_train)
+                        
+                        model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
+                        model.fit(X_train_st, y_fold_train, sample_weight=sample_weights, categorical_feature=current_cat_features)
+                        
+                        X_test_st = X_fold_test.copy()
+                        X_test_st['predicted_diff'] = reg_model.predict(X_fold_test)
+                        preds = model.predict_proba(X_test_st)[:, 1]
+                        
+                        if len(np.unique(preds)) <= 1: continue
+                        
+                        valid_play = backend.get_valid_play_mask(fold_test['next_累計ゲーム'], fold_test['next_diff'])
+                        valid_win = valid_play & (pd.to_numeric(fold_test['next_diff'], errors='coerce').fillna(0) > 0)
+                        threshold = pd.Series(preds).quantile(0.85)
+                        target_idx = np.where(preds >= threshold)[0]
+                        
+                        if len(target_idx) == 0: continue
+                        valid_target = valid_play.iloc[target_idx]
+                        if valid_target.sum() == 0: continue
+                        
+                        win_rate = valid_target['valid_win'].mean()
+                        avg_diff = fold_test['next_diff'].iloc[target_idx][valid_target].mean()
+                        
+                        base_win_rate = valid_win.sum() / valid_play.sum() if valid_play.sum() > 0 else 0
+                        win_lift = max(0, win_rate - base_win_rate)
+                        
+                        score = (win_rate * 100) + (win_lift * 200) + (avg_diff / 10)
+                        fold_scores.append(score)
+                    except Exception:
+                        continue
+                        
+                if not fold_scores: return -1.0
+                return sum(fold_scores) / len(fold_scores)
 
             study = optuna.create_study(direction='maximize')
             study.optimize(objective_mode, n_trials=10) # ★精度を上げるならここを 20 や 30 に増やす

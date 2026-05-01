@@ -10,7 +10,7 @@ from lstm_feature_extractor import JugglerTimeSeriesDataset, JugglerLSTM
 
 def objective(trial, X, y, input_size, device):
     # 探索するパラメータの範囲
-    hidden_size = trial.suggest_categorical('hidden_size', [16, 32, 64, 128])
+    hidden_size = trial.suggest_categorical('hidden_size', [4, 8, 16, 32, 64, 128, 256, 512])
     lr = trial.suggest_float('lr', 1e-4, 1e-2, log=True)
     epochs = trial.suggest_int('epochs', 10, 50, step=10)
     num_layers = 2

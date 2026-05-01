@@ -420,16 +420,111 @@ def diagnose_allocation_types(df_train, shop_col, specs):
         island_hit_rate = len(daily_island[(daily_island['差枚'] > 1000) & (daily_island['差枚'] > daily_island['shop_avg'] + 500)]) / len(daily_shop) if not daily_island.empty else 0
         mac_hit_rate = len(daily_mac[(daily_mac['差枚'] > 1000) & (daily_mac['差枚'] > daily_mac['shop_avg'] + 500)]) / len(daily_shop) if not daily_mac.empty else 0
         
+        # --- 新規追加: 各機種散らし型（各機種イチ配分）の判定 ---
+        mac_dispersion = valid_df.copy()
+        mac_dispersion['is_hot_machine'] = mac_dispersion['差枚'] >= 1000
+        
+        dispersion_stats = mac_dispersion.groupby('対象日付').agg(
+            total_active_macs=('機種名', 'nunique'),
+            hot_macs=('機種名', lambda x: x[mac_dispersion.loc[x.index, 'is_hot_machine']].nunique()),
+            total_hot_machines=('台番号', lambda x: mac_dispersion.loc[x.index, 'is_hot_machine'].sum())
+        ).reset_index()
+        dispersion_stats['mac_hit_coverage'] = np.where(dispersion_stats['total_active_macs'] > 0, dispersion_stats['hot_macs'] / dispersion_stats['total_active_macs'], 0)
+        dispersion_stats['hot_per_mac'] = np.where(dispersion_stats['hot_macs'] > 0, dispersion_stats['total_hot_machines'] / dispersion_stats['hot_macs'], 0)
+        each_mac_rate = ((dispersion_stats['mac_hit_coverage'] >= 0.40) & (dispersion_stats['hot_per_mac'] <= 2.5)).mean() if not dispersion_stats.empty else 0
+
         top_machines = valid_df.loc[valid_df.groupby('対象日付')['差枚'].idxmax()]
         top_machines = pd.merge(top_machines, daily_island.rename(columns={'差枚': 'island_avg'}), on=['対象日付', 'island_id'], how='left')
         point_hit_rate = len(top_machines[(top_machines['差枚'] >= 2500) & (top_machines['island_avg'] <= 0)]) / len(top_machines) if not top_machines.empty else 0
 
-        if island_hit_rate >= 0.20:
+        if each_mac_rate >= 0.20 and each_mac_rate > island_hit_rate and each_mac_rate > mac_hit_rate:
+            main_type = "各機種散らし型 (各機種イチ・ニ配分)"
+            messages.append("🎯 **各機種散らし型 (各機種イチ・ニ配分)**\n特定の島や全台系を作るのではなく、「多くの機種に1〜2台ずつ当たり台を散らばらせる」傾向が強いです。島全体の強さに騙されず、自分が打っている機種の中にまだ当たり台(高設定)が見えていないかを重視して立ち回ってください。")
+            is_point = True # 周りの台(島全体)の挙動に引っ張られすぎないように単体型ベースで学習させる
+        elif island_hit_rate >= 0.20:
             main_type = "島型 (面配分)"
-            messages.append("🏝️ **島型 (面配分)**\n同じ島(列)に合算やREGが似通う台が固まりやすく、島全体の平均が強くなる傾向があります。「周りの台の挙動(面)」が強力な判別要素になります。")
+            island_msg = "🏝️ **島型 (面配分)**\n同じ島(列)に合算やREGが似通う台が固まりやすく、島全体の平均が強くなる傾向があります。「周りの台の挙動(面)」が強力な判別要素になります。"
+            
+            # --- 🏝️ 島型のサブタイプ分析 (並び・ランダム・フェイク) ---
+            hit_islands = daily_island[(daily_island['差枚'] > 1000) & (daily_island['差枚'] > daily_island['shop_avg'] + 500)]
+            if not hit_islands.empty:
+                hit_island_keys = hit_islands[['対象日付', 'island_id']].drop_duplicates()
+                hit_island_data = pd.merge(valid_df, hit_island_keys, on=['対象日付', 'island_id'], how='inner')
+                
+                if 'is_reg_good' in hit_island_data.columns:
+                    fake_in_island_rate = len(hit_island_data[(hit_island_data['is_reg_good']) & (hit_island_data['差枚'] <= 0)]) / len(hit_island_data)
+                    avg_island_size = hit_island_data.groupby('island_id')['台番号'].nunique().mean()
+                    
+                    if fake_in_island_rate >= 0.25:
+                        island_msg += "\n  └ ⚠️ **フェイク交じり**: 当たり島の中にも「REGだけ引けて差枚がマイナス」のフェイク台が多数混ざっています。島全体が全台高設定というわけではなく、誤認を誘う配分です。"
+                        if avg_island_size < 5:
+                            island_msg += "\n  └ 🚨 **少台数島の誤認注意**: 台数が少ない島では、1台の爆出しに平均差枚が引っ張られ、全台系に見えてしまうトラップ(フェイク島)が頻発しています。過去の島フェイク率に注意してください。"
+                    elif fake_in_island_rate <= 0.10:
+                         island_msg += "\n  └ 💎 **全台ベース高め**: 当たり島にはフェイクが少なく、全体的にしっかり出玉が伴う傾向があります。島が強ければ安心して攻められます。"
+                         
+                if '台番号' in hit_island_data.columns:
+                    hit_island_data_n = hit_island_data.copy()
+                    hit_island_data_n['台番号_num'] = pd.to_numeric(hit_island_data_n['台番号'], errors='coerce')
+                    hit_island_data_n = hit_island_data_n.dropna(subset=['台番号_num']).sort_values(['対象日付', 'island_id', '台番号_num'])
+                    
+                    narabi_blocks = 0
+                    total_hit_islands = 0
+                    for (d, i_id), group in hit_island_data_n.groupby(['対象日付', 'island_id']):
+                        total_hit_islands += 1
+                        group['is_hot'] = group['差枚'] >= 500
+                        group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                        hot_blocks_counts = group[group['is_hot']].groupby('block').size()
+                        if not hot_blocks_counts.empty and hot_blocks_counts.max() >= 3:
+                             narabi_blocks += 1
+                             
+                    if total_hit_islands > 0:
+                        narabi_rate = narabi_blocks / total_hit_islands
+                        if narabi_rate >= 0.40:
+                            island_msg += "\n  └ 🤝 **塊・並び集中**: 島の中でも特に「3台以上の並び（塊）」で高設定が入る傾向が強いです。当たり島を見つけたら、両隣の挙動が良い場所を優先して狙ってください。"
+                        elif narabi_rate <= 0.15:
+                            island_msg += "\n  └ 🎲 **ランダム・散らし**: 島全体は強いですが、出ている台は島の中でランダムに散らばっています。「隣が出ているから」という根拠は通用しにくいため、単体の挙動を重視してください。"
+
+            messages.append(island_msg)
         elif mac_hit_rate >= 0.20:
             main_type = "機種型 (機種単位配分)"
-            messages.append("🎰 **機種型 (機種単位配分)**\n特定機種だけが明確に強くなる「全台系・半列系」の塊を作る傾向があります。機種全体のベースの高さに注目してください。")
+            mac_msg = "🎰 **機種型 (機種単位配分)**\n特定機種だけが明確に強くなる「全台系・半列系」の塊を作る傾向があります。機種全体のベースの高さに注目してください。"
+            
+            # --- 🎰 機種型のサブタイプ分析 (全台系・半列/ランダム・フェイク) ---
+            hit_macs = daily_mac[(daily_mac['差枚'] > 1000) & (daily_mac['差枚'] > daily_mac['shop_avg'] + 500)]
+            if not hit_macs.empty:
+                hit_mac_keys = hit_macs[['対象日付', '機種名']].drop_duplicates()
+                hit_mac_data = pd.merge(valid_df, hit_mac_keys, on=['対象日付', '機種名'], how='inner')
+                
+                if 'is_reg_good' in hit_mac_data.columns:
+                    fake_in_mac_rate = len(hit_mac_data[(hit_mac_data['is_reg_good']) & (hit_mac_data['差枚'] <= 0)]) / len(hit_mac_data)
+                    if fake_in_mac_rate >= 0.25:
+                        mac_msg += "\n  └ ⚠️ **フェイク交じり**: 当たり機種の中にも「REGだけ引けて差枚がマイナス」のフェイク台が多数混ざっています。「全台系」に見せかけた「1/2配分」等に注意してください。"
+                    elif fake_in_mac_rate <= 0.10:
+                        mac_msg += "\n  └ 💎 **完全全台系**: 当たり機種にはフェイクが少なく、全体的にしっかり出玉が伴う傾向があります。「全台系」の信頼度が非常に高いです。"
+
+                if '台番号' in hit_mac_data.columns:
+                    hit_mac_data_n = hit_mac_data.copy()
+                    hit_mac_data_n['台番号_num'] = pd.to_numeric(hit_mac_data_n['台番号'], errors='coerce')
+                    hit_mac_data_n = hit_mac_data_n.dropna(subset=['台番号_num']).sort_values(['対象日付', '機種名', '台番号_num'])
+                    
+                    narabi_blocks = 0
+                    total_hit_macs = 0
+                    for (d, m_name), group in hit_mac_data_n.groupby(['対象日付', '機種名']):
+                        total_hit_macs += 1
+                        group['is_hot'] = group['差枚'] >= 500
+                        group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                        hot_blocks_counts = group[group['is_hot']].groupby('block').size()
+                        if not hot_blocks_counts.empty and hot_blocks_counts.max() >= 3:
+                             narabi_blocks += 1
+                             
+                    if total_hit_macs > 0:
+                        narabi_rate = narabi_blocks / total_hit_macs
+                        if narabi_rate >= 0.40:
+                            mac_msg += "\n  └ 🤝 **塊・並び集中**: 当たり機種の中でも特に「固まって」設定が入る傾向があります。出ている台の隣を狙うのがセオリーです。"
+                        elif narabi_rate <= 0.15:
+                            mac_msg += "\n  └ 🎲 **ランダム・散らし**: 当たり機種の中でも、出ている台はランダムに散らばっています。「末尾」など別の法則が絡んでいる可能性があります。"
+            
+            messages.append(mac_msg)
         elif point_hit_rate >= 0.40:
             is_point = True
             main_type = "単体型 (点配分)"
@@ -438,16 +533,45 @@ def diagnose_allocation_types(df_train, shop_col, specs):
             main_type = "複合型 (散らし配分)"
             messages.append("🧩 **複合型 (散らし配分)**\n島・機種・単体が複雑に混ざっています。明確な「面」が形成されにくいため、複数の根拠(店癖や波)を掛け合わせて狙う必要があります。")
 
+        # --- 店舗全体の並び・塊傾向の事前計算 (ローテーション型や客層反応型のサブ分析用) ---
+        narabi_rate_shop = 0
+        if '台番号' in valid_df.columns:
+            valid_df_n = valid_df.copy()
+            valid_df_n['台番号_num'] = pd.to_numeric(valid_df_n['台番号'], errors='coerce')
+            valid_df_n = valid_df_n.dropna(subset=['台番号_num']).sort_values(['対象日付', '台番号_num'])
+            
+            narabi_blocks_shop = 0
+            total_active_days = valid_df_n['対象日付'].nunique()
+            
+            if total_active_days > 0:
+                for d, group in valid_df_n.groupby('対象日付'):
+                    group['is_hot'] = group['差枚'] >= 500
+                    group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                    hot_blocks_counts = group[group['is_hot']].groupby('block').size()
+                    if not hot_blocks_counts.empty and hot_blocks_counts.max() >= 3:
+                         narabi_blocks_shop += 1
+                narabi_rate_shop = narabi_blocks_shop / total_active_days
+
         # 3. ローテーション型
         age_rate = shop_df[(shop_df['連続マイナス日数'] >= 2) & (shop_df['累計ゲーム'] >= 3000)]['target'].mean()
         sue_rate = shop_df[(shop_df['is_prev_high_reg'] == 1) & (shop_df['累計ゲーム'] >= 3000)]['target'].mean()
         if pd.notna(age_rate) and pd.notna(sue_rate) and age_rate > (sue_rate * 1.2) and age_rate >= 0.15:
-            messages.append("🔄 **ローテーション型 (循環配分)**\n毎日強い場所が日替わりで移動し、前日弱かった島・機種・凹み台に設定が入りやすいです。AIの「過去特徴→翌日の変更(上げ)予測」が非常に機能しやすい環境です。")
+            rot_msg = "🔄 **ローテーション型 (循環配分)**\n毎日強い場所が日替わりで移動し、前日弱かった島・機種・凹み台に設定が入りやすいです。AIの「過去特徴→翌日の変更(上げ)予測」が非常に機能しやすい環境です。"
+            if narabi_rate_shop >= 0.30:
+                rot_msg += "\n  └ 🤝 **塊ローテ**: 凹み台の「隣」なども巻き込んで、3台以上の塊でローテーションしてくる傾向があります。狙い台の隣もチャンスです。"
+            elif narabi_rate_shop <= 0.15:
+                rot_msg += "\n  └ 🎲 **単体ローテ**: 塊にはならず、凹んだ台単体だけをピンポイントで上げてきます。周りの状況に流されないようにしてください。"
+            messages.append(rot_msg)
         
         # 4. 客層反応型
         low_kado_hit = shop_df[(shop_df['prev_累計ゲーム'] < 1500) & (shop_df['prev_累計ゲーム'] > 0)]['target'].mean()
         if pd.notna(low_kado_hit) and low_kado_hit >= 0.20:
-            messages.append("👥 **客層反応型 (リアクティブ)**\n客に見切られて稼働が落ちた(空き台が増えた)台や島に対して、テコ入れで設定を入れてくる傾向が見られます。")
+            reac_msg = "👥 **客層反応型 (リアクティブ)**\n客に見切られて稼働が落ちた(空き台が増えた)台や島に対して、テコ入れで設定を入れてくる傾向が見られます。"
+            if narabi_rate_shop >= 0.30:
+                reac_msg += "\n  └ 🤝 **島ごとテコ入れ**: 低稼働になった列や島を、塊で一気に全台系・半列系にしてテコ入れしてくる傾向があります。"
+            elif narabi_rate_shop <= 0.15:
+                reac_msg += "\n  └ 🎲 **単体テコ入れ**: 低稼働の台の中で、ポツンと単体で設定を入れて稼働を煽ります。並びを意識する必要はありません。"
+            messages.append(reac_msg)
 
         alloc_types[s] = {
             "is_mislead": is_mislead,
