@@ -11,7 +11,7 @@ import glob
 import re
 from google.oauth2.service_account import Credentials
 import time
-from utils import get_valid_play_mask, get_confidence_indicator, get_matched_spec_key, classify_shop_eval
+from utils import get_valid_play_mask, get_confidence_indicator, get_matched_spec_key, classify_shop_eval, calculate_high_setting_mask
 from config import BASE_FEATURES, FEATURE_NAME_MAP, MACHINE_SPECS
 from model_trainer import train_models
 from shop_trends import calculate_shop_trends, apply_trends_to_row, analyze_sueoki_and_change_triggers, diagnose_allocation_types, evaluate_sueoki_premise
@@ -1772,23 +1772,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['spec_bb_reg_ratio'] = df['spec_reg'] / df['spec_b5_den'].replace(0, 1)
         df['bb_reg_ratio_diff'] = df['prev_bb_reg_ratio'] - df['spec_bb_reg_ratio']
 
-    # 先に当日の高設定挙動フラグ(is_win)を計算
-    df['total_prob'] = (df['BIG'].fillna(0) + df['REG'].fillna(0)) / df['累計ゲーム'].replace(0, np.nan)
-    df['BIG分母'] = np.where(df['BIG'].fillna(0) > 0, df['累計ゲーム'] / df['BIG'], 9999)
-    
-    # Zスコア（設定1の否定度）の計算
-    exp_reg1 = df['累計ゲーム'] * df['spec_reg1']
-    std_reg1 = np.sqrt(df['累計ゲーム'] * df['spec_reg1'] * (1.0 - df['spec_reg1']))
-    df['z_score_reg'] = np.where(std_reg1 > 0, (df['REG'].fillna(0) - exp_reg1) / std_reg1, 0)
-    
     df['is_win'] = (
         (df['累計ゲーム'] >= 3000) & 
-        (
-            (df['REG確率'] >= df['spec_reg']) | 
-            ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3'])) |
-            (df['z_score_reg'] >= 1.64)
-        ) &
-        (df['BIG分母'] <= df['spec_b6_den'] + 100))
+        calculate_high_setting_mask(df, specs, include_bb_filter=True)
+    ).astype(int)
 
     # --- 新規追加: 高設定率の計算において未稼働台(3000G未満)を分母から除外するためのフラグ ---
     # 3000G未満の台は np.nan にすることで、mean() 集計時に分母に含まれなくなる
@@ -1817,12 +1804,8 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # --- 新規追加: REG確率評価の厳格化と特徴量エンジニアリング ---
     df['is_prev_high_reg'] = (
         (df['累計ゲーム'] >= 3000) & 
-        (
-            (df['REG確率'] >= df['spec_reg']) | 
-            ((df['total_prob'] >= df['spec_tot']) & (df['REG確率'] >= df['spec_reg3'])) |
-            (df['z_score_reg'] >= 1.64)
-        )
-    )
+        calculate_high_setting_mask(df, specs, include_bb_filter=False)
+    ).astype(int)
     df['is_high_reg_plus_diff'] = (df['is_prev_high_reg'] == 1) & (df['差枚'] > 0)
     df['is_low_reg_plus_diff'] = (df['is_prev_high_reg'] == 0) & (df['差枚'] > 0)
 
@@ -1848,24 +1831,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     if 'REG' in df.columns: df['next_REG'] = df.groupby(group_keys)['REG'].shift(-1)
     if '累計ゲーム' in df.columns: df['next_累計ゲーム'] = df.groupby(group_keys)['累計ゲーム'].shift(-1)
     
-    # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に変更 ---
-    df['next_reg_prob'] = df['next_REG'] / df['next_累計ゲーム'].replace(0, np.nan)
-    df['next_total_prob'] = (df['next_BIG'].fillna(0) + df['next_REG'].fillna(0)) / df['next_累計ゲーム'].replace(0, np.nan)
-    df['next_big_den'] = np.where(df['next_BIG'].fillna(0) > 0, df['next_累計ゲーム'] / df['next_BIG'], 9999)
-    
-    next_exp_reg1 = df['next_累計ゲーム'].fillna(0) * df['spec_reg1']
-    next_std_reg1 = np.sqrt(df['next_累計ゲーム'].fillna(0) * df['spec_reg1'] * (1.0 - df['spec_reg1']))
-    df['next_z_score_reg'] = np.where(next_std_reg1 > 0, (df['next_REG'].fillna(0) - next_exp_reg1) / next_std_reg1, 0)
-    
     # --- ターゲットを「翌日の高設定挙動(機種別の設定5基準：REGまたは合算)」に設定 ---
     df['target'] = (
         (df['next_累計ゲーム'] >= 3000) & 
-        (
-            (df['next_reg_prob'] >= df['spec_reg']) | 
-            ((df['next_total_prob'] >= df['spec_tot']) & (df['next_reg_prob'] >= df['spec_reg3'])) |
-            (df['next_z_score_reg'] >= 1.64)
-        ) &
-        (df['next_big_den'] <= df['spec_b6_den'] + 100)
+        calculate_high_setting_mask(df, specs, g_col='next_累計ゲーム', b_col='next_BIG', r_col='next_REG', include_bb_filter=True)
     ).astype(int)
     
     # --- 予測対象日の情報（未来のカンニングではなく、予測日の日付・曜日・イベント属性） ---
@@ -2653,20 +2622,8 @@ def get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, sho
             act_g = pd.to_numeric(merged['累計ゲーム'], errors='coerce').fillna(0)
             act_diff = pd.to_numeric(merged['差枚'], errors='coerce').fillna(0)
             
-            spec_reg_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-            spec_tot_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-            spec_reg3_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
-            spec_reg1_val = merged['機種名_raw'].apply(lambda x: specs[get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
-            
-            reg_prob_den = np.where(act_r > 0, act_g / act_r, 0)
-            tot_prob_den = np.where((act_b + act_r) > 0, act_g / (act_b + act_r), 0)
-            
-            exp_r1 = act_g * (1.0 / spec_reg1_val)
-            std_r1 = np.sqrt(act_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
-            z_score = np.where(std_r1 > 0, (act_r - exp_r1) / std_r1, 0)
-            
             merged['valid_high_play'] = (act_g >= 3000)
-            merged['is_high_setting'] = ((((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val) & (reg_prob_den > 0) & (reg_prob_den <= spec_reg3_val)) | (z_score >= 1.64))).astype(int)
+            merged['is_high_setting'] = calculate_high_setting_mask(merged, specs, mac_col='機種名_raw').astype(int)
             
             merged['valid_play'] = get_valid_play_mask(act_g, act_diff)
             merged['valid_win'] = merged['valid_play'] & (act_diff > 0)
@@ -2772,19 +2729,9 @@ def get_machine_basic_stats(df_raw_shop, specs):
     mac_df['設定5近似度'] = mac_df.apply(lambda row: get_setting_score_from_row(row, shop_avg_g=shop_avg_g), axis=1)
     mac_df['REG確率_val'] = np.where(mac_df['累計ゲーム'] > 0, mac_df['REG'] / mac_df['累計ゲーム'], 0)
     
-    mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
-    spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-    spec_tot = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-    spec_reg3 = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
-    
-    spec_reg1 = mac_df['機種名'].apply(lambda x: 1.0 / specs[get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
-    exp_reg1 = mac_df['累計ゲーム'] * spec_reg1
-    std_reg1 = np.sqrt(mac_df['累計ゲーム'] * spec_reg1 * (1.0 - spec_reg1))
-    z_score_reg = np.where(std_reg1 > 0, (mac_df['REG'].fillna(0) - exp_reg1) / std_reg1, 0)
-    
     mac_df['高設定挙動'] = (
         (mac_df['累計ゲーム'] >= 3000) & 
-        ((mac_df['REG確率'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率'] >= spec_reg3)) | (z_score_reg >= 1.64))
+        calculate_high_setting_mask(mac_df, specs)
     ).astype(int)
     mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
     

@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st # type: ignore
 import backend
+from utils import calculate_high_setting_mask
 
 def render_calendar_compare_page(df_raw, df_predict, target_date):
     st.header("🗺️ 店舗間ヒートマップ比較")
@@ -98,32 +99,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     
     # 高設定フラグの計算 (機種ごとの合算やREGで判定)
     specs = backend.get_machine_specs()
-    def is_high(row):
-        g = pd.to_numeric(row.get('累計ゲーム', 0), errors='coerce')
-        if g < 3000:
-            return np.nan
-        
-        b = pd.to_numeric(row.get('BIG', 0), errors='coerce')
-        r = pd.to_numeric(row.get('REG', 0), errors='coerce')
-        
-        machine = row.get('機種名', '')
-        matched_spec = backend.get_matched_spec_key(machine, specs)
-        p_r_5 = 1.0 / specs[matched_spec].get("設定5", {"REG": 260.0})["REG"] if matched_spec else 1/260.0
-        p_t_5 = 1.0 / specs[matched_spec].get("設定5", {"合算": 128.0})["合算"] if matched_spec else 1/128.0
-        p_r_3 = 1.0 / specs[matched_spec].get("設定3", {"REG": 300.0})["REG"] if matched_spec else 1/300.0
-        p_r_1 = 1.0 / specs[matched_spec].get("設定1", {"REG": 400.0})["REG"] if matched_spec else 1/400.0
-        
-        r_prob = r / g if g > 0 else 0
-        t_prob = (b + r) / g if g > 0 else 0
-        
-        import math
-        exp_r1 = g * p_r_1
-        std_r1 = math.sqrt(g * p_r_1 * (1.0 - p_r_1)) if g > 0 else 0
-        z_score = (r - exp_r1) / std_r1 if std_r1 > 0 else 0
-        
-        return 1 if r_prob >= p_r_5 or (t_prob >= p_t_5 and r_prob >= p_r_3) or z_score >= 1.64 else 0
-        
-    df_recent['is_high'] = df_recent.apply(is_high, axis=1)
+    df_recent['is_high'] = ((pd.to_numeric(df_recent['累計ゲーム'], errors='coerce').fillna(0) >= 3000) & calculate_high_setting_mask(df_recent, specs)).astype(int)
 
     df_recent['表示日'] = df_recent[date_col].dt.strftime('%m/%d')
     
@@ -198,7 +174,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         df_raw_eval = df_raw_eval[df_raw_eval['対象日付'] >= (max_d - pd.Timedelta(days=90))]
         
         # ヒートマップ用に使った高設定判定ロジック(is_high)を流用
-        df_raw_eval['is_high'] = df_raw_eval.apply(is_high, axis=1)
+        df_raw_eval['is_high'] = ((pd.to_numeric(df_raw_eval['累計ゲーム'], errors='coerce').fillna(0) >= 3000) & calculate_high_setting_mask(df_raw_eval, specs)).astype(int)
         
         daily_stats = df_raw_eval.groupby([shop_col, '対象日付']).agg(
             総台数=('台番号', 'nunique'),

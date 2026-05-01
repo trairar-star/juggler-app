@@ -6,7 +6,7 @@ import os
 import backend
 import time
 import lightgbm as lgb # type: ignore
-from utils import get_valid_play_mask
+from utils import get_valid_play_mask, calculate_high_setting_mask
 from config import BASE_FEATURES, FEATURE_NAME_MAP, KEEP_ALLOWED_FEATURES
 from postprocessor import postprocess_predictions
 
@@ -519,17 +519,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             mac_df['valid_play'] = get_valid_play_mask(mac_df['累計ゲーム'], mac_df['差枚'])
                             
                             specs = backend.get_machine_specs()
-                            mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
-                            spec_reg = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-                            spec_tot = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-                            spec_reg3 = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
-                            
-                            spec_reg1 = mac_df['機種名'].apply(lambda x: 1.0 / specs[backend.get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
-                            exp_r1 = mac_df['累計ゲーム'] * spec_reg1
-                            std_r1 = np.sqrt(mac_df['累計ゲーム'] * spec_reg1 * (1.0 - spec_reg1))
-                            z_score = np.where(std_r1 > 0, (mac_df['REG'].fillna(0) - exp_r1) / std_r1, 0)
-                            
-                            mac_df['高設定挙動'] = ((mac_df['累計ゲーム'] >= 3000) & ((mac_df['REG確率_raw'] >= spec_reg) | ((mac_df['合算確率'] >= spec_tot) & (mac_df['REG確率_raw'] >= spec_reg3)) | (z_score >= 1.64))).astype(int)
+                            mac_df['高設定挙動'] = ((mac_df['累計ゲーム'] >= 3000) & calculate_high_setting_mask(mac_df, specs)).astype(int)
                             mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
                             
                             mac_df['valid_差枚'] = np.where(mac_df['valid_play'], mac_df['差枚'], np.nan)

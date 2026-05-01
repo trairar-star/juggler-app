@@ -6,7 +6,7 @@ import lightgbm as lgb # type: ignore
 import math
 
 import backend
-from utils import get_confidence_indicator, get_valid_play_mask
+from utils import get_confidence_indicator, get_valid_play_mask, calculate_high_setting_mask
 from config import BASE_FEATURES, KEEP_ALLOWED_FEATURES
 from postprocessor import postprocess_predictions
 
@@ -380,19 +380,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
     merged_df['valid_win'] = merged_df['valid_play'] & (pd.to_numeric(merged_df['差枚_actual'], errors='coerce').fillna(0) > 0)
     
     specs = backend.get_machine_specs()
-    spec_reg_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"REG": 260.0})["REG"])
-    spec_tot_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定5', {"合算": 128.0})["合算"])
-    spec_reg3_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定3', {"REG": 300.0})["REG"])
-    spec_reg1_val = merged_df['機種名'].apply(lambda x: specs[backend.get_matched_spec_key(x, specs)].get('設定1', {"REG": 400.0})["REG"])
+    merged_df['is_high_setting'] = calculate_high_setting_mask(merged_df, specs, g_col='結果_累計ゲーム', b_col='結果_BIG', r_col='結果_REG').astype(int)
     m_cum_g = pd.to_numeric(merged_df['結果_累計ゲーム'], errors='coerce').fillna(0)
-    m_big_c = pd.to_numeric(merged_df['結果_BIG'], errors='coerce').fillna(0)
-    m_reg_c = pd.to_numeric(merged_df['結果_REG'], errors='coerce').fillna(0)
-    merged_df['結果_合算確率分母'] = np.where((m_big_c + m_reg_c) > 0, m_cum_g / (m_big_c + m_reg_c), 0)
-    
-    exp_r1 = m_cum_g * (1.0 / spec_reg1_val)
-    std_r1 = np.sqrt(m_cum_g * (1.0 / spec_reg1_val) * (1.0 - (1.0 / spec_reg1_val)))
-    z_score = np.where(std_r1 > 0, (m_reg_c - exp_r1) / std_r1, 0)
-    merged_df['is_high_setting'] = (((merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg_val)) | ((merged_df['結果_合算確率分母'] > 0) & (merged_df['結果_合算確率分母'] <= spec_tot_val) & (merged_df['結果_REG確率分母'] > 0) & (merged_df['結果_REG確率分母'] <= spec_reg3_val)) | (z_score >= 1.64)).astype(int)
     merged_df['valid_high_play'] = m_cum_g >= 3000
     merged_df['valid_high'] = merged_df['valid_high_play'] & (merged_df['is_high_setting'] == 1)
 
