@@ -29,7 +29,10 @@ BASE_FEATURES = [
     'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
     'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
     'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
-    'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
+    'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust',
+    'island_avg_diff', 'is_high_reg_minus_diff', 'reg_diff_ratio'
+    'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust',
+    'island_avg_diff', 'machine_no_30days_avg_diff', 'is_high_reg_minus_diff', 'reg_diff_ratio'
 ]
 
 KEEP_ALLOWED_FEATURES = [
@@ -102,7 +105,10 @@ FEATURE_NAME_MAP = {
     'past_island_fake_rate': '島 過去フェイク率',
     'is_corner_showpiece': '複合: 角台見せ台フェイク',
     'heavy_play_fake_penalty': '複合: タコ粘り罠フラグ',
-    'post_ev_sueoki_trust': '店舗 特日翌日据え置き信頼度'
+    'post_ev_sueoki_trust': '店舗 特日翌日据え置き信頼度',
+    'island_avg_diff': '島 当日平均差枚',
+    'is_high_reg_minus_diff': '複合: 前日REG高&差枚マイナス(フェイク警戒)',
+    'reg_diff_ratio': 'REG1回あたりの差枚(出玉力)'
 }
 
 # ---------------------------------------------------------
