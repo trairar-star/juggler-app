@@ -138,6 +138,7 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
             np.nan
         )
         pivot_df = source_df.pivot_table(index=shop_col, columns='表示日', values='REG確率分母', aggfunc='mean')
+        source_df = source_df.drop(columns=['REG確率分母'], errors='ignore')
         
         # 全店舗が表示されるように reindex を追加
         all_shops_in_period = df_recent[shop_col].unique()

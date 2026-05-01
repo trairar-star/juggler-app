@@ -1152,6 +1152,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
             st.divider()
             with st.expander("🚀 全店舗一括 自動チューニング", expanded=False):
                 st.info("💡 登録されているすべての店舗に対して、自動チューニングを順番に実行します。AIの根本的な計算ロジック（純粋確率化など）がアップデートされた際などに、全店舗の設定を一気に最適化し直すのに便利です。店舗数によっては完了まで数分かかる場合があります。")
+                tune_trials = st.number_input("✨ 自動チューニングの探索回数 (1店舗あたり)", min_value=5, max_value=100, value=10, step=5, help="回数を増やすほどより高精度なパラメータを見つけやすくなりますが、処理時間が長くなります。（目安: 10回で約1分、30回で約3分）", key="tune_trials_all_shops")
                 if st.button("⚠️ 全店舗を一括でチューニングする", type="primary"):
                     all_shops = df_verify[shop_col].dropna().unique().tolist()
                     if not all_shops:
@@ -1283,7 +1284,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                                         return -1.0
 
                                 study = optuna.create_study(direction='maximize')
-                                study.optimize(objective_mode, n_trials=10)
+                                study.optimize(objective_mode, n_trials=tune_trials)
                                 
                                 if mode == 'change': 
                                     best_c_params = study.best_params
@@ -1600,7 +1601,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
             else:
                 missed_df_raw['tmp_target_date'] = (pd.to_datetime(missed_df_raw['対象日付'], errors='coerce') + pd.Timedelta(days=1)).dt.date
                 
-            missed_df_raw = missed_df_raw[missed_df_raw['tmp_target_date'].isin(logged_dates)].copy()
+            missed_df_raw = missed_df_raw.drop(columns=['tmp_target_date'])
         
         if missed_df_raw.empty or 'prediction_score' not in missed_df_raw.columns or 'next_diff' not in missed_df_raw.columns:
             st.info("分析に必要なデータがありません。")
