@@ -4,7 +4,7 @@ import numpy as np
 import optuna
 import lightgbm as lgb # type: ignore
 import backend
-from config import BASE_FEATURES
+from config import BASE_FEATURES, KEEP_ALLOWED_FEATURES
 from shop_trends import diagnose_allocation_types
 from config import MACHINE_SPECS
 
@@ -40,23 +40,7 @@ def main():
     actual_features = [f for f in BASE_FEATURES if f in train_df.columns]
     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
     
-    keep_allowed_features = [
-        '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
-        'prev_bonus_balance', 'prev_unlucky_gap',
-        'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
-        'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
-        'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
-        'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
-        '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days',
-        'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
-        'reg_efficiency_penalty', 'machine_3days_avg_diff', 
-        'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
-        'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
-        'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
-        'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
-        'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
-    ]
-    keep_features = [f for f in actual_features if f in keep_allowed_features]
+    keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
     change_features = actual_features.copy()
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -175,7 +159,8 @@ def main():
                         
                         score = (win_rate * 100) + (win_lift * 200) + (avg_diff / 10)
                         fold_scores.append(score)
-                    except Exception:
+                    except Exception as e:
+                        print(f"    [Error] fold実行中にエラー: {e}")
                         continue
                         
                 if not fold_scores: return -1.0

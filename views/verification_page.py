@@ -7,7 +7,7 @@ import math
 
 import backend
 from utils import get_confidence_indicator, get_valid_play_mask
-from config import BASE_FEATURES
+from config import BASE_FEATURES, KEEP_ALLOWED_FEATURES
 from postprocessor import postprocess_predictions
 
 def render_verification_page(df_pred_log, df_verify, df_predict, df_raw, df_events=None):
@@ -1761,7 +1761,6 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
     if "shop_hyperparams" not in st.session_state:
         st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 
                                                            'k_train_months': 6, 'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
-                                                           'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
                                                            'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}}
         
     default_hp = st.session_state["shop_hyperparams"]["デフォルト"]
@@ -1815,7 +1814,6 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples,
             'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda,
             'k_train_months': k_hp_train_months, 'k_n_estimators': k_hp_n_estimators, 'k_learning_rate': k_hp_learning_rate,
-            'k_n_estimators': k_hp_n_estimators, 'k_learning_rate': k_hp_learning_rate,
             'k_num_leaves': k_hp_num_leaves, 'k_max_depth': k_hp_max_depth, 'k_min_child_samples': k_hp_min_child_samples,
             'k_reg_alpha': k_hp_reg_alpha, 'k_reg_lambda': k_hp_reg_lambda,
             'lstm_hidden_size': hp_lstm_hidden, 'lstm_lr': hp_lstm_lr, 'lstm_epochs': hp_lstm_epochs
@@ -1860,23 +1858,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                 if len(train_data) < 30 or len(test_data) < 10:
                     st.error(f"直近{test_period}日間またはそれ以前のデータが不足しているため、テストを実行できません。")
                 else:
-                    keep_allowed_features = [
-                        '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
-                        'prev_bonus_balance', 'prev_unlucky_gap',
-                        'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
-                        'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
-                        'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
-                        'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
-                        '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days',
-                        'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
-                        'reg_efficiency_penalty', 'machine_3days_avg_diff', 
-                        'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
-                        'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
-                        'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
-                        'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
-                        'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
-                    ]
-                    keep_features = [f for f in actual_features if f in keep_allowed_features]
+                    keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
                     change_features = actual_features.copy()
                     
                     test_data_processed = test_data.copy()
@@ -2157,23 +2139,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             actual_features = [f for f in backend.BASE_FEATURES if f in df_verify.columns]
             cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
             
-            keep_allowed_features = [
-                '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
-                'prev_bonus_balance', 'prev_unlucky_gap',
-                'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
-                'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
-                'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
-                'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
-                '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days',
-                'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
-                'reg_efficiency_penalty', 'machine_3days_avg_diff', 
-                'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
-                'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
-                'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
-                'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
-                'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
-            ]
-            keep_features = [f for f in actual_features if f in keep_allowed_features]
+            keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
             change_features = actual_features.copy()
             
             shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()

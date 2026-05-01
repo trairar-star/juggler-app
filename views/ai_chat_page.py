@@ -7,7 +7,7 @@ import backend
 import time
 import lightgbm as lgb # type: ignore
 from utils import get_valid_play_mask
-from config import BASE_FEATURES, FEATURE_NAME_MAP
+from config import BASE_FEATURES, FEATURE_NAME_MAP, KEEP_ALLOWED_FEATURES
 from postprocessor import postprocess_predictions
 
 try:
@@ -240,23 +240,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 
                     if len(train_data) >= 30 and len(test_data) >= 10:
                         
-                        keep_allowed_features = [
-                            '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
-                            'prev_bonus_balance', 'prev_unlucky_gap',
-                            'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
-                            'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
-                            'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
-                            'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
-                            '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days',
-                            'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
-                            'reg_efficiency_penalty', 'machine_3days_avg_diff', 
-                            'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
-                            'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
-                            'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
-                            'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
-                            'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
-                        ]
-                        keep_features = [f for f in actual_features if f in keep_allowed_features]
+                        keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
                         change_features = actual_features.copy()
                         
                         test_data_processed = test_data.copy()

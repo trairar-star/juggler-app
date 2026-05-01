@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import lightgbm as lgb # type: ignore
 from shop_trends import diagnose_allocation_types
-from config import MACHINE_SPECS
+from config import MACHINE_SPECS, KEEP_ALLOWED_FEATURES
 
 def train_models(train_df, predict_df, features, shop_hyperparams):
     """
@@ -18,23 +18,7 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
         alloc_types = diagnose_allocation_types(train_df, shop_col, MACHINE_SPECS)
 
     # 据え置き予想モデル思想「昨日の続きを打てるか」のみを評価し、深い推測(曜日、イベント等)を排除する
-    keep_allowed_features = [
-        '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
-        'prev_bonus_balance', 'prev_unlucky_gap',
-        'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff',
-        'prev2_差枚', 'prev3_差枚', 'prev2_REG確率', 'prev3_REG確率', 'prev2_累計ゲーム', 'prev3_累計ゲーム',
-        'mean_3days_diff', 'mean_3days_reg_prob', 'mean_3days_games',
-        'mean_7days_diff', 'mean_7days_reg_prob', 'mean_7days_games',
-        '連続マイナス日数', '連続プラス日数', 'cons_high_reg_days',
-        'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
-        'reg_efficiency_penalty', 'machine_3days_avg_diff', 
-        'machine_3days_high_setting_ratio', 'machine_prev_avg_games',
-        'days_since_last_high', 'rotation_priority_rank', 'island_unexplored_flag',
-        'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
-        'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
-        'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust'
-    ]
-    keep_features = [f for f in features if f in keep_allowed_features]
+    keep_features = [f for f in features if f in KEEP_ALLOWED_FEATURES]
     change_features = features.copy()
 
     # カテゴリ変数として扱う特徴量のリストを定義

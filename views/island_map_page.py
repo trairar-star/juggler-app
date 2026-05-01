@@ -262,8 +262,13 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     df_month['diff'] = pd.to_numeric(df_month['差枚'], errors='coerce').fillna(0)
     df_month['score'] = pd.to_numeric(df_month['prediction_score'], errors='coerce').fillna(np.nan)
 
-    df_month_dedup = df_month.drop_duplicates(subset=['台番号', '機種名', 'day_str'], keep='first')
-    df_month_dedup = df_month_dedup.set_index(['台番号', '機種名', 'day_str'])
+    # 機種名の表記ゆれ（例:「SアイムジャグラーEX」と「アイムジャグラーEX」）によって同じ台が複数行に分かれるのを防ぐ
+    df_month['機種名_統一'] = df_month['機種名'].apply(lambda x: backend.get_matched_spec_key(x, specs) if pd.notna(x) else '不明')
+    
+    # 同一日・同台番号の重複は最新のデータを優先する
+    df_month = df_month.sort_values('対象日付', ascending=False)
+    df_month_dedup = df_month.drop_duplicates(subset=['台番号', 'day_str'], keep='first')
+    df_month_dedup = df_month_dedup.set_index(['台番号', '機種名_統一', 'day_str'])
     
     pivot_g = df_month_dedup['g'].unstack()
     pivot_b = df_month_dedup['b'].unstack()
