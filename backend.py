@@ -1788,7 +1788,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['valid_is_win'] = np.where(df['累計ゲーム'] >= 3000, df['is_win'], np.nan)
 
     # --- 新規追加: ローテーション型対策（最終高設定からの経過日数と投入優先度ランク） ---
-    df['high_setting_date'] = np.where(df['valid_is_win'] == 1, df['対象日付'], pd.NaT)
+    df['high_setting_date'] = df['対象日付'].where(df['valid_is_win'] == 1)
     df['last_high_setting_date'] = df.groupby(group_keys)['high_setting_date'].ffill().shift(1)
     df['days_since_last_high'] = (df['対象日付'] - df['last_high_setting_date']).dt.days
     df['days_since_last_high'] = df['days_since_last_high'].fillna(999)
