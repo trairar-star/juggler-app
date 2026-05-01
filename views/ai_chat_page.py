@@ -699,22 +699,21 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 
             # --- 2. AIが分析した店舗の店癖（設定投入傾向） ---
             if df_importance is not None and not df_importance.empty:
-                imp_shop = df_importance[df_importance['shop_name'].str.startswith(f"{selected_shop}(")].copy()
-                if not imp_shop.empty:
-                    imp_shop = imp_shop.groupby('feature').agg({'importance': 'mean', 'correlation': 'mean'}).reset_index().sort_values('importance', ascending=False)
-                    context_data += f"\n【{selected_shop} の設定投入のクセ (AIが重視している特徴量上位10件)】\n"
-                    context_data += "※ 相関がプラスなら「その値が大きいほど高設定になりやすい」、マイナスなら「値が小さいほど高設定になりやすい」ことを示します。\n"
-                    count = 0
-                    for _, row in imp_shop.iterrows():
-                        f_key = row['feature']
-                        if f_key in FEATURE_NAME_MAP:
-                            f_name = FEATURE_NAME_MAP[f_key]
-                            importance = row.get('importance', 0)
-                            correlation = row.get('correlation', 0)
-                            corr_str = f"プラス相関 (+{correlation:.2f})" if correlation >= 0 else f"マイナス相関 ({correlation:.2f})"
-                            context_data += f"・{f_name} : 重要度 {importance:.0f} / {corr_str}\n"
-                            count += 1
-                            if count >= 10: break
+                has_c = not df_importance[df_importance['shop_name'] == f'{selected_shop}(変更予測)'].empty
+                has_s = not df_importance[df_importance['shop_name'] == f'{selected_shop}(据え置き予測)'].empty
+                if has_c or has_s:
+                    context_data += f"\n【{selected_shop} の設定投入のクセ (AIが重視している特徴量)】\n"
+                    context_data += "※相関がプラスなら「その値が大きいほど高設定になりやすい」、マイナスなら「値が小さいほど高設定になりやすい」ことを示します。\n"
+                    for mode_label in ["変更予測", "据え置き予測"]:
+                        imp_mode = df_importance[df_importance['shop_name'] == f'{selected_shop}({mode_label})'].sort_values('importance', ascending=False)
+                        if not imp_mode.empty:
+                            context_data += f"[{mode_label}モデルの上位10件]\n"
+                            for _, row in imp_mode.head(10).iterrows():
+                                f_key = row['feature']
+                                if f_key in FEATURE_NAME_MAP:
+                                    f_name = FEATURE_NAME_MAP[f_key]
+                                    corr_str = f"プラス相関 (+{row.get('correlation', 0):.2f})" if row.get('correlation', 0) >= 0 else f"マイナス相関 ({row.get('correlation', 0):.2f})"
+                                    context_data += f"・{f_name} : 重要度 {row.get('importance', 0):.0f} / {corr_str}\n"
 
             # --- 2.5. 現在のAIハイパーパラメータ設定 ---
             if shop_hyperparams:

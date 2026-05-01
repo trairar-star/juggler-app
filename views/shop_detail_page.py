@@ -659,16 +659,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             if df_importance is not None and not df_importance.empty:
                 imp_shop = df_importance[df_importance['shop_name'].str.startswith(f"{selected_shop}(")].copy()
                 if not imp_shop.empty:
-                    imp_shop_sorted = imp_shop.groupby('feature').agg({'importance': 'mean'}).reset_index().sort_values('importance', ascending=False).reset_index(drop=True)
-                    top_features = imp_shop_sorted.head(8)['feature'].tolist()
+                    top_features = []
+                    end_digit_high = False
+                    for mode_label in ["変更予測", "据え置き予測"]:
+                        imp_mode = imp_shop[imp_shop['shop_name'] == f'{selected_shop}({mode_label})'].sort_values('importance', ascending=False).reset_index(drop=True)
+                        top_features.extend(imp_mode.head(8)['feature'].tolist())
+                        if '末尾番号' in imp_mode['feature'].values:
+                            if imp_mode[imp_mode['feature'] == '末尾番号'].index[0] + 1 <= 3:
+                                end_digit_high = True
+                    top_features = list(set(top_features))
                     
                     imp_advices = []
-                    if '末尾番号' in imp_shop_sorted['feature'].values:
-                        end_digit_rank = imp_shop_sorted[imp_shop_sorted['feature'] == '末尾番号'].index[0] + 1
-                        if end_digit_rank <= 3:
+                    if end_digit_high:
                             imp_advices.append("『当たり末尾』探し")
-                        elif end_digit_rank <= 10:
-                            imp_advices.append("末尾の傾向")
+                    elif '末尾番号' in top_features:
+                        imp_advices.append("末尾の傾向")
 
                     if 'neighbor_reg_reliability_score' in top_features or 'is_neighbor_high_reg' in top_features:
                         imp_advices.append("並び・塊の確認")
