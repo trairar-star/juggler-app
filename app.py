@@ -11,12 +11,11 @@ from views import my_balance_page
 from views import island_master_page
 from views import event_management_page
 from views import feature_analysis_page
-from views import daily_result_page
 from views import calendar_compare_page
+from views import summary_map_page
 from views import island_map_page
 from views import verification_page
 from views import ranking_comparison_page
-from views import realtime_judgement_page
 from views import weekly_schedule_page
 from utils import get_confidence_indicator
 
@@ -169,13 +168,13 @@ def main():
     # タイトルや設定は共通
     st.title("🎰 スロット予測ビューアー")
     
-    if "current_page" not in st.session_state:
-        st.session_state["current_page"] = "店舗別詳細データ"
+    if "current_page" not in st.session_state or st.session_state["current_page"] == "店舗別詳細データ":
+        st.session_state["current_page"] = "🏪 店舗別詳細データ"
         
     if "global_selected_shop" not in st.session_state:
         st.session_state["global_selected_shop"] = "全て"
         
-    pages = ["店舗別詳細データ", "🤖 AIチャット相談", "⏱️ リアルタイム設定判別", "📊 予測の実績検証・AI設定", "📅 週間スケジュール予測", "📅 日別 結果＆予測確認", "🗺️ 店舗間ヒートマップ", "🗺️ 島マップ (神視点)", "島マスター管理", "イベント管理", "💰 マイ収支管理"]
+    pages = ["🏪 店舗別詳細データ", "🤖 AIチャット相談", "📊 予測の実績検証・AI設定", "📅 週間スケジュール予測", "🗺️ 店舗間ヒートマップ", "🗺️ 機種・島サマリーマップ", "🗺️ 島マップ (神視点)", "⚙️ 島マスター管理", "⚙️ イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -293,27 +292,24 @@ def main():
             st.toast("✅ 本日の予測結果を自動保存しました！")
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
-        if page == "⏱️ リアルタイム設定判別":
-            df_pred_log = backend.load_prediction_log()
-            realtime_judgement_page.render_realtime_judgement_page(df_pred_log)
-        elif page == "🤖 AIチャット相談":
+        if page == "🤖 AIチャット相談":
             from views import ai_chat_page
             ai_chat_page.render_ai_chat_page(df, df_raw, shop_col, df_verify, df_events=df_events, df_importance=df_importance, shop_hyperparams=st.session_state["shop_hyperparams"])
         elif page == "📊 予測の実績検証・AI設定":
             df_pred_log = backend.load_prediction_log()
             verification_page.render_verification_page(df_pred_log, df_verify, df, df_raw, df_events)
-        elif page == "📅 日別 結果＆予測確認":
-            daily_result_page.render_daily_result_page(df_raw, df_events, df_island, st.session_state["shop_hyperparams"])
         elif page == "📅 週間スケジュール予測":
             weekly_schedule_page.render_weekly_schedule_page(df_raw, df_events, df_island, st.session_state["shop_hyperparams"])
         elif page == "🗺️ 店舗間ヒートマップ":
             calendar_compare_page.render_calendar_compare_page(df_raw, df, predict_target_date)
+        elif page == "🗺️ 機種・島サマリーマップ":
+            summary_map_page.render_summary_map_page(df_raw, df_island)
         elif page == "🗺️ 島マップ (神視点)":
             df_pred_log = backend.load_prediction_log()
             island_map_page.render_island_map_page(df_raw, df_pred_log, df_island, df)
-        elif page == "島マスター管理":
+        elif page == "⚙️ 島マスター管理":
             island_master_page.render_island_master_page(df_raw)
-        elif page == "イベント管理":
+        elif page == "⚙️ イベント管理":
             event_management_page.render_event_management_page(df_raw)
         elif page == "💰 マイ収支管理":
             my_balance_page.render_my_balance_page(df_raw)

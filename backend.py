@@ -1973,16 +1973,16 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['is_prev_no_play'] = (df['shifted_g'] == 0).astype(int)
 
     # --- 新規: 3日間/週間REG確率 ---
-    rolling_3d_reg_g = df.groupby(group_keys)[['shifted_reg', 'shifted_g']].rolling(window=3, min_periods=1)
-    sum_3d_reg = rolling_3d_reg_g['shifted_reg'].sum().reset_index(level=group_levels, drop=True).fillna(0)
-    sum_3d_g = rolling_3d_reg_g['shifted_g'].sum().reset_index(level=group_levels, drop=True).fillna(0)
-    df['mean_3days_reg_prob'] = np.where(sum_3d_g > 0, sum_3d_reg / sum_3d_g, 0)
+    df['sum_3d_reg'] = df.groupby(group_keys)['shifted_reg'].rolling(window=3, min_periods=1).sum().reset_index(level=group_levels, drop=True).fillna(0).astype(float)
+    df['sum_3d_g'] = df.groupby(group_keys)['shifted_g'].rolling(window=3, min_periods=1).sum().reset_index(level=group_levels, drop=True).fillna(0).astype(float)
+    df['mean_3days_reg_prob'] = np.where(df['sum_3d_g'] > 0, df['sum_3d_reg'] / df['sum_3d_g'], 0)
 
     # 7日間の合計REG回数と合計ゲーム数から計算し、ノイズを低減
-    rolling_7d_reg_g = df.groupby(group_keys)[['shifted_reg', 'shifted_g']].rolling(window=7, min_periods=1)
-    sum_7d_reg = rolling_7d_reg_g['shifted_reg'].sum().reset_index(level=group_levels, drop=True).fillna(0)
-    sum_7d_g = rolling_7d_reg_g['shifted_g'].sum().reset_index(level=group_levels, drop=True).fillna(0)
-    df['mean_7days_reg_prob'] = np.where(sum_7d_g > 0, sum_7d_reg / sum_7d_g, 0)
+    df['sum_7d_reg'] = df.groupby(group_keys)['shifted_reg'].rolling(window=7, min_periods=1).sum().reset_index(level=group_levels, drop=True).fillna(0).astype(float)
+    df['sum_7d_g'] = df.groupby(group_keys)['shifted_g'].rolling(window=7, min_periods=1).sum().reset_index(level=group_levels, drop=True).fillna(0).astype(float)
+    df['mean_7days_reg_prob'] = np.where(df['sum_7d_g'] > 0, df['sum_7d_reg'] / df['sum_7d_g'], 0)
+    
+    df = df.drop(columns=['sum_3d_reg', 'sum_3d_g', 'sum_7d_reg', 'sum_7d_g'], errors='ignore')
 
     # --- 勝率安定度（一撃ノイズ排除用） ---
     df['shifted_valid_is_win'] = df.groupby(group_keys)['valid_is_win'].shift(1)

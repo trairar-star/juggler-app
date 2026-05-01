@@ -832,9 +832,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 temp_df_hot['max_score'] = temp_df_hot['prediction_score']
                 
             if '予測信頼度' in temp_df_hot.columns:
-                super_hot_df = temp_df_hot[(temp_df_hot['max_score'] >= 0.40) & (temp_df_hot['予測信頼度'] != '🔻低')]
+                super_hot_df = temp_df_hot[(temp_df_hot['max_score'] >= 0.50) & (temp_df_hot['予測信頼度'] != '🔻低')]
             else:
-                super_hot_df = temp_df_hot[temp_df_hot['max_score'] >= 0.40]
+                super_hot_df = temp_df_hot[temp_df_hot['max_score'] >= 0.50]
                 
             super_hot_df = super_hot_df.sort_values('max_score', ascending=False)
             
@@ -842,7 +842,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 html_str = f"""
                 <div style="background-color: rgba(244, 67, 54, 0.1); border-left: 5px solid #f44336; padding: 10px 15px; border-radius: 5px; margin-bottom: 15px;">
                     <h4 style="color: #d32f2f; margin-top: 0; margin-bottom: 5px; font-size: 1.0rem;">🚨 激アツ台 発見！ ({len(super_hot_df)}台)</h4>
-                    <p style="color: #b71c1c; margin-bottom: 5px; font-size: 0.85em;">期待度40%以上かつデータ信頼度が十分な、超・狙い目台です！最優先での確保をおすすめします。</p>
+                    <p style="color: #b71c1c; margin-bottom: 5px; font-size: 0.85em;">期待度50%以上かつデータ信頼度が十分な、超・狙い目台です！最優先での確保をおすすめします。</p>
                     <ul style="color: #b71c1c; margin-bottom: 0; font-size: 0.85em;">
                 """
                 for _, r in super_hot_df.iterrows():
