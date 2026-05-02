@@ -16,6 +16,11 @@ from config import BASE_FEATURES, FEATURE_NAME_MAP, MACHINE_SPECS
 from model_trainer import train_models
 from shop_trends import calculate_shop_trends, apply_trends_to_row, analyze_sueoki_and_change_triggers, diagnose_allocation_types, evaluate_sueoki_premise
 from postprocessor import postprocess_predictions
+
+try:
+    import jpholiday
+except ImportError:
+    jpholiday = None
 try:
     from lstm_feature_extractor import add_lstm_features
 except ImportError:
@@ -1869,6 +1874,20 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_gw'] = (((n_m == 4) & (n_d >= 29)) | ((n_m == 5) & (n_d <= 6))).astype(int)
         df['is_obon'] = ((n_m == 8) & (n_d >= 10) & (n_d <= 16)).astype(int)
         df['is_year_end_start'] = (((n_m == 12) & (n_d >= 28)) | ((n_m == 1) & (n_d <= 5))).astype(int)
+        
+        df['is_gw_before'] = ((n_m == 4) & (n_d >= 25) & (n_d <= 28)).astype(int)
+        df['is_gw_after'] = ((n_m == 5) & (n_d >= 7) & (n_d <= 9)).astype(int)
+        df['is_obon_before'] = ((n_m == 8) & (n_d >= 7) & (n_d <= 9)).astype(int)
+        df['is_obon_after'] = ((n_m == 8) & (n_d >= 17) & (n_d <= 19)).astype(int)
+        df['is_year_end_before'] = ((n_m == 12) & (n_d >= 25) & (n_d <= 27)).astype(int)
+        df['is_year_end_after'] = ((n_m == 1) & (n_d >= 6) & (n_d <= 8)).astype(int)
+
+        if jpholiday is not None:
+            unique_dates = df['next_date'].dt.date.dropna().unique()
+            holiday_map = {d: jpholiday.is_holiday(d) for d in unique_dates}
+            df['is_holiday'] = df['next_date'].dt.date.map(holiday_map).fillna(False).astype(int)
+        else:
+            df['is_holiday'] = 0
 
     if shop_col:
         shop_daily_avg2 = df.groupby([shop_col, '対象日付'])['差枚'].mean().reset_index(name='shop_daily_avg_diff')

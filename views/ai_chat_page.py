@@ -1059,14 +1059,27 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         digit_text = f"{target_digit}のつく日の過去平均: {int(digit_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(digit_row['平均稼働'].iloc[0])}G)" if not digit_row.empty else f"{target_digit}のつく日の過去実績なし"
                         context_data += f"・{shop}: {wd_text} / {digit_text}\n"
                         
+                    try:
+                        import jpholiday
+                        if jpholiday.is_holiday(target_dt.date()):
+                            context_data += "【🎌祝日・振替休日】本日は祝日（または振休）です。普段の平日とは異なる営業傾向の可能性があります。\n"
+                    except ImportError:
+                        pass
+                        
                     t_m = target_dt.month
                     t_d = target_dt.day
                     if (t_m == 4 and t_d >= 29) or (t_m == 5 and t_d <= 6):
-                        context_data += "【⚠️大型連休警戒】本日はゴールデンウィーク期間です。一般的なホールは強い回収傾向にあるため、アドバイスにその旨の警告を含めてください。\n"
+                        context_data += "【🏖️大型連休フラグ】本日はゴールデンウィーク期間です。一般的なホールは回収傾向にありますが、この店舗が過去にどう営業していたか（AIの予測や特徴量）を元に判断してください。\n"
+                    elif (t_m == 4 and t_d >= 25 and t_d <= 28):
+                        context_data += "【🏖️大型連休前】本日はGW直前です。連休に向けた還元か回収か、店舗の過去の傾向に注意してください。\n"
                     elif (t_m == 8 and t_d >= 10 and t_d <= 16):
-                        context_data += "【⚠️大型連休警戒】本日はお盆休み期間です。一般的なホールは強い回収傾向にあるため、アドバイスにその旨の警告を含めてください。\n"
+                        context_data += "【🏖️大型連休フラグ】本日はお盆休み期間です。一般的なホールは回収傾向にありますが、この店舗が過去にどう営業していたか（AIの予測や特徴量）を元に判断してください。\n"
+                    elif (t_m == 8 and t_d >= 7 and t_d <= 9):
+                        context_data += "【🏖️大型連休前】本日はお盆直前です。連休に向けた還元か回収か、店舗の過去の傾向に注意してください。\n"
                     elif (t_m == 12 and t_d >= 28) or (t_m == 1 and t_d <= 5):
-                        context_data += "【⚠️大型連休警戒】本日は年末年始期間です。一般的なホールは強い回収傾向にあるため、アドバイスにその旨の警告を含めてください。\n"
+                        context_data += "【🎍大型連休フラグ】本日は年末年始期間です。一般的なホールは回収傾向にありますが、この店舗が過去にどう営業していたか（AIの予測や特徴量）を元に判断してください。\n"
+                    elif (t_m == 12 and t_d >= 25 and t_d <= 27):
+                        context_data += "【🎍大型連休前】本日は年末年始直前です。連休に向けた還元か回収か、店舗の過去の傾向に注意してください。\n"
                 
                 # --- 全店舗の中から期待度上位の台（おすすめ台）を追加 ---
                 temp_pred_all = df_predict.copy()

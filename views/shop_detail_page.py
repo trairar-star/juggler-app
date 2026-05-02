@@ -608,12 +608,26 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 try:
                     t_m = pred_date.month
                     t_d = pred_date.day
+                    
+                    try:
+                        import jpholiday
+                        if jpholiday.is_holiday(pred_date.date()):
+                            advice_list.append("🎌 **祝日・振替休日**: 普段の平日とは異なる客層や営業傾向（回収/還元）になる可能性があります。AIの予測や店癖を参考にしてください。")
+                    except ImportError:
+                        pass
+                        
                     if (t_m == 4 and t_d >= 29) or (t_m == 5 and t_d <= 6):
-                        advice_list.append("🏖️ **大型連休 (GW)**: 一般的にホールは書き入れ時の「超・回収モード」に入ります。AI推奨台でも深追いは非常に危険です。")
+                        advice_list.append("🏖️ **大型連休 (GW)**: 一般的にホールは回収傾向になりますが、店舗によっては甘く使うこともあります。AIの予測を参考にしてください。")
+                    elif (t_m == 4 and t_d >= 25 and t_d <= 28):
+                        advice_list.append("🏖️ **大型連休前 (GW前)**: 連休に向けたエサ撒き(還元)か、事前の回収か、店舗の傾向が分かれます。")
                     elif (t_m == 8 and t_d >= 10 and t_d <= 16):
-                        advice_list.append("🏖️ **大型連休 (お盆)**: 一般的にホールは書き入れ時の「超・回収モード」に入ります。AI推奨台でも深追いは非常に危険です。")
+                        advice_list.append("🏖️ **大型連休 (お盆)**: 一般的にホールは回収傾向になりますが、店舗によっては甘く使うこともあります。AIの予測を参考にしてください。")
+                    elif (t_m == 8 and t_d >= 7 and t_d <= 9):
+                        advice_list.append("🏖️ **大型連休前 (お盆前)**: 連休に向けたエサ撒き(還元)か、事前の回収か、店舗の傾向が分かれます。")
                     elif (t_m == 12 and t_d >= 28) or (t_m == 1 and t_d <= 5):
-                        advice_list.append("🎍 **大型連休 (年末年始)**: 一般的にホールは書き入れ時の「超・回収モード」に入ります。AI推奨台でも深追いは非常に危険です。")
+                        advice_list.append("🎍 **大型連休 (年末年始)**: 一般的にホールは回収傾向になりますが、店舗によっては甘く使うこともあります。AIの予測を参考にしてください。")
+                    elif (t_m == 12 and t_d >= 25 and t_d <= 27):
+                        advice_list.append("🎍 **大型連休前 (年末年始前)**: 連休に向けたエサ撒き(還元)か、事前の回収か、店舗の傾向が分かれます。")
                 except: pass
 
                 # 曜日の傾向
