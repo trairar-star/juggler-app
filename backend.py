@@ -1862,6 +1862,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_end_of_month'] = (df['next_date'].dt.day >= 25).astype(int)
         # 年金支給日(15日近辺)フラグの追加：高齢者が多いためジャグラーが回収されやすい
         df['is_pension_day'] = (df['next_date'].dt.day.between(14, 16)).astype(int)
+        
+        # --- 新規追加: 大型連休（GW、お盆、年末年始）フラグ ---
+        n_m = df['next_date'].dt.month
+        n_d = df['next_date'].dt.day
+        df['is_gw'] = (((n_m == 4) & (n_d >= 29)) | ((n_m == 5) & (n_d <= 6))).astype(int)
+        df['is_obon'] = ((n_m == 8) & (n_d >= 10) & (n_d <= 16)).astype(int)
+        df['is_year_end_start'] = (((n_m == 12) & (n_d >= 28)) | ((n_m == 1) & (n_d <= 5))).astype(int)
 
     if shop_col:
         shop_daily_avg2 = df.groupby([shop_col, '対象日付'])['差枚'].mean().reset_index(name='shop_daily_avg_diff')

@@ -1058,6 +1058,15 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         wd_text = f"{wd_str}曜の過去平均: {int(wd_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(wd_row['平均稼働'].iloc[0])}G)" if not wd_row.empty else f"{wd_str}曜の過去実績なし"
                         digit_text = f"{target_digit}のつく日の過去平均: {int(digit_row['平均差枚'].iloc[0]):+d}枚 (稼働 {int(digit_row['平均稼働'].iloc[0])}G)" if not digit_row.empty else f"{target_digit}のつく日の過去実績なし"
                         context_data += f"・{shop}: {wd_text} / {digit_text}\n"
+                        
+                    t_m = target_dt.month
+                    t_d = target_dt.day
+                    if (t_m == 4 and t_d >= 29) or (t_m == 5 and t_d <= 6):
+                        context_data += "【⚠️大型連休警戒】本日はゴールデンウィーク期間です。一般的なホールは強い回収傾向にあるため、アドバイスにその旨の警告を含めてください。\n"
+                    elif (t_m == 8 and t_d >= 10 and t_d <= 16):
+                        context_data += "【⚠️大型連休警戒】本日はお盆休み期間です。一般的なホールは強い回収傾向にあるため、アドバイスにその旨の警告を含めてください。\n"
+                    elif (t_m == 12 and t_d >= 28) or (t_m == 1 and t_d <= 5):
+                        context_data += "【⚠️大型連休警戒】本日は年末年始期間です。一般的なホールは強い回収傾向にあるため、アドバイスにその旨の警告を含めてください。\n"
                 
                 # --- 全店舗の中から期待度上位の台（おすすめ台）を追加 ---
                 temp_pred_all = df_predict.copy()

@@ -604,6 +604,18 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     elif digit_avg_diff < -50:
                         advice_list.append(f"🚨 **特定日 ({target_digit}のつく日) [警戒]**: 過去平均 **{int(digit_avg_diff)}枚** と厳しめ。AI推奨台以外は勝負を避けてください。")
 
+                # 大型連休の警告
+                try:
+                    t_m = pred_date.month
+                    t_d = pred_date.day
+                    if (t_m == 4 and t_d >= 29) or (t_m == 5 and t_d <= 6):
+                        advice_list.append("🏖️ **大型連休 (GW)**: 一般的にホールは書き入れ時の「超・回収モード」に入ります。AI推奨台でも深追いは非常に危険です。")
+                    elif (t_m == 8 and t_d >= 10 and t_d <= 16):
+                        advice_list.append("🏖️ **大型連休 (お盆)**: 一般的にホールは書き入れ時の「超・回収モード」に入ります。AI推奨台でも深追いは非常に危険です。")
+                    elif (t_m == 12 and t_d >= 28) or (t_m == 1 and t_d <= 5):
+                        advice_list.append("🎍 **大型連休 (年末年始)**: 一般的にホールは書き入れ時の「超・回収モード」に入ります。AI推奨台でも深追いは非常に危険です。")
+                except: pass
+
                 # 曜日の傾向
                 wd_df = df_raw_shop[df_raw_shop['対象日付'].dt.dayofweek == target_wd]
                 if not wd_df.empty:
