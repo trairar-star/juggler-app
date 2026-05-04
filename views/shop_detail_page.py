@@ -854,8 +854,10 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             temp_df_hot = df.copy()
             if 'sueoki_score' in temp_df_hot.columns:
                 temp_df_hot['max_score'] = temp_df_hot[['prediction_score', 'sueoki_score']].max(axis=1)
+                temp_df_hot['狙い目'] = temp_df_hot.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
             else:
                 temp_df_hot['max_score'] = temp_df_hot['prediction_score']
+                temp_df_hot['狙い目'] = "🚀変更"
                 
             if '予測信頼度' in temp_df_hot.columns:
                 super_hot_df = temp_df_hot[(temp_df_hot['max_score'] >= 0.50) & (temp_df_hot['予測信頼度'] != '🔻低')]
@@ -874,7 +876,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 for _, r in super_hot_df.iterrows():
                     s_name = r.get(shop_col, '')
                     shop_prefix = f"【{s_name}】 " if selected_shop == '全て' else ""
-                    html_str += f"<li>{shop_prefix}<b>#{r.get('台番号')} {r.get('機種名')}</b> (期待度: <b>{int(r.get('max_score', 0)*100)}%</b>)</li>"
+                    html_str += f"<li>{shop_prefix}<b>#{r.get('台番号')} {r.get('機種名')}</b> [{r.get('狙い目', '🚀変更')}] (期待度: <b>{int(r.get('max_score', 0)*100)}%</b>)</li>"
                 html_str += "</ul></div>"
                 st.markdown(html_str, unsafe_allow_html=True)
     
@@ -902,6 +904,12 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 if score_col in df_sorted.columns:
                     df_sorted[score_label] = (df_sorted[score_col].fillna(0) * 100).astype(int)
             
+                # 狙い目の判定
+                if 'prediction_score' in df_sorted.columns and 'sueoki_score' in df_sorted.columns:
+                    df_sorted['狙い目'] = df_sorted.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
+                else:
+                    df_sorted['狙い目'] = "🚀変更"
+            
                 # --- ランク変動の計算 (前日差枚順位との比較) ---
                 if score_col in df_sorted.columns and '差枚' in df_sorted.columns:
                     df_sorted['AI順位_num'] = df_sorted[score_col].rank(method='min', ascending=False).fillna(999).astype(int)
@@ -926,8 +934,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if shop_col in df_sorted.columns:
                         df_list = []
                         for shop_name, group in df_sorted.groupby(shop_col):
-                            valid_group = group[group[score_col] >= 0.10] if score_col in group.columns else group
-                            df_list.append(valid_group.head(max(3, int(len(group) * 0.10))))
+                            valid_group = group[group[score_col] >= 0.30] if score_col in group.columns else group
+                            df_list.append(valid_group.head(max(1, int(len(group) * 0.10))))
                         if df_list:
                             df_display = pd.concat(df_list, ignore_index=True)
                             if sort_cols:
@@ -935,8 +943,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         else:
                             df_display = pd.DataFrame(columns=df_sorted.columns)
                     else:
-                        limit = max(3, int(len(df_sorted) * 0.10))
-                        valid_group = df_sorted[df_sorted[score_col] >= 0.10] if score_col in df_sorted.columns else df_sorted
+                        limit = max(1, int(len(df_sorted) * 0.10))
+                        valid_group = df_sorted[df_sorted[score_col] >= 0.30] if score_col in df_sorted.columns else df_sorted
                         df_display = valid_group.head(limit)
                 elif display_mode == "Top 10":
                     df_display = df_sorted.head(10)
@@ -954,8 +962,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if df_display.empty:
                         st.warning(f"期待度が {min_score_filter}% 以上の台はありません。スライダーを下げてみてください。")
             
-                # 常に「店名」を表示するようにカラムを厳選
-                base_cols = ['AI順位', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', score_label]
+                # 常に「店名」「狙い目」を表示するようにカラムを厳選
+                base_cols = ['AI順位', '狙い目', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', score_label]
                 display_cols = [c for c in base_cols if c in df_display.columns]
 
                 # データフレームの表示設定 (Pandas Stylerを使ってバーを描画)
@@ -967,6 +975,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     styled_display,
                     column_config={
                         "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
+                        "狙い目": st.column_config.TextColumn("狙い目", width="small", help="AIが総合的により高く評価している方向（スコアが高い方）です。"),
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
                         "台番号": st.column_config.TextColumn("No.", width="small"),
                         "機種名": st.column_config.TextColumn("機種", width="small"),

@@ -526,6 +526,12 @@ def save_prediction_log(df):
                 df_score_new = df_score_new.rename(columns={shop_col_for_score: '店名'})
                 df_score_new['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
                 df_score_new['予測対象日'] = pd.to_datetime(df_score_new['予測対象日']).dt.strftime('%Y-%m-%d')
+                
+                # --- 0.0 のスコアを保存しない (空文字にする) ---
+                for col in ['店舗平均期待度', '変更平均期待度', '据え置き平均期待度']:
+                    if col in df_score_new.columns:
+                        df_score_new[col] = df_score_new[col].apply(lambda x: '' if pd.notna(x) and float(x) == 0.0 else x)
+                        
                 df_score_new = df_score_new[SCORE_HEADER]
                 
                 # 既存データの該当部分を削除
@@ -546,7 +552,7 @@ def save_prediction_log(df):
             except Exception as e:
                 print(f"店舗平均期待度の保存エラー: {e}")
     
-    # --- 2. 保存する前に、各店舗の上位10%（最低3台）に絞り込む ---
+    # --- 2. 保存する前に、各店舗の上位10%に絞り込む ---
     if 'prediction_score' in save_df_initial.columns:
         shop_col = '店名' if '店名' in save_df_initial.columns else ('店舗名' if '店舗名' in save_df_initial.columns else None)
         has_sueoki = 'sueoki_score' in save_df_initial.columns
@@ -554,29 +560,29 @@ def save_prediction_log(df):
         if shop_col:
             df_list = []
             for shop_name, group in save_df_initial.groupby(shop_col):
-                limit = max(3, int(len(group) * 0.10))
+                limit = max(1, int(len(group) * 0.10))
                 if has_sueoki:
                     # 変更期待度の上位と据え置き期待度の上位を完全に独立して抽出
-                    change_top = group.sort_values('prediction_score', ascending=False).head(limit)
-                    sueoki_top = group.sort_values('sueoki_score', ascending=False).head(limit)
+                    change_top = group[group['prediction_score'] >= 0.30].sort_values('prediction_score', ascending=False).head(limit)
+                    sueoki_top = group[group['sueoki_score'] >= 0.30].sort_values('sueoki_score', ascending=False).head(limit)
                     # 結合して重複を排除（両方でランクインした台は1つにまとまる）
                     combined_top = pd.concat([change_top, sueoki_top]).drop_duplicates(subset=['台番号'])
                     df_list.append(combined_top)
                 else:
-                    df_list.append(group.sort_values('prediction_score', ascending=False).head(limit))
+                    df_list.append(group[group['prediction_score'] >= 0.30].sort_values('prediction_score', ascending=False).head(limit))
                     
             if df_list:
                 save_df_initial = pd.concat(df_list, ignore_index=True)
             else:
                 save_df_initial = pd.DataFrame(columns=save_df_initial.columns)
         else:
-            limit = max(3, int(len(save_df_initial) * 0.10))
+            limit = max(1, int(len(save_df_initial) * 0.10))
             if has_sueoki:
-                change_top = save_df_initial.sort_values('prediction_score', ascending=False).head(limit)
-                sueoki_top = save_df_initial.sort_values('sueoki_score', ascending=False).head(limit)
+                change_top = save_df_initial[save_df_initial['prediction_score'] >= 0.30].sort_values('prediction_score', ascending=False).head(limit)
+                sueoki_top = save_df_initial[save_df_initial['sueoki_score'] >= 0.30].sort_values('sueoki_score', ascending=False).head(limit)
                 save_df_initial = pd.concat([change_top, sueoki_top]).drop_duplicates(subset=['台番号'])
             else:
-                save_df_initial = save_df_initial.sort_values('prediction_score', ascending=False).head(limit)
+                save_df_initial = save_df_initial[save_df_initial['prediction_score'] >= 0.30].sort_values('prediction_score', ascending=False).head(limit)
             
         if save_df_initial.empty:
             st.warning("保存する推奨台がありません。")
@@ -629,6 +635,11 @@ def save_prediction_log(df):
             save_df = save_df.rename(columns={'prediction_score': '変更期待度'})
         if 'sueoki_score' in save_df.columns:
             save_df = save_df.rename(columns={'sueoki_score': '据え置き期待度'})
+            
+        # --- 30%未満の低期待度スコアはセルに保存しない (空文字にする) ---
+        for col in ['変更期待度', '据え置き期待度']:
+            if col in save_df.columns:
+                save_df[col] = save_df[col].apply(lambda x: '' if pd.notna(x) and float(x) < 0.30 else x)
             
         save_df['実行日時'] = pd.Timestamp.now(tz='Asia/Tokyo').strftime('%Y-%m-%d %H:%M:%S')
         if 'ai_version' not in save_df.columns:

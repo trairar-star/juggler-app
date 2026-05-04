@@ -432,6 +432,12 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                         pred_df_day['予想設定5以上確率'] = (pred_df_day[target_score_col].fillna(0) * 100).astype(int)
 
+                        # 狙い目判定の追加
+                        if 'prediction_score' in pred_df_day.columns and 'sueoki_score' in pred_df_day.columns:
+                            pred_df_day['狙い目'] = pred_df_day.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
+                        else:
+                            pred_df_day['狙い目'] = "🚀変更"
+
                         pred_df_day['結果点数'] = pred_df_day.apply(lambda row: calculate_score(row, '結果_累計ゲーム', '結果_BIG', '結果_REG', '機種名', '差枚_actual'), axis=1)
 
                         # 的中マーク
@@ -447,7 +453,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                         if pred_df_day.empty:
                             st.info("表示対象の台はありません。")
                         else:
-                            display_cols_pred = ['的中', '高設定', '台番号', '機種名', '予想設定5以上確率', '結果点数', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
+                            display_cols_pred = ['的中', '高設定', '狙い目', '台番号', '機種名', '予想設定5以上確率', '結果点数', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
                             
                             def highlight_positive(row):
                                 if row.get('的中', '') == '🎯':
@@ -465,6 +471,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                                 column_config={
                                     "的中": st.column_config.TextColumn("的中", width="small", help="差枚数が店舗上位10%に入った台"),
                                     "高設定": st.column_config.TextColumn("挙動", width="small", help="設定5以上の確率(REGか合算)の台"),
+                                    "狙い目": st.column_config.TextColumn("狙い目", width="small", help="AIが総合的により高く評価している方向（スコアが高い方）です。"),
                                     "台番号": st.column_config.TextColumn("台番号"),
                                     "機種名": st.column_config.TextColumn("機種", width="small"),
                                     "予想設定5以上確率": st.column_config.ProgressColumn("期待度", format="%d%%", min_value=0, max_value=100),

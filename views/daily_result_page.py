@@ -83,8 +83,10 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     if 'prediction_score' in display_df.columns:
         if 'sueoki_score' in display_df.columns:
             display_df['max_score'] = display_df[['prediction_score', 'sueoki_score']].max(axis=1)
+            display_df['狙い目'] = display_df.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
         else:
             display_df['max_score'] = display_df['prediction_score']
+            display_df['狙い目'] = "🚀変更"
             
         display_df['期待度'] = display_df['max_score'].apply(lambda x: f"{int(x * 100)}%" if pd.notna(x) and x != '' else "-")
         # 期待度に基づくAI順位の計算
@@ -93,6 +95,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     else:
         display_df['期待度'] = "-"
         display_df['AI順位'] = "-"
+        display_df['狙い目'] = "-"
 
     if '予測信頼度' not in display_df.columns:
         display_df['予測信頼度'] = "-"
@@ -253,7 +256,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             is_prediction=True
         )
 
-        limit = max(3, int(len(display_df) * 0.10))
+        limit = max(1, int(len(display_df) * 0.10))
         if 'AI順位_num' in display_df.columns:
             ai_target_df = display_df[display_df['AI順位_num'] <= limit]
         else:
@@ -284,14 +287,14 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
 
     # --- 表示件数の絞り込み ---
     if display_mode == "厳選台 (上位10%)":
-        limit = max(3, int(len(display_df) * 0.10))
+        limit = max(1, int(len(display_df) * 0.10))
         display_df = display_df.head(limit)
     elif display_mode == "Top 10":
         display_df = display_df.head(10)
     elif display_mode == "Top 20":
         display_df = display_df.head(20)
 
-    cols = ['AI順位', '台番号', '機種名']
+    cols = ['AI順位', '狙い目', '台番号', '機種名']
     if '期待度' in display_df.columns: cols.append('期待度')
     if '予測信頼度' in display_df.columns: cols.append('予測信頼度')
     cols.append('結果点数')
@@ -321,6 +324,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         styled_display_df,
         column_config={
             "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は実際の事後確率順位との変動（🔼:予測より好結果 / 🔻:予測より悪結果）を示します。"),
+            "狙い目": st.column_config.TextColumn("狙い目", width="small", help="AIが総合的により高く評価している方向（スコアが高い方）です。"),
             "台番号": st.column_config.TextColumn("No.", width="small"),
             "機種名": st.column_config.TextColumn("機種", width="small"),
             "期待度": st.column_config.TextColumn("AI期待度", width="small", help="AIが前日時点で予測していた設定5以上の確率です。"),
