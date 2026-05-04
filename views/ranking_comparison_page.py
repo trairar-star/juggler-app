@@ -430,7 +430,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     else:
                         show_complete_victory_only = st.checkbox("「完全勝利」(的中🎯 & 高挙動🌟)のみ表示", key="complete_victory_filter")
 
-                        pred_df_day['予想設定5以上確率'] = (pred_df_day[target_score_col].fillna(0) * 100).astype(int)
+                        pred_df_day['予想設定5以上確率'] = (pd.to_numeric(pred_df_day[target_score_col], errors='coerce').fillna(0.0) * 100).astype(int)
 
                         # 狙い目判定の追加
                         if 'prediction_score' in pred_df_day.columns and 'sueoki_score' in pred_df_day.columns:
@@ -458,7 +458,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             st.info("表示対象の台はありません。")
                         else:
                             display_cols_pred = ['的中', '高設定', '狙い目', '台番号', '機種名', '予想設定5以上確率', '結果点数', '差枚_actual', '結果_累計ゲーム', '結果_BIG確率分母', '結果_REG確率分母', '結果_合算確率分母']
-                            
+
                             def highlight_positive(row):
                                 if row.get('的中', '') == '🎯':
                                     return ['background-color: rgba(255, 215, 0, 0.3)'] * len(row) # 的中なら少し強めの黄色
