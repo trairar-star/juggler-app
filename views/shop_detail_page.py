@@ -886,6 +886,13 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
     
         # --- メインコンテンツ: 予測ランキング表示 (上部に配置) ---
         with st.expander("🏆 予測期待度ランキング", expanded=True):
+            # --- 予測ランキング用の店舗勝率（直近1ヶ月）を事前計算 ---
+            shop_win_rates = {}
+            if df_pred_log is not None and not df_raw.empty and shop_col in df.columns:
+                shop_stats_1m = backend.get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, "直近1ヶ月", shop_col)
+                if not shop_stats_1m.empty:
+                    shop_win_rates = shop_stats_1m.set_index(shop_col)[['変更勝率', '据え置き勝率']].to_dict('index')
+
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 display_mode = st.radio("表示件数", ["厳選推奨台 (店舗別 上位10%)", "Top 10", "Top 20", "すべて"], horizontal=True)
