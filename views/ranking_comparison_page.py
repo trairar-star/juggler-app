@@ -293,7 +293,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                             合計差枚=('差枚_actual', 'sum'),
                             平均差枚=('valid_差枚_actual', 'mean'),
                             トップ3獲得数=('is_top3', 'sum'),
-                            平均期待度=('prediction_score', 'mean')
+                            平均期待度=(target_score_col, 'mean')
                         ).reset_index()
                         
                         rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, (rank_stats['勝数'] / rank_stats['有効稼働数']) * 100, 0.0)
