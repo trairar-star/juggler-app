@@ -1266,6 +1266,7 @@ def _apply_island_features(df, df_island, shop_col):
     grp = df.groupby([shop_col, '機種名'])['台番号']
     df['is_corner'] = ((df['台番号'] == grp.transform('min')) | (df['台番号'] == grp.transform('max'))).astype(int)
     df['island_id'] = "Unknown"
+        df['is_corner_2'] = 0
 
     if df_island is not None and not df_island.empty:
         unique_machines = df[[shop_col, '台番号']].drop_duplicates()
@@ -1323,9 +1324,17 @@ def _apply_island_features(df, df_island, shop_col):
                 m_num_int = None
                 
             for pi in parsed_islands:
-                if pi['shop'] == s_name and (m_num in pi['machines'] or m_num_int in pi['machines']):
+                if pi['shop'] == s_name and (m_num in pi['machines'] or (m_num_int is not None and m_num_int in pi['machines'])):
                     i_id = pi['island_id']
-                    if m_num == pi['corner_min'] or m_num == pi['corner_max'] or m_num_int == pi['corner_min'] or m_num_int == pi['corner_max']: is_cor = 1
+                    
+                    if m_num == pi['corner_min'] or m_num == pi['corner_max'] or (m_num_int is not None and (m_num_int == pi['corner_min'] or m_num_int == pi['corner_max'])): 
+                        is_cor = 1
+                        
+                    if len(pi['machines']) >= 3:
+                        sorted_macs = sorted(pi['machines'])
+                        if (m_num_int is not None and (m_num_int == sorted_macs[1] or m_num_int == sorted_macs[-2])) or (m_num == str(sorted_macs[1]) or m_num == str(sorted_macs[-2])):
+                            is_cor_2 = 1
+                            
                     if str(m_num) == pi['main_corner'] or (m_num_int is not None and str(m_num_int) == pi['main_corner']): is_main_cor = 1
                     if pi['island_type'] == 'メイン通路沿い (目立つ)': is_main_isl = 1
                     elif pi['island_type'] == '壁側・奥 (目立たない)': is_wall_isl = 1
@@ -1333,6 +1342,7 @@ def _apply_island_features(df, df_island, shop_col):
             island_mapping.append({
                 shop_col: s_name, '台番号': m_num, 
                 'master_island_id': i_id, 'master_is_corner': is_cor,
+                'master_is_corner_2': is_cor_2,
                 'master_is_main_corner': is_main_cor,
                 'master_is_main_island': is_main_isl,
                 'master_is_wall_island': is_wall_isl
@@ -1341,10 +1351,11 @@ def _apply_island_features(df, df_island, shop_col):
         df = pd.merge(df, mapping_df, on=[shop_col, '台番号'], how='left')
         df.loc[df['master_island_id'] != "Unknown", 'island_id'] = df['master_island_id']
         df.loc[df['master_island_id'] != "Unknown", 'is_corner'] = df['master_is_corner']
+        df.loc[df['master_island_id'] != "Unknown", 'is_corner_2'] = df['master_is_corner_2']
         df.loc[df['master_island_id'] != "Unknown", 'is_main_corner'] = df['master_is_main_corner']
         df.loc[df['master_island_id'] != "Unknown", 'is_main_island'] = df['master_is_main_island']
         df.loc[df['master_island_id'] != "Unknown", 'is_wall_island'] = df['master_is_wall_island']
-        df = df.drop(columns=['master_island_id', 'master_is_corner', 'master_is_main_corner', 'master_is_main_island', 'master_is_wall_island'])
+        df = df.drop(columns=['master_island_id', 'master_is_corner', 'master_is_corner_2', 'master_is_main_corner', 'master_is_main_island', 'master_is_wall_island'])
 
     return df
 
@@ -1422,6 +1433,14 @@ def _generate_neighbor_features(df, shop_col):
     is_prev_high = is_prev & (prev_g >= 3000) & ((prev_reg / prev_g.replace(0, np.nan)) >= 1.0/260.0)
     is_next_high = is_next & (next_g >= 3000) & ((next_reg / next_g.replace(0, np.nan)) >= 1.0/260.0)
     df['neighbor_high_setting_count'] = np.where(is_prev_high, 1, 0) + np.where(is_next_high, 1, 0)
+    
+    # 機種またぎ判定
+    prev_mac = df['機種名'].shift(1)
+    next_mac = df['機種名'].shift(-1)
+    df['is_machine_border'] = (
+        (is_prev & (df['機種名'] != prev_mac)) | 
+        (is_next & (df['機種名'] != next_mac))
+    ).astype(int)
     
     df['is_neighbor_high_reg'] = (df['neighbor_only_reg_prob'] >= 1.0/260.0) & (neighbor_g_sum >= 4000)
     df['neighbor_reg_reliability_score'] = np.clip(df['neighbor_only_reg_prob'] / (1.0/260.0), 0, 2.0) * (df['neighbor_only_avg_g'] / 1000.0)
@@ -1562,6 +1581,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     
     if '機種名' in df.columns: df['machine_code'] = df['機種名'].astype('category').cat.codes
     if shop_col: df['shop_code'] = df[shop_col].astype('category').cat.codes
+
+    if '台番号' in df.columns:
+        def check_zorome(x):
+            s = str(x).replace('.0', '')
+            if len(s) >= 2 and len(set(s)) == 1: return 1
+            return 0
+        df['is_zorome'] = df['台番号'].apply(check_zorome)
 
     if 'REG' in df.columns and 'BIG' in df.columns:
         df['reg_ratio'] = df['REG'] / (df['BIG'] + df['REG'] + 1)

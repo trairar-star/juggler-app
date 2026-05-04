@@ -20,6 +20,24 @@ def calculate_shop_trends(df_train, shop_col, specs):
         if 'is_corner' in train_shop.columns:
             subset = train_shop[train_shop['is_corner'] == 1]
             if len(subset) >= 5: trends.append({"id": "corner", "条件": "角台", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'is_corner_2' in train_shop.columns:
+            subset = train_shop[train_shop['is_corner_2'] == 1]
+            if len(subset) >= 5: trends.append({"id": "corner_2", "条件": "カド2", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'is_machine_border' in train_shop.columns:
+            subset = train_shop[train_shop['is_machine_border'] == 1]
+            if len(subset) >= 5: trends.append({"id": "machine_border", "条件": "機種またぎ (隣と機種が違う台)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'is_zorome' in train_shop.columns:
+            subset = train_shop[train_shop['is_zorome'] == 1]
+            if len(subset) >= 5: trends.append({"id": "zorome", "条件": "ゾロ目台番号", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'is_main_corner' in train_shop.columns:
+            subset = train_shop[train_shop['is_main_corner'] == 1]
+            if len(subset) >= 5: trends.append({"id": "main_corner", "条件": "メイン角番", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'is_main_island' in train_shop.columns:
+            subset = train_shop[train_shop['is_main_island'] == 1]
+            if len(subset) >= 5: trends.append({"id": "main_island", "条件": "目立つ島 (メイン通路沿い)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
+        if 'is_wall_island' in train_shop.columns:
+            subset = train_shop[train_shop['is_wall_island'] == 1]
+            if len(subset) >= 5: trends.append({"id": "wall_island", "条件": "壁側・奥の島 (目立たない)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
         if 'REG' in train_shop.columns and 'BIG' in train_shop.columns and 'is_prev_high_reg' in train_shop.columns:
             subset = train_shop[(train_shop['REG'] > train_shop['BIG']) & (train_shop['is_prev_high_reg'] == 1)]
             if len(subset) >= 5: trends.append({"id": "reg_lead", "条件": "REG先行・BB欠損 (高設定不発狙い)", "高設定率": get_high_rate(subset), "サンプル": len(subset)})
@@ -129,6 +147,9 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     matched_hot = []
     matched_hot_ids = []
     if "corner" in top_ids and row.get('is_corner') == 1: matched_hot.append("角"); matched_hot_ids.append("corner")
+    if "corner_2" in top_ids and row.get('is_corner_2') == 1: matched_hot.append("カド2"); matched_hot_ids.append("corner_2")
+    if "machine_border" in top_ids and row.get('is_machine_border') == 1: matched_hot.append("機種またぎ"); matched_hot_ids.append("machine_border")
+    if "zorome" in top_ids and row.get('is_zorome') == 1: matched_hot.append("ゾロ目台"); matched_hot_ids.append("zorome")
     if "reg_lead" in top_ids and row.get('REG', 0) > row.get('BIG', 0) and row.get('is_prev_high_reg', 0) == 1: matched_hot.append("BB欠損・不発"); matched_hot_ids.append("reg_lead")
     if "bb_deficit" in top_ids:
         b_p = row.get('BIG確率', 0)
@@ -165,6 +186,9 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
     if "high_kado_reaction" in worst_ids and row.get('累計ゲーム', 0) >= 8000: matched_cold.append("高稼働反動"); matched_cold_ids.append("high_kado_reaction")
     if "cons_win_reaction" in worst_ids and row.get('prev_差枚', 0) >= 500 and row.get('差枚', 0) >= 500: matched_cold.append("連勝ストップ"); matched_cold_ids.append("cons_win_reaction")
     if "main_corner" in worst_ids and row.get('is_main_corner') == 1: matched_cold.append("メイン角(見せ台フェイク)"); matched_cold_ids.append("main_corner")
+    if "corner_2" in worst_ids and row.get('is_corner_2') == 1: matched_cold.append("カド2(冷遇)"); matched_cold_ids.append("corner_2")
+    if "machine_border" in worst_ids and row.get('is_machine_border') == 1: matched_cold.append("機種またぎ(冷遇)"); matched_cold_ids.append("machine_border")
+    if "zorome" in worst_ids and row.get('is_zorome') == 1: matched_cold.append("ゾロ目台(冷遇)"); matched_cold_ids.append("zorome")
     if "main_island" in worst_ids and row.get('is_main_island') == 1: matched_cold.append("目立つ島(回収用)"); matched_cold_ids.append("main_island")
     if "wall_island" in worst_ids and row.get('is_wall_island') == 1: matched_cold.append("壁側(冷遇)"); matched_cold_ids.append("wall_island")
     
@@ -254,6 +278,9 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         if tid.startswith("end_") or tid.startswith("day_"): 
             add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}『{h}』は高設定の期待度が大幅に上がります {rate_str}。")
         elif h == "角": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}設定が入りやすい『角台』に合致しています {rate_str}。")
+        elif h == "カド2": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}あえて角を避けた『カド2』に設定を入れる傾向があります {rate_str}。")
+        elif h == "機種またぎ": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}『機種またぎ(隣と機種が違う台)』を起点に設定を入れる傾向があります {rate_str}。")
+        elif h == "ゾロ目台": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_ha}『ゾロ目台番号』に設定を入れてくる遊び心（語呂合わせ）の傾向があります {rate_str}。")
         elif h == "BB欠損・不発": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}上げられやすい『REG先行のBB欠損台（不発台）』に合致しています {rate_str}。")
         elif h == "超不発": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}反発（上げ/据え置き）されやすい『BIG極端欠損の超不発台』に合致しています {rate_str}。")
         elif h == "連凹": add_reasons.append(f"【🎯店癖】過去の傾向から、{t_prefix_de}上げリセットされやすい『連続凹み台』に合致しています {rate_str}。")
@@ -292,6 +319,9 @@ def apply_trends_to_row(row, all_trends_dict, shop_col, specs):
         elif c == "高設定下げ": add_reasons.append(f"【⚠️警戒】前日は高設定挙動でしたが、過去の傾向から{t_prefix_de}優秀台の据え置きが少なく、設定が下げられる危険性が高いため注意してください {rate_str}。")
         elif c == "連勝ストップ": add_reasons.append(f"【⚠️警戒】連勝中の好調台ですが、過去の傾向から{t_prefix_de}連続プラスの翌日は回収される危険性が高いため注意してください {rate_str}。")
         elif c.startswith("メイン角"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『メイン通路側の角台』をフェイク（低設定の誤爆待ち）として使う傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("カド2"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『カド2』は冷遇されている傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("機種またぎ"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『機種またぎ』の境界線は冷遇されている傾向が強いため注意してください {rate_str}。")
+        elif c.startswith("ゾロ目台"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『ゾロ目台番号』はフェイクや冷遇に使われる傾向が強いため注意してください {rate_str}。")
         elif c.startswith("目立つ島"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『メイン通路沿いの島』を回収用（黙っても客が座るため）に使う傾向が強いため注意してください {rate_str}。")
         elif c.startswith("壁側"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_ha}『壁側の目立たない島』には設定を入れない傾向が強いため注意してください {rate_str}。")
         elif c.endswith("のつく日(冷遇)"): add_reasons.append(f"【⚠️警戒】過去の傾向から、{t_prefix_de}『{c.replace('(冷遇)', '')}』は回収日(高設定率が低い)の傾向が強いため注意してください {rate_str}。")
@@ -439,7 +469,7 @@ def diagnose_allocation_types(df_train, shop_col, specs):
 
         if each_mac_rate >= 0.20 and each_mac_rate > island_hit_rate and each_mac_rate > mac_hit_rate:
             main_type = "各機種散らし型 (各機種イチ・ニ配分)"
-            messages.append("🎯 **各機種散らし型 (各機種イチ・ニ配分)**\n特定の島や全台系を作るのではなく、「多くの機種に1〜2台ずつ当たり台を散らばらせる」傾向が強いです。島全体の強さに騙されず、自分が打っている機種の中にまだ当たり台(高設定)が見えていないかを重視して立ち回ってください。")
+            messages.append("🎯 **各機種散らし型 (各機種イチ・ニ配分)**\n特定の島や全台系を作るのではなく、「多くの機種に1〜2台ずつ当たり台を散らばらせる」傾向が強いです。島全体の強さに騙されず、自分が打っている機種の中にまだ当たり台(高設定)が見えていないかを重視して立ち回ってください。\n  └ 💡 **立ち回りアドバイス**: パイ（当たり）の奪い合いになります。すでに同じ機種の中に明らかな当たり台がある場合、自分が座っている台は『中間設定のフェイク』である危険性が高いため、強い警戒が必要です。")
             is_point = True # 周りの台(島全体)の挙動に引っ張られすぎないように単体型ベースで学習させる
         elif island_hit_rate >= 0.20:
             main_type = "島型 (面配分)"
@@ -482,7 +512,7 @@ def diagnose_allocation_types(df_train, shop_col, specs):
                         if narabi_rate >= 0.40:
                             island_msg += "\n  └ 🤝 **塊・並び集中**: 島の中でも特に「3台以上の並び（塊）」で高設定が入る傾向が強いです。当たり島を見つけたら、両隣の挙動が良い場所を優先して狙ってください。"
                         elif narabi_rate <= 0.15:
-                            island_msg += "\n  └ 🎲 **ランダム・散らし**: 島全体は強いですが、出ている台は島の中でランダムに散らばっています。「隣が出ているから」という根拠は通用しにくいため、単体の挙動を重視してください。"
+                            island_msg += "\n  └ 🎲 **ランダム・散らし**: 島全体は強いですが、出ている台は島の中でランダムに散らばっています。「隣が出ているから」という根拠は通用しにくいため、単体の挙動を重視してください。\n     └ 💡 **立ち回りアドバイス**: 島内の当たり台数に上限がある可能性があるため、島内に他の爆出し台が複数ある場合は自分の台が罠である可能性も考慮し、少し警戒レベルを上げましょう。"
 
             messages.append(island_msg)
         elif mac_hit_rate >= 0.20:
@@ -522,16 +552,16 @@ def diagnose_allocation_types(df_train, shop_col, specs):
                         if narabi_rate >= 0.40:
                             mac_msg += "\n  └ 🤝 **塊・並び集中**: 当たり機種の中でも特に「固まって」設定が入る傾向があります。出ている台の隣を狙うのがセオリーです。"
                         elif narabi_rate <= 0.15:
-                            mac_msg += "\n  └ 🎲 **ランダム・散らし**: 当たり機種の中でも、出ている台はランダムに散らばっています。「末尾」など別の法則が絡んでいる可能性があります。"
+                            mac_msg += "\n  └ 🎲 **ランダム・散らし**: 当たり機種の中でも、出ている台はランダムに散らばっています。「末尾」など別の法則が絡んでいる可能性があります。\n     └ 💡 **立ち回りアドバイス**: 対象機種であっても、他の台がすでに出切っている場合はフェイクの罠に注意して押し引きを判断してください。"
             
             messages.append(mac_msg)
         elif point_hit_rate >= 0.40:
             is_point = True
             main_type = "単体型 (点配分)"
-            messages.append("📍 **単体型 (点配分)**\n島や機種全体は死んでいるのに、ポツンと1台だけ突出して出ている日が多いです。ヒキ依存や当て物(ピンポイント)の要素が強く、周りの状況はアテになりません。深追いは禁物です。")
+            messages.append("📍 **単体型 (点配分)**\n島や機種全体は死んでいるのに、ポツンと1台だけ突出して出ている日が多いです。ヒキ依存や当て物(ピンポイント)の要素が強く、周りの状況はアテになりません。深追いは禁物です。\n  └ 💡 **立ち回りアドバイス**: 各島（列）に1〜2台しか当たりがない傾向が強いため、同じ島内にすでに別の大当たり台がある場合、自分の台はフェイクの罠である可能性が高まります。パイの奪い合いを意識した撤退判断をおすすめします。")
         else:
             main_type = "複合型 (散らし配分)"
-            messages.append("🧩 **複合型 (散らし配分)**\n島・機種・単体が複雑に混ざっています。明確な「面」が形成されにくいため、複数の根拠(店癖や波)を掛け合わせて狙う必要があります。")
+            messages.append("🧩 **複合型 (散らし配分)**\n島・機種・単体が複雑に混ざっています。明確な「面」が形成されにくいため、複数の根拠(店癖や波)を掛け合わせて狙う必要があります。\n  └ 💡 **立ち回りアドバイス**: 特定の「全台系」や「島単位」の狙いだけに固執せず、広く視野を持つことが重要です。周りの状況に流されず、目の前の台の単体挙動や、AIが提示する複数の根拠（店癖など）が重なっている台を優先して押し引きを判断してください。")
 
         # --- 店舗全体の並び・塊傾向の事前計算 (ローテーション型や客層反応型のサブ分析用) ---
         narabi_rate_shop = 0
@@ -561,6 +591,7 @@ def diagnose_allocation_types(df_train, shop_col, specs):
                 rot_msg += "\n  └ 🤝 **塊ローテ**: 凹み台の「隣」なども巻き込んで、3台以上の塊でローテーションしてくる傾向があります。狙い台の隣もチャンスです。"
             elif narabi_rate_shop <= 0.15:
                 rot_msg += "\n  └ 🎲 **単体ローテ**: 塊にはならず、凹んだ台単体だけをピンポイントで上げてきます。周りの状況に流されないようにしてください。"
+            rot_msg += "\n  └ 💡 **立ち回りアドバイス**: 昨日の当たり台や島を避け、数日間凹んでいる台や冷遇されていた島を優先して狙ってください。AIの「変更(上げ)期待度」が高い台を中心に攻めるのがセオリーです。"
             messages.append(rot_msg)
         
         # 4. 客層反応型
@@ -571,13 +602,90 @@ def diagnose_allocation_types(df_train, shop_col, specs):
                 reac_msg += "\n  └ 🤝 **島ごとテコ入れ**: 低稼働になった列や島を、塊で一気に全台系・半列系にしてテコ入れしてくる傾向があります。"
             elif narabi_rate_shop <= 0.15:
                 reac_msg += "\n  └ 🎲 **単体テコ入れ**: 低稼働の台の中で、ポツンと単体で設定を入れて稼働を煽ります。並びを意識する必要はありません。"
+            reac_msg += "\n  └ 💡 **立ち回りアドバイス**: 前日あまり回されなかった「放置台」が狙い目になります。人が少ない島や、稼働が落ちている機種にチャンスが眠っている可能性が高いです。"
             messages.append(reac_msg)
+
+        # --- 5. 具体的な狙い目 (ピンポイント投入傾向) の抽出 ---
+        hekomi_threshold = -1000
+        win_threshold = 1000
+        low_kado_threshold = 2000
+        
+        if '差枚' in shop_df.columns:
+            q_lose = shop_df['差枚'].quantile(0.15)
+            hekomi_threshold = min(-500, int(round(q_lose / 500) * 500)) if pd.notna(q_lose) and q_lose < 0 else -1000
+            q_win = shop_df['差枚'].quantile(0.85)
+            win_threshold = max(500, int(round(q_win / 500) * 500)) if pd.notna(q_win) and q_win > 0 else 1000
+            
+        if '累計ゲーム' in shop_df.columns:
+            avg_kado = shop_df['累計ゲーム'].mean()
+            low_kado_threshold = max(1000, int((avg_kado * 0.5) // 500 * 500))
+
+        if 'target' in valid_df.columns:
+            all_hit_rate = valid_df['target'].mean()
+            target_hints = []
+            
+            if 'is_corner' in valid_df.columns:
+                corner_hit_rate = valid_df[valid_df['is_corner'] == 1]['target'].mean() if len(valid_df[valid_df['is_corner'] == 1]) > 0 else 0
+                if corner_hit_rate > all_hit_rate * 1.5 and corner_hit_rate >= 0.15:
+                    target_hints.append(f"「角台」 (高設定率 {corner_hit_rate*100:.1f}%)")
+                    
+            if 'prev_差枚' in valid_df.columns:
+                hekomi_hit_rate = valid_df[valid_df['prev_差枚'] <= hekomi_threshold]['target'].mean() if len(valid_df[valid_df['prev_差枚'] <= hekomi_threshold]) > 0 else 0
+                if hekomi_hit_rate > all_hit_rate * 1.5 and hekomi_hit_rate >= 0.15:
+                    target_hints.append(f"「前日大凹み({hekomi_threshold}枚以下)からの上げ」 (高設定率 {hekomi_hit_rate*100:.1f}%)")
+                    
+                win_hit_rate = valid_df[valid_df['prev_差枚'] >= win_threshold]['target'].mean() if len(valid_df[valid_df['prev_差枚'] >= win_threshold]) > 0 else 0
+                if win_hit_rate > all_hit_rate * 1.5 and win_hit_rate >= 0.15:
+                    target_hints.append(f"「前日大勝ち(+{win_threshold}枚以上)の据え置き」 (高設定率 {win_hit_rate*100:.1f}%)")
+
+            if 'prev_累計ゲーム' in valid_df.columns:
+                low_kado_hit_rate = valid_df[valid_df['prev_累計ゲーム'] < low_kado_threshold]['target'].mean() if len(valid_df[valid_df['prev_累計ゲーム'] < low_kado_threshold]) > 0 else 0
+                if low_kado_hit_rate > all_hit_rate * 1.5 and low_kado_hit_rate >= 0.15:
+                    target_hints.append(f"「前日低稼働({low_kado_threshold}G未満)の放置台」 (高設定率 {low_kado_hit_rate*100:.1f}%)")
+                    
+            if 'neighbor_high_setting_count' in valid_df.columns:
+                neighbor_hit_rate = valid_df[valid_df['neighbor_high_setting_count'] >= 1]['target'].mean() if len(valid_df[valid_df['neighbor_high_setting_count'] >= 1]) > 0 else 0
+                if neighbor_hit_rate > all_hit_rate * 1.5 and neighbor_hit_rate >= 0.15:
+                    target_hints.append(f"「両隣のどちらかが高設定挙動だった台(並び狙い)」 (高設定率 {neighbor_hit_rate*100:.1f}%)")
+                    
+            if 'is_prev_high_reg' in valid_df.columns:
+                sue_hit_rate = valid_df[valid_df['is_prev_high_reg'] == 1]['target'].mean() if len(valid_df[valid_df['is_prev_high_reg'] == 1]) > 0 else 0
+                if sue_hit_rate > all_hit_rate * 1.5 and sue_hit_rate >= 0.15:
+                    target_hints.append(f"「前日高設定挙動の据え置き」 (高設定率 {sue_hit_rate*100:.1f}%)")
+                    
+            if 'is_main_island' in valid_df.columns:
+                main_isl_hit_rate = valid_df[valid_df['is_main_island'] == 1]['target'].mean() if len(valid_df[valid_df['is_main_island'] == 1]) > 0 else 0
+                if main_isl_hit_rate > all_hit_rate * 1.5 and main_isl_hit_rate >= 0.15:
+                    target_hints.append(f"「メイン通路沿いの目立つ島」 (高設定率 {main_isl_hit_rate*100:.1f}%)")
+            
+            if '対象日付' in valid_df.columns and '末尾番号' in valid_df.columns and '差枚' in valid_df.columns:
+                end_daily = valid_df.groupby(['対象日付', '末尾番号']).agg(末尾平均=('差枚', 'mean'), 台数=('台番号', 'count')).reset_index()
+                end_daily = end_daily[end_daily['台数'] >= 3].dropna(subset=['末尾平均'])
+                if not end_daily.empty:
+                    idx_max = end_daily.groupby('対象日付')['末尾平均'].idxmax()
+                    top_end = end_daily.loc[idx_max]
+                    daily_shop_stats = valid_df.groupby('対象日付').agg(店舗平均=('差枚', 'mean')).reset_index()
+                    merged_end = pd.merge(top_end, daily_shop_stats, on='対象日付')
+                    hit_end_days = ((merged_end['末尾平均'] >= 500) & ((merged_end['末尾平均'] - merged_end['店舗平均']) >= 500)).sum()
+                    total_active_days = valid_df['対象日付'].nunique()
+                    hit_end_rate = hit_end_days / total_active_days if total_active_days > 0 else 0
+                    if hit_end_rate >= 0.25:
+                        target_hints.append(f"「日替わりの当たり末尾」 (当たり末尾が存在する日の割合 {hit_end_rate*100:.1f}%)")
+                        
+            if target_hints:
+                hints_str = "\n  ・".join(target_hints)
+                messages.append(f"🔍 **具体的なピンポイント狙い目 (後ヅモ・台選びのヒント)**\n過去のデータから、配分とは別に以下の条件を満たす台に設定が入りやすい傾向が見られます。\n  ・{hints_str}")
+            else:
+                messages.append(f"🔍 **具体的なピンポイント狙い目 (後ヅモ・台選びのヒント)**\n過去のデータからは、角台や特定末尾、据え置きといった分かりやすいピンポイントの投入傾向（明確な偏り）は見られませんでした。特定の場所に依存せず、周りの台の挙動や島・機種全体の強さを優先して判断してください。")
 
         alloc_types[s] = {
             "is_mislead": is_mislead,
             "is_point": is_point,
             "main_type": main_type,
-            "messages": messages
+            "messages": messages,
+            "hekomi_threshold": hekomi_threshold,
+            "win_threshold": win_threshold,
+            "low_kado_threshold": low_kado_threshold
         }
         
     return alloc_types

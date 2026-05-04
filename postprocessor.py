@@ -228,6 +228,59 @@ def postprocess_predictions(predict_df, train_df):
     predict_df = apply_shop_mood_correction(predict_df)
     train_df = apply_shop_mood_correction(train_df)
 
+    # --- 当たり台の食い合い（配分上限）による相対的ペナルティ ---
+    def apply_allocation_limit_penalty(df_target):
+        if df_target.empty or not shop_col: return df_target
+        
+        df_res = df_target.copy()
+        date_col = 'next_date' if 'next_date' in df_res.columns else '対象日付'
+        
+        for (s_name, t_date), group in df_res.groupby([shop_col, date_col]):
+            shop_info = alloc_types.get(s_name, {})
+            main_type = shop_info.get("main_type", "不明")
+            is_point = shop_info.get("is_point", False)
+            
+            # 各機種散らし型（各機種イチ・ニ配分）の場合、機種内の3番手以降をペナルティ
+            if main_type == "各機種散らし型 (各機種イチ・ニ配分)" and '機種名' in group.columns:
+                for mac, mac_group in group.groupby('機種名'):
+                    if len(mac_group) <= 2: continue # 2台以下ならスルー
+                    
+                    mac_group['max_s'] = mac_group[['prediction_score', 'sueoki_score']].max(axis=1) if 'sueoki_score' in mac_group.columns else mac_group['prediction_score']
+                    ranks = mac_group['max_s'].rank(method='first', ascending=False)
+                    
+                    penalty_idx = mac_group[ranks > 2].index
+                    if len(penalty_idx) > 0:
+                        df_res.loc[penalty_idx, 'prediction_score'] *= 0.70
+                        if 'sueoki_score' in df_res.columns: df_res.loc[penalty_idx, 'sueoki_score'] *= 0.70
+                        for idx in penalty_idx:
+                            orig = str(df_res.loc[idx, '根拠'])
+                            if orig == 'nan': orig = ''
+                            new_r = "【⚠️パイ奪い合い警戒】この店は『各機種イチ・ニ配分』の傾向が強いですが、同じ機種内にさらにAI評価が高い本命台が存在するため、相対的に評価を下げました。"
+                            df_res.loc[idx, '根拠'] = (orig + " " + new_r).strip() if orig and orig != '-' else new_r
+
+            # 単体型（点配分）の場合、島内の2番手以降をペナルティ
+            elif is_point and 'island_id' in group.columns:
+                for isl, isl_group in group.groupby('island_id'):
+                    if isl == "Unknown" or len(isl_group) <= 1: continue
+                    
+                    isl_group['max_s'] = isl_group[['prediction_score', 'sueoki_score']].max(axis=1) if 'sueoki_score' in isl_group.columns else isl_group['prediction_score']
+                    ranks = isl_group['max_s'].rank(method='first', ascending=False)
+                    
+                    penalty_idx = isl_group[ranks > 1].index
+                    if len(penalty_idx) > 0:
+                        df_res.loc[penalty_idx, 'prediction_score'] *= 0.60
+                        if 'sueoki_score' in df_res.columns: df_res.loc[penalty_idx, 'sueoki_score'] *= 0.60
+                        for idx in penalty_idx:
+                            orig = str(df_res.loc[idx, '根拠'])
+                            if orig == 'nan': orig = ''
+                            new_r = "【⚠️配分上限警戒】この店は『点配分（単体型）』の傾向が強いですが、同じ島内にさらにAI評価が高い本命台が存在するため、フェイクの危険性を考慮して評価を大きく下げました。"
+                            df_res.loc[idx, '根拠'] = (orig + " " + new_r).strip() if orig and orig != '-' else new_r
+
+        return df_res
+
+    predict_df = apply_allocation_limit_penalty(predict_df)
+    train_df = apply_allocation_limit_penalty(train_df)
+
     # --- 予測スコアから「前日の自己評価スコア(past_prediction_score)」を作成 ---
     predict_df['_orig_index'] = predict_df.index
     train_df['_orig_index'] = train_df.index
