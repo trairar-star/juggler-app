@@ -32,7 +32,7 @@ BASE_FEATURES = [
     'prev_shop_fake_rate', 'is_sandwich_target', 'relative_abandon_score',
     'island_win_rate', 'island_fake_ratio', 'past_island_fake_rate',
     'is_corner_showpiece', 'heavy_play_fake_penalty', 'post_ev_sueoki_trust',
-    'island_avg_diff', 'machine_no_30days_avg_diff', 'is_high_reg_minus_diff', 'reg_diff_ratio'
+    'island_avg_diff', 'is_high_reg_minus_diff', 'reg_diff_ratio'
 ]
 
 KEEP_ALLOWED_FEATURES = [
