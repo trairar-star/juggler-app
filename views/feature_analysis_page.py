@@ -298,7 +298,7 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                     mac_df['REG確率_val'] = np.where(mac_df['累計ゲーム'] > 0, mac_df['REG'] / mac_df['累計ゲーム'], 0)
                     
                     mac_df['合算確率'] = (mac_df['BIG'] + mac_df['REG']) / mac_df['累計ゲーム'].replace(0, np.nan)
-                    mac_df['高設定挙挙動'] = ((mac_df['累計ゲーム'] >= 3000) & calculate_high_setting_mask(mac_df, specs)).astype(int)
+                    mac_df['高設定挙動'] = ((mac_df['累計ゲーム'] >= 3000) & calculate_high_setting_mask(mac_df, specs)).astype(int)
                     mac_df['高設定率'] = np.where(mac_df['valid_play'], mac_df['高設定挙動'], np.nan) * 100
                     mac_df['is_win'] = mac_df['valid_play'] & (mac_df['差枚'] > 0)
                     

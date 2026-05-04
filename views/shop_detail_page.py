@@ -892,7 +892,12 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             with col_d2:
                 min_score_filter = st.slider("表示する最低期待度 (%)", min_value=0, max_value=100, value=0, step=5, help="ここで設定した期待度以上の台のみを表示します。全体的にスコアが低い日は下げてみてください。", key="min_score_filter")
         
-            tab_change, tab_sueoki = st.tabs(["🚀 変更(上げ) 期待度ランキング", "🔁 据え置き 期待度ランキング"])
+            tab_all, tab_change, tab_sueoki = st.tabs(["👑 総合(高い方) 期待度ランキング", "🚀 変更(上げ) 期待度ランキング", "🔁 据え置き 期待度ランキング"])
+
+            if 'prediction_score' in df.columns and 'sueoki_score' in df.columns:
+                df['max_score'] = df[['prediction_score', 'sueoki_score']].max(axis=1)
+            elif 'prediction_score' in df.columns:
+                df['max_score'] = df['prediction_score']
 
             def render_ranking_tab(score_col, score_label, bar_color):
                 sort_cols = []
@@ -1011,6 +1016,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         
                         with st.expander(exp_label, expanded=(i == 0)):
                             _display_machine_detail_expander(row, i, shop_col, selected_shop, df_raw, df_events, specs, df_importance, df_shop_target)
+
+            with tab_all:
+                render_ranking_tab('max_score', '総合期待度', 'rgba(156, 39, 176, 0.6)')
 
             with tab_change:
                 render_ranking_tab('prediction_score', '変更(上げ)期待度', 'rgba(255, 87, 34, 0.6)')
