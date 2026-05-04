@@ -193,7 +193,8 @@ def render_summary_map_page(df_raw, df_island):
                     let diffSign = totalDiff > 0 ? "+" : "";
                     let avgDiff = totalMachines > 0 ? Math.floor(totalDiff / totalMachines) : 0;
                     let avgDiffSign = avgDiff > 0 ? "+" : "";
-                    calcContent.innerHTML = `🎰 [選択: ${count}セル / 計${totalMachines}台] ｜ 総回転: ${totalG}G ｜ 差枚: <span style="color:${totalDiff>0?'#FFCA28':'#81D4FA'}">${diffSign}${totalDiff}枚 (台平均 ${avgDiffSign}${avgDiff}枚)</span><br>BIG: ${totalB}回 (<span style="color:#FFCA28">${bigProbStr}</span>) ｜ REG: ${totalR}回 (<span style="color:#FFCA28">${regProbStr}</span>) ｜ 合算: <span style="color:#FFCA28">${totProbStr}</span>`;
+                    let avgMachines = count > 0 ? Math.round(totalMachines / count) : 0;
+                    calcContent.innerHTML = `🎰 [選択: ${count}セル / 延べ${totalMachines}台 (1日約${avgMachines}台)] ｜ 総回転: ${totalG}G ｜ 差枚: <span style="color:${totalDiff>0?'#FFCA28':'#81D4FA'}">${diffSign}${totalDiff}枚 (1台平均 ${avgDiffSign}${avgDiff}枚)</span><br>BIG: ${totalB}回 (<span style="color:#FFCA28">${bigProbStr}</span>) ｜ REG: ${totalR}回 (<span style="color:#FFCA28">${regProbStr}</span>) ｜ 合算: <span style="color:#FFCA28">${totProbStr}</span>`;
                     calcBar.classList.add('show');
                 } else {
                     calcBar.classList.remove('show');
@@ -347,7 +348,8 @@ def render_summary_map_page(df_raw, df_island):
         if 'island_id' in df_month.columns:
             isl_df = df_month[df_month['island_id'] != "Unknown"].copy()
             if not isl_df.empty:
-                isl_df['島名'] = isl_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                isl_df['島名_元'] = isl_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                isl_df['島名'] = isl_df['島名_元'] + " (" + isl_df['機種名_統一'] + ")"
                 
                 isl_daily = isl_df.groupby(['島名', 'day_str']).agg(
                     g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique')
