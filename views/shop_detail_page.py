@@ -923,6 +923,15 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 else:
                     df_sorted['狙い目'] = "🚀変更"
             
+                # --- 追加: その店の狙い目に応じた勝率 (直近1ヶ月) を取得 ---
+                if shop_win_rates:
+                    df_sorted['店舗のAI勝率'] = df_sorted.apply(
+                        lambda r: shop_win_rates.get(r.get(shop_col), {}).get('変更勝率', '-') if r.get('狙い目') == '🚀変更' else shop_win_rates.get(r.get(shop_col), {}).get('据え置き勝率', '-'), 
+                        axis=1
+                    )
+                else:
+                    df_sorted['店舗のAI勝率'] = "-"
+
                 # --- ランク変動の計算 (前日差枚順位との比較) ---
                 if score_col in df_sorted.columns and '差枚' in df_sorted.columns:
                     df_sorted['AI順位_num'] = df_sorted[score_col].rank(method='min', ascending=False).fillna(999).astype(int)
@@ -975,8 +984,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     if df_display.empty:
                         st.warning(f"期待度が {min_score_filter}% 以上の台はありません。スライダーを下げてみてください。")
             
-                # 常に「店名」「狙い目」を表示するようにカラムを厳選
-                base_cols = ['AI順位', '狙い目', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', score_label]
+                # 常に「店名」「狙い目」「店舗のAI勝率」を表示するようにカラムを厳選
+                base_cols = ['AI順位', '狙い目', '店舗のAI勝率', shop_col, '台番号', '機種名', '店癖マッチ', '予測信頼度', score_label]
                 display_cols = [c for c in base_cols if c in df_display.columns]
 
                 # データフレームの表示設定 (Pandas Stylerを使ってバーを描画)
@@ -989,6 +998,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     column_config={
                         "AI順位": st.column_config.TextColumn("順位", width="small", help="AIの予測順位です。()内は前日の差枚ランキングからの順位変動を示します。"),
                         "狙い目": st.column_config.TextColumn("狙い目", width="small", help="AIが総合的により高く評価している方向（スコアが高い方）です。"),
+                        "店舗のAI勝率": st.column_config.TextColumn("店舗勝率(1ヶ月)", width="small", help="直近1ヶ月における、この店舗のその狙い目(変更/据置)のAI推奨台の実績勝率です。"),
                         shop_col: st.column_config.TextColumn("店舗", width="small"),
                         "台番号": st.column_config.TextColumn("No.", width="small"),
                         "機種名": st.column_config.TextColumn("機種", width="small"),
