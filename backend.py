@@ -1271,10 +1271,10 @@ def _apply_island_features(df, df_island, shop_col):
 
     grp = df.groupby([shop_col, '機種名'])['台番号']
     df['is_corner'] = ((df['台番号'] == grp.transform('min')) | (df['台番号'] == grp.transform('max'))).astype(int)
-        ranks = df.groupby([shop_col, '機種名'])['台番号'].rank(method='dense')
-        max_ranks = df.groupby([shop_col, '機種名'])['台番号'].transform(lambda x: x.rank(method='dense').max())
-        df['is_corner_2'] = ((ranks == 2) | (ranks == max_ranks - 1)).astype(int)
-        df['island_id'] = "Unknown"
+    ranks = df.groupby([shop_col, '機種名'])['台番号'].rank(method='dense')
+    max_ranks = df.groupby([shop_col, '機種名'])['台番号'].transform(lambda x: x.rank(method='dense').max())
+    df['is_corner_2'] = ((ranks == 2) | (ranks == max_ranks - 1)).astype(int)
+    df['island_id'] = "Unknown"
 
     if df_island is not None and not df_island.empty:
         unique_machines = df[[shop_col, '台番号']].drop_duplicates()
@@ -1294,8 +1294,8 @@ def _apply_island_features(df, df_island, shop_col):
                     if '-' in part:
                         try:
                             s_str, e_str = part.split('-', 1)
-                                s_val, e_val = int(s_str), int(e_str)
-                                machines.extend(range(min(s_val, e_val), max(s_val, e_val) + 1))
+                            s_val, e_val = int(s_str), int(e_str)
+                            machines.extend(range(min(s_val, e_val), max(s_val, e_val) + 1))
                         except: pass
                     else:
                         try: machines.append(int(part))
@@ -1605,8 +1605,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     if shop_col and '機種名' in df.columns and '台番号' in df.columns:
         grp = df.groupby([shop_col, '機種名'])['台番号']
         df['is_corner'] = ((df['台番号'] == grp.transform('min')) | (df['台番号'] == grp.transform('max'))).astype(int)
+        ranks = df.groupby([shop_col, '機種名'])['台番号'].rank(method='dense')
+        max_ranks = df.groupby([shop_col, '機種名'])['台番号'].transform(lambda x: x.rank(method='dense').max())
+        df['is_corner_2'] = ((ranks == 2) | (ranks == max_ranks - 1)).astype(int)
         df['island_id'] = "Unknown"
-        df['is_corner_2'] = 0
 
         # 島マスターの適用
         if df_island is not None and not df_island.empty:
@@ -1628,7 +1630,8 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
                         if '-' in part:
                             try:
                                 s_str, e_str = part.split('-', 1)
-                                machines.extend(range(int(s_str), int(e_str) + 1))
+                                s_val, e_val = int(s_str), int(e_str)
+                                machines.extend(range(min(s_val, e_val), max(s_val, e_val) + 1))
                             except: pass
                         else:
                             try: machines.append(int(part))
@@ -1638,7 +1641,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
                     try:
                         s = int(i_row.get('開始台番号', 0))
                         e = int(i_row.get('終了台番号', 0))
-                        if s > 0 and e >= s: machines.extend(range(s, e + 1))
+                        if s > 0 and e > 0: machines.extend(range(min(s, e), max(s, e) + 1))
                     except: pass
                             
                 main_corner = str(i_row.get('メイン角番', '')).strip()

@@ -9,7 +9,7 @@ def render_island_master_page(df_raw):
     df_island = backend.load_island_master()
     
     with st.expander("📝 新しい島（列）を登録", expanded=True):
-        st.info("💡 **登録のコツ**: 店舗を選ぶと、その店舗の全台番号がリスト化され、ポチポチ選んで登録できます！ハイフンを使った手入力（例: `501-510`）との併用も可能です。")
+        st.info("💡 **登録のコツ**: 店舗を選ぶと、その店舗の全台番号がリスト化され、ポチポチ選んで登録できます！ハイフンを使った範囲指定や、飛び番（例: `801, 802, 805`）が混ざっていても自動で正しく「角」や「隣同士」として計算されます。\n\n⚠️ **注意**: 通路を挟む背中合わせの列などを1つの島にまとめてしまうと、AIが「背中合わせの台同士が隣だ」と勘違いしてしまいます。必ず**『物理的に横一列に並んでいる単位』**で島を分けて登録してください。")
         
         shops = ["店舗を選択してください"]
         shop_col = '店名'
@@ -36,8 +36,8 @@ def render_island_master_page(df_raw):
                             if '-' in part:
                                 try:
                                     s_str, e_str = part.split('-', 1)
-                                s_val, e_val = int(s_str), int(e_str)
-                                registered_machines.update([str(m) for m in range(min(s_val, e_val), max(s_val, e_val) + 1)])
+                                    s_val, e_val = int(s_str), int(e_str)
+                                    registered_machines.update([str(m) for m in range(min(s_val, e_val), max(s_val, e_val) + 1)])
                                 except: pass
                             else:
                                 registered_machines.add(str(part))
@@ -45,8 +45,8 @@ def render_island_master_page(df_raw):
                         try:
                             s = int(i_row.get('開始台番号', 0))
                             e = int(i_row.get('終了台番号', 0))
-                        if s > 0 and e > 0:
-                            registered_machines.update([str(m) for m in range(min(s, e), max(s, e) + 1)])
+                            if s > 0 and e > 0:
+                                registered_machines.update([str(m) for m in range(min(s, e), max(s, e) + 1)])
                         except: pass
 
         if input_shop and input_shop != "店舗を選択してください" and not df_raw.empty:
