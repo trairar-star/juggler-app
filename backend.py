@@ -989,6 +989,8 @@ def update_island_master(target_timestamp, shop, island_name, rule_str, main_cor
             idx_rule = header.index('台番号ルール')
             idx_corner = header.index('メイン角番') if 'メイン角番' in header else -1
             idx_type = header.index('島属性') if '島属性' in header else -1
+            idx_start = header.index('開始台番号') if '開始台番号' in header else -1
+            idx_end = header.index('終了台番号') if '終了台番号' in header else -1
         except: return False
         
         for i, row in enumerate(all_values[1:], start=2):
@@ -1001,6 +1003,10 @@ def update_island_master(target_timestamp, shop, island_name, rule_str, main_cor
                     worksheet.update_cell(i, idx_corner + 1, "" if main_corner == "指定なし" else str(main_corner))
                 if idx_type != -1:
                     worksheet.update_cell(i, idx_type + 1, island_type)
+                if idx_start != -1:
+                    worksheet.update_cell(i, idx_start + 1, "")
+                if idx_end != -1:
+                    worksheet.update_cell(i, idx_end + 1, "")
                 return True
         return False
     except Exception as e:
@@ -1278,12 +1284,6 @@ def _apply_island_features(df, df_island, shop_col):
             i_name = i_row.get('島名')
             machines = []
             
-            try:
-                s = int(i_row.get('開始台番号', 0))
-                e = int(i_row.get('終了台番号', 0))
-                if s > 0 and e >= s: machines.extend(range(s, e + 1))
-            except: pass
-            
             rule = str(i_row.get('台番号ルール', ''))
             if rule and rule.strip() != '' and rule != 'nan':
                 for part in rule.split(','):
@@ -1297,6 +1297,12 @@ def _apply_island_features(df, df_island, shop_col):
                     else:
                         try: machines.append(int(part))
                         except: pass
+            else:
+                try:
+                    s = int(i_row.get('開始台番号', 0))
+                    e = int(i_row.get('終了台番号', 0))
+                    if s > 0 and e >= s: machines.extend(range(s, e + 1))
+                except: pass
                         
             main_corner = str(i_row.get('メイン角番', '')).strip()
             island_type = str(i_row.get('島属性', '普通'))
@@ -1610,13 +1616,6 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
                 i_name = i_row.get('島名')
                 machines = []
                 
-                # 旧仕様(開始〜終了)の互換性維持
-                try:
-                    s = int(i_row.get('開始台番号', 0))
-                    e = int(i_row.get('終了台番号', 0))
-                    if s > 0 and e >= s: machines.extend(range(s, e + 1))
-                except: pass
-                
                 # 新仕様(柔軟なルール指定)の解析
                 rule = str(i_row.get('台番号ルール', ''))
                 if rule and rule.strip() != '' and rule != 'nan':
@@ -1631,6 +1630,13 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
                         else:
                             try: machines.append(int(part))
                             except: pass
+                else:
+                    # 旧仕様(開始〜終了)の互換性維持
+                    try:
+                        s = int(i_row.get('開始台番号', 0))
+                        e = int(i_row.get('終了台番号', 0))
+                        if s > 0 and e >= s: machines.extend(range(s, e + 1))
+                    except: pass
                             
                 main_corner = str(i_row.get('メイン角番', '')).strip()
                 island_type = str(i_row.get('島属性', '普通'))
