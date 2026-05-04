@@ -21,10 +21,10 @@ def main():
         print("データが空です。処理を終了します。")
         os._exit(1)
 
-    # JSTで現在時刻を取得し、明日の日付をターゲットに設定
+    # JSTで現在時刻を取得し、実行日（今日）をターゲットに設定
     jst = datetime.timezone(datetime.timedelta(hours=9))
     now = datetime.datetime.now(jst)
-    target_date = (now + datetime.timedelta(days=1)).date()
+    target_date = now.date()
     
     print(f"2. {target_date} の予測を実行中...")
     df_pred, df_train, df_importance = backend.run_analysis(
