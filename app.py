@@ -215,6 +215,7 @@ def main():
 
     if st.sidebar.button("⚠️ 全データ強制再読み込み (時間かかります)"):
         backend.clear_local_cache()
+        backend.clear_spreadsheet_cache()
         st.cache_data.clear()
         st.rerun()
 

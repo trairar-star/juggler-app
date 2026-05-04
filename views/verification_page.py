@@ -1894,12 +1894,14 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             st.session_state["shop_hyperparams"]["デフォルト"]['lstm_epochs'] = hp_lstm_epochs
             
         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+        backend.clear_spreadsheet_cache()
         st.rerun()
         
     if reset_btn:
         if selected_shop in st.session_state["shop_hyperparams"]:
             del st.session_state["shop_hyperparams"][selected_shop]
             backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+            backend.clear_spreadsheet_cache()
             st.rerun()
             
     if test_btn:
@@ -2375,6 +2377,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                     'lstm_epochs': current_hp.get('lstm_epochs', 20)
                 }
                 backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+                backend.clear_spreadsheet_cache()
                 st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")
                 st.rerun()
 

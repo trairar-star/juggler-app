@@ -566,6 +566,22 @@ def load_latest_ai_results(target_date):
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
 
+def clear_spreadsheet_cache():
+    """スプレッドシートに保存されている最新予測のキャッシュをクリアする（強制再計算用）"""
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        for sheet_name in ['latest_predictions', 'latest_importance']:
+            try:
+                ws = sh.worksheet(sheet_name)
+                ws.clear()
+            except gspread.exceptions.WorksheetNotFound:
+                pass
+        return True
+    except Exception as e:
+        print(f"スプレッドシートのキャッシュクリアエラー: {e}")
+        return False
+
 def save_prediction_log(df):
     if df.empty:
         st.warning("保存するデータがありません。")
