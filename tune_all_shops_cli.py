@@ -182,6 +182,7 @@ def main():
         if best_k_params is None: best_k_params = current_hp
         
         shop_hyperparams[shop_name] = {
+            'skip_prediction': current_hp.get('skip_prediction', False),
             'train_months': current_hp.get('train_months', 3), 
             'n_estimators': best_c_params.get('n_estimators', current_hp.get('n_estimators')),
             'learning_rate': best_c_params.get('learning_rate', current_hp.get('learning_rate')),

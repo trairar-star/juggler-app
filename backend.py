@@ -1188,7 +1188,7 @@ def load_shop_ai_settings():
     default_settings = {
         "デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 
                    'k_train_months': 6, 'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
-                   'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}
+                   'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20, 'skip_prediction': False}
     }
     try:
         gc = _get_gspread_client()
@@ -1225,6 +1225,7 @@ def load_shop_ai_settings():
                     'lstm_hidden_size': int(record.get('lstm_hidden_size', 64)),
                     'lstm_lr': float(record.get('lstm_lr', 0.001)),
                     'lstm_epochs': int(record.get('lstm_epochs', 20)),
+                    'skip_prediction': str(record.get('skip_prediction', 'False')).lower() in ['true', '1', 't', 'y', 'yes']
                 }
             except (ValueError, TypeError):
                 continue
@@ -1248,7 +1249,7 @@ def save_shop_ai_settings(shop_hyperparams):
         sheet_name = 'shop_ai_settings'
         try: worksheet = sh.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound: worksheet = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
-        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'k_train_months', 'k_n_estimators', 'k_learning_rate', 'k_num_leaves', 'k_max_depth', 'k_min_child_samples', 'k_reg_alpha', 'k_reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs']
+        header = ['店名', 'train_months', 'n_estimators', 'learning_rate', 'num_leaves', 'max_depth', 'min_child_samples', 'reg_alpha', 'reg_lambda', 'k_train_months', 'k_n_estimators', 'k_learning_rate', 'k_num_leaves', 'k_max_depth', 'k_min_child_samples', 'k_reg_alpha', 'k_reg_lambda', 'lstm_hidden_size', 'lstm_lr', 'lstm_epochs', 'skip_prediction']
         data_to_write = [header] + [[shop_name] + [params.get(k) for k in header[1:]] for shop_name, params in shop_hyperparams.items()]
         worksheet.clear(); worksheet.update('A1', data_to_write)
         return True
@@ -2442,8 +2443,17 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
 # ---------------------------------------------------------
 @st.cache_data(show_spinner=False, max_entries=2, ttl=3600)
 def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, target_date=None):
-    df_raw_for_eval = df.copy() # 据え置き前提判定用の生データを確保
     if df.empty: return df, pd.DataFrame(), pd.DataFrame()
+
+    # 予測スキップ設定の店舗を除外する
+    shop_col_for_skip = '店名' if '店名' in df.columns else ('店舗名' if '店舗名' in df.columns else None)
+    if shop_col_for_skip and shop_hyperparams:
+        skip_shops = [s for s, hp in shop_hyperparams.items() if hp.get('skip_prediction', False)]
+        if skip_shops:
+            df = df[~df[shop_col_for_skip].isin(skip_shops)].copy()
+            if df.empty: return df, pd.DataFrame(), pd.DataFrame()
+
+    df_raw_for_eval = df.copy() # 据え置き前提判定用の生データを確保
 
     # --- AI処理のローカルキャッシュ機構 ---
     # 生データの状態（行数や最新日付）、予測対象日、AI設定から一意なハッシュを作成

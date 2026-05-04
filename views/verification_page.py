@@ -1375,6 +1375,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                             if best_c_params is None: best_c_params = current_hp
                             if best_k_params is None: best_k_params = current_hp
                             st.session_state["shop_hyperparams"][shop_name] = {
+                                'skip_prediction': current_hp.get('skip_prediction', False),
                                 'train_months': current_hp.get('train_months', 3), 
                                 'n_estimators': best_c_params['n_estimators'], 'learning_rate': best_c_params['learning_rate'],
                                 'num_leaves': best_c_params['num_leaves'], 'max_depth': best_c_params['max_depth'], 'min_child_samples': best_c_params['min_child_samples'],
@@ -1827,12 +1828,13 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
     if "shop_hyperparams" not in st.session_state:
         st.session_state["shop_hyperparams"] = {"デフォルト": {'train_months': 3, 'n_estimators': 300, 'learning_rate': 0.03, 'num_leaves': 15, 'max_depth': 4, 'min_child_samples': 50, 'reg_alpha': 0.0, 'reg_lambda': 0.0, 
                                                            'k_train_months': 6, 'k_n_estimators': 300, 'k_learning_rate': 0.03, 'k_num_leaves': 15, 'k_max_depth': 4, 'k_min_child_samples': 50, 'k_reg_alpha': 0.0, 'k_reg_lambda': 0.0,
-                                                           'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20}}
+                                                           'lstm_hidden_size': 64, 'lstm_lr': 0.001, 'lstm_epochs': 20, 'skip_prediction': False}}
         
     default_hp = st.session_state["shop_hyperparams"]["デフォルト"]
     current_hp = st.session_state["shop_hyperparams"].get(selected_shop, default_hp)
     
     with st.form(f"hp_form_{selected_shop}"):
+        skip_prediction = st.checkbox("🚫 この店舗のAI予測・分析をスキップする (除外する)", value=bool(current_hp.get('skip_prediction', False)), help="チェックを入れると、この店舗はAIの学習・予測対象から除外され、処理時間が短縮されます。")
         st.markdown("**🌳 LightGBM (メイン予測) モデル設定**")
         
         c_hp1, c_hp2 = st.columns(2)
@@ -1876,6 +1878,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
         
     if submitted:
         st.session_state["shop_hyperparams"][selected_shop] = {
+            'skip_prediction': skip_prediction,
             'train_months': hp_train_months, 'n_estimators': hp_n_estimators, 'learning_rate': hp_learning_rate,
             'num_leaves': hp_num_leaves, 'max_depth': hp_max_depth, 'min_child_samples': hp_min_child_samples,
             'reg_alpha': hp_reg_alpha, 'reg_lambda': hp_reg_lambda,
@@ -2358,6 +2361,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                 
                 current_hp = st.session_state["shop_hyperparams"].get(selected_shop, st.session_state["shop_hyperparams"].get("デフォルト", {}))
                 st.session_state["shop_hyperparams"][selected_shop] = {
+                    'skip_prediction': current_hp.get('skip_prediction', False),
                     'train_months': hp_train_months, 
                     'n_estimators': best_c_params['n_estimators'], 'learning_rate': best_c_params['learning_rate'],
                     'num_leaves': best_c_params['num_leaves'], 'max_depth': best_c_params['max_depth'], 'min_child_samples': best_c_params['min_child_samples'],
