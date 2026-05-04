@@ -36,7 +36,8 @@ def render_island_master_page(df_raw):
                             if '-' in part:
                                 try:
                                     s_str, e_str = part.split('-', 1)
-                                    registered_machines.update([str(m) for m in range(int(s_str), int(e_str) + 1)])
+                                s_val, e_val = int(s_str), int(e_str)
+                                registered_machines.update([str(m) for m in range(min(s_val, e_val), max(s_val, e_val) + 1)])
                                 except: pass
                             else:
                                 registered_machines.add(str(part))
@@ -44,8 +45,8 @@ def render_island_master_page(df_raw):
                         try:
                             s = int(i_row.get('開始台番号', 0))
                             e = int(i_row.get('終了台番号', 0))
-                            if s > 0 and e >= s:
-                                registered_machines.update([str(m) for m in range(s, e + 1)])
+                        if s > 0 and e > 0:
+                            registered_machines.update([str(m) for m in range(min(s, e), max(s, e) + 1)])
                         except: pass
 
         if input_shop and input_shop != "店舗を選択してください" and not df_raw.empty:

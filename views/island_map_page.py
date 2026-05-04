@@ -238,7 +238,8 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                     if '-' in part:
                         try:
                             s_str, e_str = part.split('-', 1)
-                            parsed_machines.extend(range(int(s_str), int(e_str) + 1))
+                            s_val, e_val = int(s_str), int(e_str)
+                            parsed_machines.extend(range(min(s_val, e_val), max(s_val, e_val) + 1))
                         except: pass
                     else:
                         try: parsed_machines.append(int(part))
@@ -247,7 +248,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 try:
                     s = int(r.get('開始台番号', 0))
                     e = int(r.get('終了台番号', 0))
-                    if s > 0 and e >= s: parsed_machines.extend(range(s, e + 1))
+                    if s > 0 and e > 0: parsed_machines.extend(range(min(s, e), max(s, e) + 1))
                 except: pass
         island_order = []
         for m in parsed_machines:
