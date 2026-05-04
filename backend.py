@@ -1266,7 +1266,7 @@ def _apply_island_features(df, df_island, shop_col):
     grp = df.groupby([shop_col, '機種名'])['台番号']
     df['is_corner'] = ((df['台番号'] == grp.transform('min')) | (df['台番号'] == grp.transform('max'))).astype(int)
     df['island_id'] = "Unknown"
-        df['is_corner_2'] = 0
+    df['is_corner_2'] = 0
 
     if df_island is not None and not df_island.empty:
         unique_machines = df[[shop_col, '台番号']].drop_duplicates()
