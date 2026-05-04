@@ -35,7 +35,7 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 
 # 🚨【重要】プログラム（計算式や特徴量など）を変更した際は、必ずここのバージョン番号をカウントアップしてください！
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
-APP_VERSION = "v4.64.0" 
+APP_VERSION = "v4.65.0" 
 
 def analyze_sueoki_and_change_triggers(df_train, shop_name, shop_col='店名'):
     from shop_trends import analyze_sueoki_and_change_triggers as _analyze
@@ -466,6 +466,105 @@ def load_daily_shop_scores():
             df['店舗台数'] = pd.to_numeric(df['店舗台数'], errors='coerce')
         return df
     except: return pd.DataFrame()
+
+def save_latest_ai_results(predict_df, feature_importances, target_date):
+    """最新の全台予測スコアと特徴量重要度を専用シートに上書き保存する（起動爆速化用）"""
+    try:
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        
+        # 1. latest_predictions の保存
+        try:
+            ws_pred = sh.worksheet('latest_predictions')
+        except gspread.exceptions.WorksheetNotFound:
+            ws_pred = sh.add_worksheet(title='latest_predictions', rows="1000", cols="8")
+            
+        header_pred = ['予測対象日', '店名', '台番号', 'prediction_score', 'sueoki_score', '予測差枚数', '根拠']
+        
+        if not predict_df.empty:
+            save_pred = predict_df.copy()
+            shop_col = '店名' if '店名' in save_pred.columns else ('店舗名' if '店舗名' in save_pred.columns else None)
+            if shop_col and shop_col != '店名':
+                save_pred = save_pred.rename(columns={shop_col: '店名'})
+                
+            date_str = pd.to_datetime(target_date).strftime('%Y-%m-%d')
+            save_pred['予測対象日'] = date_str
+            
+            for c in header_pred:
+                if c not in save_pred.columns:
+                    save_pred[c] = ''
+            
+            save_pred = save_pred[header_pred].fillna('')
+            pred_data = [header_pred] + save_pred.values.tolist()
+            ws_pred.clear()
+            try: ws_pred.update(values=pred_data, range_name='A1')
+            except TypeError:
+                try: ws_pred.update('A1', pred_data)
+                except Exception: ws_pred.update(pred_data)
+            
+        # 2. latest_importance の保存
+        try:
+            ws_imp = sh.worksheet('latest_importance')
+        except gspread.exceptions.WorksheetNotFound:
+            ws_imp = sh.add_worksheet(title='latest_importance', rows="1000", cols="6")
+            
+        header_imp = ['予測対象日', 'shop_name', 'category', 'feature', 'importance', 'correlation']
+        
+        if feature_importances is not None and not feature_importances.empty:
+            save_imp = feature_importances.copy()
+            save_imp['予測対象日'] = date_str
+            for c in header_imp:
+                if c not in save_imp.columns:
+                    save_imp[c] = ''
+            save_imp = save_imp[header_imp].fillna('')
+            imp_data = [header_imp] + save_imp.values.tolist()
+            ws_imp.clear()
+            try: ws_imp.update(values=imp_data, range_name='A1')
+            except TypeError:
+                try: ws_imp.update('A1', imp_data)
+                except Exception: ws_imp.update(imp_data)
+                
+    except Exception as e:
+        print(f"最新予測の保存エラー: {e}")
+
+def load_latest_ai_results(target_date):
+    """スプレッドシートから最新の全台予測結果を読み込む（起動爆速化用）"""
+    try:
+        date_str = pd.to_datetime(target_date).strftime('%Y-%m-%d')
+        gc = _get_gspread_client()
+        sh = gc.open_by_key(SPREADSHEET_KEY)
+        
+        df_pred = pd.DataFrame()
+        df_imp = pd.DataFrame()
+        
+        try:
+            ws_pred = sh.worksheet('latest_predictions')
+            pred_data = ws_pred.get_all_values()
+            if len(pred_data) > 1:
+                temp_pred = pd.DataFrame(pred_data[1:], columns=pred_data[0])
+                if '予測対象日' in temp_pred.columns and not temp_pred.empty:
+                    if temp_pred['予測対象日'].iloc[0] == date_str:
+                        temp_pred['prediction_score'] = pd.to_numeric(temp_pred['prediction_score'], errors='coerce').fillna(0.0)
+                        temp_pred['sueoki_score'] = pd.to_numeric(temp_pred['sueoki_score'], errors='coerce').fillna(0.0)
+                        temp_pred['予測差枚数'] = pd.to_numeric(temp_pred['予測差枚数'], errors='coerce').fillna(0).astype(int)
+                        df_pred = temp_pred
+        except Exception: pass
+            
+        try:
+            ws_imp = sh.worksheet('latest_importance')
+            imp_data = ws_imp.get_all_values()
+            if len(imp_data) > 1:
+                temp_imp = pd.DataFrame(imp_data[1:], columns=imp_data[0])
+                if '予測対象日' in temp_imp.columns and not temp_imp.empty:
+                    if temp_imp['予測対象日'].iloc[0] == date_str:
+                        temp_imp['importance'] = pd.to_numeric(temp_imp['importance'], errors='coerce').fillna(0.0)
+                        temp_imp['correlation'] = pd.to_numeric(temp_imp['correlation'], errors='coerce').fillna(0.0)
+                        df_imp = temp_imp
+        except Exception: pass
+            
+        return df_pred, df_imp
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame()
 
 def save_prediction_log(df):
     if df.empty:
@@ -2539,60 +2638,93 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
         else:
             max_date = predict_df['対象日付'].max()
             predict_df = predict_df[predict_df['対象日付'] == max_date]
+
+    # --- スプレッドシートからのキャッシュ(全台)読み込みによる爆速化 ---
+    # 既にバッチ等で計算済みの予測データがあれば、重い学習(train_models)を完全にスキップする
+    cached_pred, cached_imp = load_latest_ai_results(target_date)
+    is_skipped = False
+    
+    if not cached_pred.empty and not cached_imp.empty:
+        shop_col_name = '店名' if '店名' in predict_df.columns else ('店舗名' if '店舗名' in predict_df.columns else '店名')
+        cached_pred = cached_pred.rename(columns={'店名': shop_col_name})
         
-    # --- LSTMによる時系列「波」特徴量の追加 ---
-    if add_lstm_features is not None:
-        try:
-            lstm_hp = shop_hyperparams.get("デフォルト", {})
-            l_hidden = lstm_hp.get('lstm_hidden_size', 64)
-            l_lr = lstm_hp.get('lstm_lr', 0.001)
-            l_epochs = lstm_hp.get('lstm_epochs', 20)
-            train_df = add_lstm_features(train_df, shop_col=shop_col, seq_length=7, hidden_size=l_hidden, lr=l_lr, epochs=l_epochs)
-            predict_df = add_lstm_features(predict_df, shop_col=shop_col, seq_length=7, hidden_size=l_hidden, lr=l_lr, epochs=l_epochs)
-            if 'lstm_wave_score' not in features:
-                features.append('lstm_wave_score')
-        except Exception as e:
-            print(f"LSTM特徴量の追加に失敗しました: {e}")
-
-    if len(train_df) < 10:
-        return predict_df, train_df, pd.DataFrame()
-
-    # 4 & 5. モデル学習と推論 (店舗ごとのパラメータで独立して実行される)
-    predict_df, train_df, feature_importances = train_models(train_df, predict_df, features, shop_hyperparams)
-
-    # 6. 後処理 (スコア補正、根拠の自然言語生成)
-    predict_df, train_df = postprocess_predictions(predict_df, train_df)
-
-    if 'valid_play_mask' in train_df.columns:
-        train_df = train_df.drop(columns=['valid_play_mask'], errors='ignore')
+        predict_df['台番号'] = predict_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        cached_pred['台番号'] = cached_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
         
-    if 'valid_play_mask' in predict_df.columns:
-        predict_df = predict_df.drop(columns=['valid_play_mask'], errors='ignore')
+        cols_to_merge = [shop_col_name, '台番号', 'prediction_score', 'sueoki_score', '予測差枚数', '根拠']
+        
+        predict_df = pd.merge(
+            predict_df.drop(columns=['prediction_score', 'sueoki_score', '予測差枚数', '根拠'], errors='ignore'), 
+            cached_pred[cols_to_merge], 
+            on=[shop_col_name, '台番号'], 
+            how='left'
+        )
+        
+        predict_df['prediction_score'] = predict_df['prediction_score'].fillna(0.0)
+        predict_df['sueoki_score'] = predict_df['sueoki_score'].fillna(0.0)
+        predict_df['予測差枚数'] = predict_df['予測差枚数'].fillna(0).astype(int)
+        predict_df['根拠'] = predict_df['根拠'].fillna('')
+        
+        feature_importances = cached_imp
+        is_skipped = True
 
-    # --- 7. 据え置き前提判定の根本適用 (NOの日は sueoki_score を強制リセット) ---
-    if shop_col:
-        def apply_sueoki_premise_to_df(df_target):
-            if df_target.empty or 'sueoki_score' not in df_target.columns: return df_target
-            date_col_for_grp = 'next_date' if 'next_date' in df_target.columns else '対象日付'
+    if not is_skipped:
+        # --- LSTMによる時系列「波」特徴量の追加 ---
+        if add_lstm_features is not None:
+            try:
+                lstm_hp = shop_hyperparams.get("デフォルト", {})
+                l_hidden = lstm_hp.get('lstm_hidden_size', 64)
+                l_lr = lstm_hp.get('lstm_lr', 0.001)
+                l_epochs = lstm_hp.get('lstm_epochs', 20)
+                train_df = add_lstm_features(train_df, shop_col=shop_col, seq_length=7, hidden_size=l_hidden, lr=l_lr, epochs=l_epochs)
+                predict_df = add_lstm_features(predict_df, shop_col=shop_col, seq_length=7, hidden_size=l_hidden, lr=l_lr, epochs=l_epochs)
+                if 'lstm_wave_score' not in features:
+                    features.append('lstm_wave_score')
+            except Exception as e:
+                print(f"LSTM特徴量の追加に失敗しました: {e}")
+
+        if len(train_df) < 10:
+            return predict_df, train_df, pd.DataFrame()
+
+        # 4 & 5. モデル学習と推論 (店舗ごとのパラメータで独立して実行される)
+        predict_df, train_df, feature_importances = train_models(train_df, predict_df, features, shop_hyperparams)
+
+        # 6. 後処理 (スコア補正、根拠の自然言語生成)
+        predict_df, train_df = postprocess_predictions(predict_df, train_df)
+
+        if 'valid_play_mask' in train_df.columns:
+            train_df = train_df.drop(columns=['valid_play_mask'], errors='ignore')
             
-            for (shop, tgt_date), group in df_target.groupby([shop_col, date_col_for_grp]):
-                # その日より前の生データで判定
-                past_raw = df_raw_for_eval[(df_raw_for_eval[shop_col] == shop) & (df_raw_for_eval['対象日付'] < tgt_date)].copy()
-                premise, reason = evaluate_sueoki_premise(past_raw, tgt_date, _df_events)
-                
-                if premise == "NO":
-                    df_target.loc[group.index, 'sueoki_score'] = 0.0
-                    def add_no_sue_reason(r):
-                        orig = str(r.get('根拠', ''))
-                        if orig == 'nan': orig = ''
-                        new_r = f"【据え置き無効】{reason}"
-                        if orig and orig != '-': return orig + " " + new_r
-                        return new_r
-                    df_target.loc[group.index, '根拠'] = df_target.loc[group.index].apply(add_no_sue_reason, axis=1)
-            return df_target
+        if 'valid_play_mask' in predict_df.columns:
+            predict_df = predict_df.drop(columns=['valid_play_mask'], errors='ignore')
 
-        predict_df = apply_sueoki_premise_to_df(predict_df)
-        train_df = apply_sueoki_premise_to_df(train_df)
+        # --- 7. 据え置き前提判定の根本適用 (NOの日は sueoki_score を強制リセット) ---
+        if shop_col:
+            def apply_sueoki_premise_to_df(df_target):
+                if df_target.empty or 'sueoki_score' not in df_target.columns: return df_target
+                date_col_for_grp = 'next_date' if 'next_date' in df_target.columns else '対象日付'
+                
+                for (shop, tgt_date), group in df_target.groupby([shop_col, date_col_for_grp]):
+                    # その日より前の生データで判定
+                    past_raw = df_raw_for_eval[(df_raw_for_eval[shop_col] == shop) & (df_raw_for_eval['対象日付'] < tgt_date)].copy()
+                    premise, reason = evaluate_sueoki_premise(past_raw, tgt_date, _df_events)
+                    
+                    if premise == "NO":
+                        df_target.loc[group.index, 'sueoki_score'] = 0.0
+                        def add_no_sue_reason(r):
+                            orig = str(r.get('根拠', ''))
+                            if orig == 'nan': orig = ''
+                            new_r = f"【据え置き無効】{reason}"
+                            if orig and orig != '-': return orig + " " + new_r
+                            return new_r
+                        df_target.loc[group.index, '根拠'] = df_target.loc[group.index].apply(add_no_sue_reason, axis=1)
+                return df_target
+
+            predict_df = apply_sueoki_premise_to_df(predict_df)
+            train_df = apply_sueoki_premise_to_df(train_df)
+
+        # --- 処理の最後に計算結果をスプレッドシートに保存 (次回の爆速起動用) ---
+        save_latest_ai_results(predict_df, feature_importances, target_date)
 
     # --- 処理の最後に計算結果をキャッシュとして保存 ---
     try:
