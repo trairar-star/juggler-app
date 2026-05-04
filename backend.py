@@ -263,6 +263,8 @@ def load_data():
 
         # 前処理
         raw_df.columns = [str(c).strip() for c in raw_df.columns]
+        raw_df.columns = [re.sub(r'[",\[\]{}:]', '', c) for c in raw_df.columns]
+        raw_df = raw_df.loc[:, ~raw_df.columns.duplicated()]
         date_col = '対象日付'
         if date_col not in raw_df.columns: return pd.DataFrame()
         
@@ -285,6 +287,8 @@ def load_data():
                 history_df = pd.read_parquet(HISTORY_CACHE_FILE, engine='pyarrow')
                 # キャッシュデータの列名も最新仕様に統一
                 history_df = history_df.rename(columns=rename_map)
+                history_df.columns = [re.sub(r'[",\[\]{}:]', '', str(c)) for c in history_df.columns]
+                history_df = history_df.loc[:, ~history_df.columns.duplicated()]
                 # キャッシュ内のデータが古すぎる/新しすぎる場合を考慮し、確定済み範囲のみ残す
                 if date_col in history_df.columns:
                     history_df = history_df[history_df[date_col] < freeze_threshold]
@@ -415,6 +419,10 @@ def load_prediction_log():
         data = worksheet.get_all_values()
         if not data or len(data) < 2: return pd.DataFrame()
         df = pd.DataFrame(data[1:], columns=data[0])
+        
+        df.columns = [str(c).strip() for c in df.columns]
+        df.columns = [re.sub(r'[",\[\]{}:]', '', c) for c in df.columns]
+        df = df.loc[:, ~df.columns.duplicated()]
         
         # 古いカラム名「予想設定5以上確率」との互換性維持
         if '予想設定5以上確率' in df.columns and 'prediction_score' not in df.columns:
@@ -2410,6 +2418,9 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
 
     # 一時的に作成したフラグは削除
     df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'spec_reg1', 'BIG分母', 'total_prob', 'z_score_reg', 'next_z_score_reg'], errors='ignore')
+
+    df = df.rename(columns=lambda x: re.sub(r'[",\[\]{}:]', '', str(x)))
+    df = df.loc[:, ~df.columns.duplicated()]
 
     features = [f for f in BASE_FEATURES if f in df.columns]
 
