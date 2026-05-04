@@ -434,7 +434,11 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
 
                         # 狙い目判定の追加
                         if 'prediction_score' in pred_df_day.columns and 'sueoki_score' in pred_df_day.columns:
-                            pred_df_day['狙い目'] = pred_df_day.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
+                            pred_df_day['狙い目'] = np.where(
+                                pd.to_numeric(pred_df_day['prediction_score'], errors='coerce').fillna(0.0) >= 
+                                pd.to_numeric(pred_df_day['sueoki_score'], errors='coerce').fillna(0.0), 
+                                "🚀変更", "🔁据置"
+                            )
                         else:
                             pred_df_day['狙い目'] = "🚀変更"
 

@@ -854,7 +854,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             temp_df_hot = df.copy()
             if 'sueoki_score' in temp_df_hot.columns:
                 temp_df_hot['max_score'] = temp_df_hot[['prediction_score', 'sueoki_score']].max(axis=1)
-                temp_df_hot['狙い目'] = temp_df_hot.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
+                temp_df_hot['狙い目'] = np.where(
+                    pd.to_numeric(temp_df_hot['prediction_score'], errors='coerce').fillna(0.0) >= 
+                    pd.to_numeric(temp_df_hot['sueoki_score'], errors='coerce').fillna(0.0), 
+                    "🚀変更", "🔁据置"
+                )
             else:
                 temp_df_hot['max_score'] = temp_df_hot['prediction_score']
                 temp_df_hot['狙い目'] = "🚀変更"
@@ -906,7 +910,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
             
                 # 狙い目の判定
                 if 'prediction_score' in df_sorted.columns and 'sueoki_score' in df_sorted.columns:
-                    df_sorted['狙い目'] = df_sorted.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
+                    df_sorted['狙い目'] = np.where(
+                        pd.to_numeric(df_sorted['prediction_score'], errors='coerce').fillna(0.0) >= 
+                        pd.to_numeric(df_sorted['sueoki_score'], errors='coerce').fillna(0.0), 
+                        "🚀変更", "🔁据置"
+                    )
                 else:
                     df_sorted['狙い目'] = "🚀変更"
             

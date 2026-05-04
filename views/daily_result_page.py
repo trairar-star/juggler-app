@@ -83,7 +83,11 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
     if 'prediction_score' in display_df.columns:
         if 'sueoki_score' in display_df.columns:
             display_df['max_score'] = display_df[['prediction_score', 'sueoki_score']].max(axis=1)
-            display_df['狙い目'] = display_df.apply(lambda r: "🚀変更" if pd.notna(r.get('prediction_score')) and pd.notna(r.get('sueoki_score')) and r['prediction_score'] >= r['sueoki_score'] else "🔁据置", axis=1)
+            display_df['狙い目'] = np.where(
+                pd.to_numeric(display_df['prediction_score'], errors='coerce').fillna(0.0) >= 
+                pd.to_numeric(display_df['sueoki_score'], errors='coerce').fillna(0.0), 
+                "🚀変更", "🔁据置"
+            )
         else:
             display_df['max_score'] = display_df['prediction_score']
             display_df['狙い目'] = "🚀変更"
