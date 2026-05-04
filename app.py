@@ -213,6 +213,14 @@ def main():
         st.cache_data.clear()
         st.rerun()
 
+    selected_shop_for_refresh = st.session_state.get("global_selected_shop", "全て")
+    if selected_shop_for_refresh != "全て" and selected_shop_for_refresh != "店舗を選択してください":
+        if st.sidebar.button(f"⚡ {selected_shop_for_refresh} のみ再分析・計算", help="選択中の店舗のAI予測だけを強制的に再計算します。AI設定を変更した直後など、早く反映させたい場合に便利です。"):
+            backend.clear_local_cache()
+            backend.clear_spreadsheet_cache_for_shop(selected_shop_for_refresh)
+            st.cache_data.clear()
+            st.rerun()
+
     if st.sidebar.button("⚠️ 全データ強制再読み込み (時間かかります)"):
         backend.clear_local_cache()
         backend.clear_spreadsheet_cache()

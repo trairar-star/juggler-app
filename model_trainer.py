@@ -4,7 +4,7 @@ import lightgbm as lgb # type: ignore
 from shop_trends import diagnose_allocation_types
 from config import MACHINE_SPECS, KEEP_ALLOWED_FEATURES
 
-def train_models(train_df, predict_df, features, shop_hyperparams):
+def train_models(train_df, predict_df, features, shop_hyperparams, target_shops=None):
     """
     LightGBMを用いて設定判別モデルを学習し、予測結果と特徴量重要度を返す
     """
@@ -26,14 +26,16 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
 
     # 予測結果格納用の列を初期化
     if not predict_df.empty:
-        predict_df['予測差枚数'] = np.nan
-        predict_df['prediction_score'] = np.nan
-        predict_df['sueoki_score'] = np.nan
-        predict_df['ai_version'] = ""
+        if target_shops is None:
+            predict_df['予測差枚数'] = np.nan
+            predict_df['prediction_score'] = np.nan
+            predict_df['sueoki_score'] = np.nan
+            predict_df['ai_version'] = ""
     if not train_df.empty:
-        train_df['予測差枚数'] = np.nan
-        train_df['prediction_score'] = np.nan
-        train_df['sueoki_score'] = np.nan
+        if target_shops is None:
+            train_df['予測差枚数'] = np.nan
+            train_df['prediction_score'] = np.nan
+            train_df['sueoki_score'] = np.nan
     
     feature_importances_list = []
 
@@ -131,10 +133,12 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
             model.fit(X_cls, y_cls, sample_weight=sw_cls, categorical_feature=current_cat_features)
             
             if not p_df.empty:
-                p_df['予測差枚数'] = reg_model.predict(p_df[current_features]).astype(int)
+                common_pred = reg_model.predict(p_df[current_features]).astype(int)
                 X_pred_stacked = p_df[current_features].copy()
-                X_pred_stacked['predicted_diff'] = p_df['予測差枚数']
-                p_df[target_col] = model.predict_proba(X_pred_stacked)[:, 1]
+                X_pred_stacked['predicted_diff'] = common_pred
+                common_proba = model.predict_proba(X_pred_stacked)[:, 1]
+                p_df['予測差枚数'] = common_pred
+                p_df[target_col] = common_proba
                 p_df['ai_version'] = f"{version_prefix}(共通+ST)"
             if not t_df.empty:
                 t_df['予測差枚数'] = reg_model.predict(t_df[current_features]).astype(int)
@@ -154,6 +158,8 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
         # --- 店舗個別モデルの学習と推論の上書き ---
         if shop_col:
             for shop in t_df[shop_col].unique():
+                if target_shops is not None and shop not in target_shops:
+                    continue # 再計算対象でなければスキップ
                 # 単体型（点配分）の店舗の場合、並びや島に関する特徴量をAIに無視させる
                 shop_features = current_features.copy()
                 if alloc_types.get(shop, {}).get("is_point", False):
@@ -248,9 +254,16 @@ def train_models(train_df, predict_df, features, shop_hyperparams):
 
         # ループの最後で元のDataFrameに結果をマージ
         if not p_df.empty:
-            predict_df.loc[p_df.index, '予測差枚数'] = p_df['予測差枚数']
-            predict_df.loc[p_df.index, target_col] = p_df[target_col]
-            predict_df.loc[p_df.index, 'ai_version'] = p_df['ai_version']
+            if target_shops is not None:
+                update_idx = p_df[p_df[shop_col].isin(target_shops)].index
+                if len(update_idx) > 0:
+                    predict_df.loc[update_idx, '予測差枚数'] = p_df.loc[update_idx, '予測差枚数']
+                    predict_df.loc[update_idx, target_col] = p_df.loc[update_idx, target_col]
+                    predict_df.loc[update_idx, 'ai_version'] = p_df.loc[update_idx, 'ai_version']
+            else:
+                predict_df.loc[p_df.index, '予測差枚数'] = p_df['予測差枚数']
+                predict_df.loc[p_df.index, target_col] = p_df[target_col]
+                predict_df.loc[p_df.index, 'ai_version'] = p_df['ai_version']
             
         if not t_df.empty:
             train_df.loc[t_df.index, '予測差枚数'] = t_df['予測差枚数']

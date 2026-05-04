@@ -1226,175 +1226,6 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                 diag_trend = {"status": "➖", "title": "狙い目の傾向", "msg": "変更または据え置きの有効稼働数が少ないため、どちらが優勢か判定できません。"}
 
             st.divider()
-            with st.expander("🚀 全店舗一括 自動チューニング", expanded=False):
-                st.info("💡 登録されているすべての店舗に対して、自動チューニングを順番に実行します。AIの根本的な計算ロジック（純粋確率化など）がアップデートされた際などに、全店舗の設定を一気に最適化し直すのに便利です。店舗数によっては完了まで数分かかる場合があります。")
-                tune_trials = st.number_input("✨ 自動チューニングの探索回数 (1店舗あたり)", min_value=5, max_value=100, value=10, step=5, help="回数を増やすほどより高精度なパラメータを見つけやすくなりますが、処理時間が長くなります。（目安: 10回で約1分、30回で約3分）", key="tune_trials_all_shops")
-                if st.button("⚠️ 全店舗を一括でチューニングする", type="primary"):
-                    all_shops = df_verify[shop_col].dropna().unique().tolist()
-                    if not all_shops:
-                        st.warning("チューニング対象の店舗がありません。")
-                    else:
-                        try:
-                            import optuna
-                        except ImportError:
-                            st.error("Optunaがインストールされていません。ターミナル等で `pip install optuna` を実行してください。")
-                            st.stop()
-                        
-                        actual_features = [f for f in BASE_FEATURES if f in df_verify.columns]
-                        cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
-                        
-                        keep_allowed_features = [
-                            '累計ゲーム', 'REG確率', 'BIG確率', '差枚', 'reg_ratio',
-                            'prev_bonus_balance', 'prev_unlucky_gap',
-                            'is_prev_high_reg', 'is_high_reg_plus_diff', 'is_low_reg_plus_diff'
-                        ]
-                        keep_features = [f for f in actual_features if f in keep_allowed_features]
-                        change_features = actual_features.copy()
-                        
-                        from shop_trends import diagnose_allocation_types
-                        from config import MACHINE_SPECS
-                        alloc_types = diagnose_allocation_types(df_verify, shop_col, MACHINE_SPECS)
-                        
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        optuna.logging.set_verbosity(optuna.logging.WARNING)
-                        
-                        for shop_idx, shop_name in enumerate(all_shops):
-                            is_point = alloc_types.get(shop_name, {}).get("is_point", False)
-                            status_text.text(f"[{shop_idx+1}/{len(all_shops)}] {shop_name} の最適なパラメータをOptunaで探索中...")
-                            best_c_params = None
-                            best_k_params = None
-                            shop_df = df_verify[df_verify[shop_col] == shop_name].copy()
-                            if len(shop_df) < 150:
-                                continue
-                            
-                            shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
-                            shop_df = shop_df.sort_values('対象日付')
-                            max_date = shop_df['対象日付'].max()
-                            cutoff_date = max_date - pd.Timedelta(days=30)
-                            
-                            train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
-                            test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
-                            
-                            for mode in ['change', 'keep']:
-                                target_val = 0 if mode == 'change' else 1
-                                mode_train = train_data[train_data['is_prev_high_reg'] == target_val].copy()
-                                mode_test = test_data[test_data['is_prev_high_reg'] == target_val].copy()
-                                
-                                if len(mode_train) < 30 or len(mode_test) < 5:
-                                    continue
-                                
-                                current_features = change_features if mode == 'change' else keep_features
-                                if is_point:
-                                    ignore_features = [
-                                        'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
-                                        'past_island_reg_prob', 'is_main_island', 'is_wall_island'
-                                    ]
-                                    current_features = [f for f in current_features if f not in ignore_features]
-                                    
-                                current_cat_features = [f for f in cat_features if f in current_features]
-                                
-                                X_train, y_train = mode_train[current_features], mode_train['target']
-                                X_test, y_test = mode_test[current_features], mode_test['target']
-                                max_date = mode_train['対象日付'].max()
-                                days_diff = (max_date - mode_train['対象日付']).dt.days
-                                sample_weights = 0.995 ** days_diff
-                                
-                                def objective_mode(trial):
-                                    params = {
-                                        'n_estimators': trial.suggest_int('n_estimators', 100, 600, step=50),
-                                        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.05, log=True),
-                                        'max_depth': trial.suggest_int('max_depth', 3, 6),
-                                        'min_child_samples': trial.suggest_int('min_child_samples', 20, 80, step=10),
-                                        'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 2.0),
-                                        'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 2.0)
-                                    }
-                                    max_leaves = min(127, (2 ** params['max_depth']) - 1)
-                                    params['num_leaves'] = trial.suggest_int('num_leaves', min(7, max_leaves), max_leaves)
-                                    
-                                    try:
-                                        reg_model = lgb.LGBMRegressor(random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                                        reg_model.fit(X_train, mode_train['next_diff'], sample_weight=sample_weights, categorical_feature=current_cat_features)
-                                        
-                                        X_train_st = X_train.copy()
-                                        X_train_st['predicted_diff'] = reg_model.predict(X_train)
-                                        
-                                        model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.8)
-                                        model.fit(X_train_st, y_train, sample_weight=sample_weights, categorical_feature=current_cat_features)
-                                        
-                                        X_test_st = X_test.copy()
-                                        X_test_st['predicted_diff'] = reg_model.predict(X_test)
-                                        
-                                        preds = model.predict_proba(X_test_st)[:, 1]
-                                        test_eval = mode_test.copy()
-                                        test_eval['pred_score'] = preds
-                                        
-                                        if test_eval['pred_score'].nunique() <= 1:
-                                            return -1.0
-                                        
-                                        test_eval['valid_play'] = get_valid_play_mask(test_eval['next_累計ゲーム'], test_eval['next_diff'])
-                                        test_eval['valid_win'] = test_eval['valid_play'] & (pd.to_numeric(test_eval['next_diff'], errors='coerce').fillna(0) > 0)
-                                        test_eval['valid_high'] = (pd.to_numeric(test_eval['next_累計ゲーム'], errors='coerce').fillna(0) >= 3000) & (test_eval['target'] == 1)
-                                        
-                                        threshold = test_eval['pred_score'].quantile(0.85)
-                                        target_df = test_eval[test_eval['pred_score'] >= threshold]
-                                        
-                                        if len(target_df) == 0: 
-                                            return -1.0
-                                            
-                                        valid_target = target_df[target_df['valid_play']]
-                                        if len(valid_target) == 0:
-                                            return -1.0
-                                            
-                                        win_rate = valid_target['valid_win'].mean()
-                                        high_rate = valid_target['valid_high'].mean()
-                                        avg_diff = valid_target['next_diff'].mean()
-                                        
-                                        base_valid = test_eval[test_eval['valid_play']]
-                                        base_win_rate = base_valid['valid_win'].mean() if len(base_valid) > 0 else 0
-                                        win_lift = max(0, win_rate - base_win_rate)
-                                        
-                                        score = (win_rate * 100) + (win_lift * 200) + (avg_diff / 10)
-                                        return score
-                                    except Exception:
-                                        return -1.0
-
-                                study = optuna.create_study(direction='maximize')
-                                study.optimize(objective_mode, n_trials=tune_trials)
-                                
-                                if mode == 'change': 
-                                    best_c_params = study.best_params
-                                    max_leaves_best = min(127, (2 ** best_c_params['max_depth']) - 1)
-                                    if 'num_leaves' not in best_c_params: best_c_params['num_leaves'] = study.best_trial.params.get('num_leaves', max_leaves_best)
-                                else: 
-                                    best_k_params = study.best_params
-                                    max_leaves_best = min(127, (2 ** best_k_params['max_depth']) - 1)
-                                    if 'num_leaves' not in best_k_params: best_k_params['num_leaves'] = study.best_trial.params.get('num_leaves', max_leaves_best)
-                                
-                            current_hp = st.session_state["shop_hyperparams"].get(shop_name, st.session_state["shop_hyperparams"].get("デフォルト", {}))
-                            if best_c_params is None: best_c_params = current_hp
-                            if best_k_params is None: best_k_params = current_hp
-                            st.session_state["shop_hyperparams"][shop_name] = {
-                                'skip_prediction': current_hp.get('skip_prediction', False),
-                                'train_months': current_hp.get('train_months', 3), 
-                                'n_estimators': best_c_params['n_estimators'], 'learning_rate': best_c_params['learning_rate'],
-                                'num_leaves': best_c_params['num_leaves'], 'max_depth': best_c_params['max_depth'], 'min_child_samples': best_c_params['min_child_samples'],
-                                'reg_alpha': best_c_params.get('reg_alpha', 0.0), 'reg_lambda': best_c_params.get('reg_lambda', 0.0),
-                                'k_n_estimators': best_k_params['n_estimators'], 'k_learning_rate': best_k_params['learning_rate'],
-                                'k_num_leaves': best_k_params['num_leaves'], 'k_max_depth': best_k_params['max_depth'], 'k_min_child_samples': best_k_params['min_child_samples'],
-                                'k_reg_alpha': best_k_params.get('reg_alpha', 0.0), 'k_reg_lambda': best_k_params.get('reg_lambda', 0.0),
-                                'lstm_hidden_size': current_hp.get('lstm_hidden_size', 64),
-                                'lstm_lr': current_hp.get('lstm_lr', 0.001),
-                                'lstm_epochs': current_hp.get('lstm_epochs', 20)
-                            }
-                            progress_bar.progress((shop_idx + 1) / len(all_shops))
-                            
-                        backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-                        status_text.text("✅ 全店舗のOptunaチューニングが完了しました！")
-                        st.toast("✅ 全店舗のAIパラメータを最適化しました！")
-                        st.rerun()
-
-            st.divider()
             with st.expander("🤖 総合原因分析 (AIの自己診断レポート)", expanded=True):
                 st.markdown("精度検証の結果から、予測がうまくいっているか、あるいは**何が原因で精度が落ちているか**を総合的に診断します。")
                 
@@ -1894,14 +1725,14 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             st.session_state["shop_hyperparams"]["デフォルト"]['lstm_epochs'] = hp_lstm_epochs
             
         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-        backend.clear_spreadsheet_cache()
+        backend.clear_spreadsheet_cache_for_shop(selected_shop)
         st.rerun()
         
     if reset_btn:
         if selected_shop in st.session_state["shop_hyperparams"]:
             del st.session_state["shop_hyperparams"][selected_shop]
             backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-            backend.clear_spreadsheet_cache()
+            backend.clear_spreadsheet_cache_for_shop(selected_shop)
             st.rerun()
             
     if test_btn:
@@ -2377,7 +2208,7 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                     'lstm_epochs': current_hp.get('lstm_epochs', 20)
                 }
                 backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
-                backend.clear_spreadsheet_cache()
+                backend.clear_spreadsheet_cache_for_shop(selected_shop)
                 st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")
                 st.rerun()
 
