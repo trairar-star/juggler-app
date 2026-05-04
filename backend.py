@@ -1314,6 +1314,7 @@ def _apply_island_features(df, df_island, shop_col):
             m_num = row['台番号']
             i_id = "Unknown"
             is_cor = 0
+            is_cor_2 = 0
             is_main_cor = 0
             is_main_isl = 0
             is_wall_isl = 0
@@ -1596,6 +1597,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         grp = df.groupby([shop_col, '機種名'])['台番号']
         df['is_corner'] = ((df['台番号'] == grp.transform('min')) | (df['台番号'] == grp.transform('max'))).astype(int)
         df['island_id'] = "Unknown"
+        df['is_corner_2'] = 0
 
         # 島マスターの適用
         if df_island is not None and not df_island.empty:
