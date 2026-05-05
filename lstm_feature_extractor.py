@@ -61,6 +61,8 @@ def add_lstm_features(df, shop_col='店名', seq_length=7, hidden_size=64, lr=0.
     
     # 欠損値や無限大の処理と正規化 (簡易的なMinMaxスケーリング)
     df_scaled = df.copy()
+    df_scaled['_orig_index'] = df_scaled.index  # ★元のインデックスを記憶しておく
+    
     for col in time_series_features:
         if col in df_scaled.columns:
             df_scaled[col] = df_scaled[col].fillna(0)
@@ -87,7 +89,7 @@ def add_lstm_features(df, shop_col='店名', seq_length=7, hidden_size=64, lr=0.
         group_vals = group[scaled_features].values
         # ターゲットは backend.py で定義された 'target' カラムを使用
         group_targets = group['target'].values if 'target' in group.columns else np.zeros(len(group))
-        group_indices = group.index.values
+        group_indices = group['_orig_index'].values  # ★記憶しておいたインデックスを使う
         
         # シーケンスの作成 (スライディングウィンドウ)
         for i in range(len(group)):
