@@ -47,6 +47,10 @@ def main():
         if shop_hyperparams[shop].get('lstm_epochs', 20) > 5:
             shop_hyperparams[shop]['lstm_epochs'] = 5
             
+    print("🧹 既存の予測キャッシュをクリアしています（強制再計算）...")
+    sys.stdout.flush()
+    backend.clear_spreadsheet_cache()
+
     print(f"2. {target_date} の予測を実行中... (店舗数が多い場合、数十分かかる場合があります)")
     df_pred, df_train, df_importance = backend.run_analysis(
         df_raw, 
