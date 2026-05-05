@@ -2727,6 +2727,7 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
         # --- LSTMによる時系列「波」特徴量の追加 ---
         if add_lstm_features is not None:
             try:
+                print("  -> LSTM(波読み)モデルの学習と特徴量生成を実行中...")
                 lstm_hp = shop_hyperparams.get("デフォルト", {})
                 l_hidden = lstm_hp.get('lstm_hidden_size', 64)
                 l_lr = lstm_hp.get('lstm_lr', 0.001)
@@ -2749,18 +2750,30 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
         if target_shops_for_training is not None and feature_importances is not None and not feature_importances.empty:
             shop_prefix_list = tuple([f"{s}(" for s in target_shops_for_training])
             filtered_imp = feature_importances[~feature_importances['shop_name'].str.startswith(shop_prefix_list)]
-            feature_importances = pd.concat([filtered_imp, new_feature_importances], ignore_index=True)
+            # 共通モデルの重複登録を防ぐため、新しい重要度からは対象店舗のものだけを取り出す
+            filtered_new_imp = new_feature_importances[new_feature_importances['shop_name'].str.startswith(shop_prefix_list)]
+            feature_importances = pd.concat([filtered_imp, filtered_new_imp], ignore_index=True)
         else:
             feature_importances = new_feature_importances
 
         # 6. 後処理 (スコア補正、根拠の自然言語生成)
         if target_shops_for_training is not None:
-            recalc_mask = predict_df[shop_col_name].isin(target_shops_for_training)
-            recalc_pred_df = predict_df[recalc_mask].copy()
-            cached_pred_df = predict_df[~recalc_mask].copy()
+            recalc_mask_p = predict_df[shop_col_name].isin(target_shops_for_training)
+            recalc_pred_df = predict_df[recalc_mask_p].copy()
+            cached_pred_df = predict_df[~recalc_mask_p].copy()
             
-            recalc_pred_df, train_df = postprocess_predictions(recalc_pred_df, train_df)
+            recalc_mask_t = train_df[shop_col_name].isin(target_shops_for_training)
+            recalc_train_df = train_df[recalc_mask_t].copy()
+            cached_train_df = train_df[~recalc_mask_t].copy()
+            
+            # 対象外店舗のキャッシュ側でのエラー防止
+            if 'prediction_score' not in cached_train_df.columns:
+                for c in ['prediction_score', 'sueoki_score']: cached_train_df[c] = 0.0
+                cached_train_df['予測差枚数'] = 0
+            
+            recalc_pred_df, recalc_train_df = postprocess_predictions(recalc_pred_df, recalc_train_df)
             predict_df = pd.concat([cached_pred_df, recalc_pred_df]).sort_index()
+            train_df = pd.concat([cached_train_df, recalc_train_df]).sort_index()
         else:
             predict_df, train_df = postprocess_predictions(predict_df, train_df)
 
@@ -2794,7 +2807,7 @@ def run_analysis(df, _df_events=None, _df_island=None, shop_hyperparams=None, ta
                 return df_target
 
             predict_df = apply_sueoki_premise_to_df(predict_df, target_shops=target_shops_for_training)
-            train_df = apply_sueoki_premise_to_df(train_df, target_shops=None)
+            train_df = apply_sueoki_premise_to_df(train_df, target_shops=target_shops_for_training)
 
         # --- 処理の最後に計算結果をスプレッドシートに保存 (次回の爆速起動用) ---
         save_latest_ai_results(predict_df, feature_importances, target_date)

@@ -25,17 +25,15 @@ def train_models(train_df, predict_df, features, shop_hyperparams, target_shops=
     cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in features]
 
     # 予測結果格納用の列を初期化
-    if not predict_df.empty:
-        if target_shops is None:
-            predict_df['予測差枚数'] = np.nan
-            predict_df['prediction_score'] = np.nan
-            predict_df['sueoki_score'] = np.nan
-            predict_df['ai_version'] = ""
-    if not train_df.empty:
-        if target_shops is None:
-            train_df['予測差枚数'] = np.nan
-            train_df['prediction_score'] = np.nan
-            train_df['sueoki_score'] = np.nan
+    if not predict_df.empty and '予測差枚数' not in predict_df.columns:
+        predict_df['予測差枚数'] = np.nan
+        predict_df['prediction_score'] = np.nan
+        predict_df['sueoki_score'] = np.nan
+        predict_df['ai_version'] = ""
+    if not train_df.empty and '予測差枚数' not in train_df.columns:
+        train_df['予測差枚数'] = np.nan
+        train_df['prediction_score'] = np.nan
+        train_df['sueoki_score'] = np.nan
     
     feature_importances_list = []
 
@@ -73,12 +71,17 @@ def train_models(train_df, predict_df, features, shop_hyperparams, target_shops=
         current_cat_features = [f for f in cat_features if f in current_features]
 
         # 共通モデル用にデフォルトの学習期間で絞り込んだデータを作成
-        if '対象日付' in t_df.columns and not t_df.empty:
-            max_d = t_df['対象日付'].max()
-            cutoff = max_d - pd.DateOffset(months=default_t_m)
-            train_df_common = t_df[t_df['対象日付'] >= cutoff].copy()
+        if target_shops is not None:
+            t_df_common_base = t_df[t_df[shop_col].isin(target_shops)].copy()
         else:
-            train_df_common = t_df.copy()
+            t_df_common_base = t_df.copy()
+            
+        if '対象日付' in t_df_common_base.columns and not t_df_common_base.empty:
+            max_d = t_df_common_base['対象日付'].max()
+            cutoff = max_d - pd.DateOffset(months=default_t_m)
+            train_df_common = t_df_common_base[t_df_common_base['対象日付'] >= cutoff].copy()
+        else:
+            train_df_common = t_df_common_base.copy()
             
         if train_df_common.empty:
             continue
@@ -157,9 +160,11 @@ def train_models(train_df, predict_df, features, shop_hyperparams, target_shops=
         
         # --- 店舗個別モデルの学習と推論の上書き ---
         if shop_col:
-            for shop in t_df[shop_col].unique():
+            unique_shops = t_df[shop_col].unique()
+            for idx, shop in enumerate(unique_shops):
                 if target_shops is not None and shop not in target_shops:
                     continue # 再計算対象でなければスキップ
+                print(f"    [{idx+1}/{len(unique_shops)}] {shop} の個別モデル({mode_label})を学習中...")
                 # 単体型（点配分）の店舗の場合、並びや島に関する特徴量をAIに無視させる
                 shop_features = current_features.copy()
                 if alloc_types.get(shop, {}).get("is_point", False):

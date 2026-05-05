@@ -1,3 +1,11 @@
+import os
+# PyTorchやLightGBMがスレッドを作りすぎてフリーズするのを防ぐ設定
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
+
 import streamlit as st
 import pandas as pd
 import backend
@@ -26,7 +34,12 @@ def main():
     now = datetime.datetime.now(jst)
     target_date = now.date()
     
-    print(f"2. {target_date} の予測を実行中...")
+    print("🔧 バッチ実行環境用のパラメータ調整（LSTMの過負荷・フリーズ防止）を適用します...")
+    for shop in shop_hyperparams.keys():
+        if shop_hyperparams[shop].get('lstm_epochs', 20) > 5:
+            shop_hyperparams[shop]['lstm_epochs'] = 5
+            
+    print(f"2. {target_date} の予測を実行中... (店舗数が多い場合、数十分かかる場合があります)")
     df_pred, df_train, df_importance = backend.run_analysis(
         df_raw, 
         _df_events=df_events, 
@@ -48,4 +61,9 @@ def main():
     os._exit(0)
 
 if __name__ == "__main__":
+    try:
+        import torch
+        torch.set_num_threads(2) # PyTorchのスレッド競合(フリーズ)を物理的にブロック
+    except ImportError:
+        pass
     main()
