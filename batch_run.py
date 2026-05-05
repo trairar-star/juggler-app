@@ -6,15 +6,20 @@ os.environ["MKL_NUM_THREADS"] = "2"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "2"
 os.environ["NUMEXPR_NUM_THREADS"] = "2"
 
-import streamlit as st
 import pandas as pd
-import backend
 import datetime
 import os
 import time
 
-st.title("バッチ分析実行中...")
-st.text("この画面はGitHub Actions等での自動実行用です。")
+# Streamlitのアプリ画面外で実行した際のエラーを防ぐための「おまじない」
+import streamlit as st
+st.warning = lambda *args, **kwargs: print("[WARNING]", *args)
+st.error = lambda *args, **kwargs: print("[ERROR]", *args)
+st.success = lambda *args, **kwargs: print("[SUCCESS]", *args)
+st.info = lambda *args, **kwargs: print("[INFO]", *args)
+st.caption = lambda *args, **kwargs: print("[CAPTION]", *args)
+
+import backend
 
 def main():
     print("=== バッチ分析開始 ===")

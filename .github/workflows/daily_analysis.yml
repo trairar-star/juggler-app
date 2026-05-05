@@ -38,4 +38,4 @@ jobs:
     # 5. バッチ実行スクリプトを起動
     - name: Run Batch Analysis
       run: |
-        streamlit run batch_run.py --server.headless true
+        python batch_run.py
