@@ -279,66 +279,99 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
                     
                     # 各AI順位ごとの通算実績
                     with st.expander("📊 AI順位ごとの通算成績", expanded=False):
-                        # 勝率計算用のフラグを追加
-                        act_g = pd.to_numeric(match_df['結果_累計ゲーム'], errors='coerce').fillna(0)
-                        act_diff = pd.to_numeric(match_df['差枚_actual'], errors='coerce').fillna(0)
-                        match_df['valid_play'] = get_valid_play_mask(act_g, act_diff)
-                        match_df['is_win'] = match_df['valid_play'] & (act_diff > 0)
-                        match_df['valid_差枚_actual'] = np.where(match_df['valid_play'], match_df['差枚_actual'], np.nan)
-                        
-                        rank_stats = match_df.groupby('ai_daily_rank').agg(
-                            検証台数=('台番号', 'count'),
-                            有効稼働数=('valid_play', 'sum'),
-                            勝数=('is_win', 'sum'),
-                            合計差枚=('差枚_actual', 'sum'),
-                            平均差枚=('valid_差枚_actual', 'mean'),
-                            トップ3獲得数=('is_top3', 'sum'),
-                            平均期待度=(target_score_col, 'mean')
-                        ).reset_index()
-                        
-                        rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, (rank_stats['勝数'] / rank_stats['有効稼働数']) * 100, 0.0)
-                        rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
-                        rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(int)
-                        rank_stats = rank_stats.sort_values('ai_daily_rank')
-                        
-                        # 集計行の計算と追加
-                        total_count = rank_stats['検証台数'].sum()
-                        total_valid = rank_stats['有効稼働数'].sum()
-                        total_win = rank_stats['勝数'].sum()
-                        total_diff = rank_stats['合計差枚'].sum()
-                        total_top3 = rank_stats['トップ3獲得数'].sum()
-                        avg_diff = total_diff / total_valid if total_valid > 0 else 0
-                        total_win_rate = (total_win / total_valid) * 100 if total_valid > 0 else 0.0
-                        total_avg_score = match_df[target_score_col].mean() * 100 if not match_df.empty else 0.0
-                        
-                        rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(str) + "位"
-                        total_row = pd.DataFrame([{
-                            'ai_daily_rank': '合計/平均',
-                            '平均期待度': total_avg_score,
-                            '検証台数': total_count,
-                            '有効稼働数': total_valid,
-                            '勝率': total_win_rate,
-                            '合計差枚': total_diff,
-                            '平均差枚': avg_diff,
-                            'トップ3獲得数': total_top3
-                        }])
-                        rank_stats = pd.concat([rank_stats, total_row], ignore_index=True)
-                        
-                        st.dataframe(
-                            rank_stats[['ai_daily_rank', '平均期待度', '検証台数', '有効稼働数', '勝率', '合計差枚', '平均差枚', 'トップ3獲得数']],
-                            column_config={
-                                "ai_daily_rank": st.column_config.TextColumn("AI予測順位"),
-                                "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
-                                "検証台数": st.column_config.NumberColumn("台数"),
-                                "有効稼働数": st.column_config.NumberColumn("有効稼働"),
-                                "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
-                                "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d 枚"),
-                                "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
-                                "トップ3獲得数": st.column_config.NumberColumn("Top3的中", format="%d 回"),
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
+                        def render_rank_stats(score_col, label):
+                            tmp_pred_df = base_eval_df.copy()
+                            if 'max_score' not in tmp_pred_df.columns:
+                                tmp_pred_df['max_score'] = tmp_pred_df[['prediction_score', 'sueoki_score']].max(axis=1)
+                                
+                            if score_col in tmp_pred_df.columns:
+                                tmp_pred_df = tmp_pred_df[tmp_pred_df[score_col] >= 0.30].copy()
+                                
+                            if tmp_pred_df.empty:
+                                st.info(f"{label}の該当データがありません。")
+                                return
+                                
+                            tmp_pred_df['ai_daily_rank'] = tmp_pred_df.groupby(['実際の稼働日', shop_col])[score_col].rank(method='first', ascending=False)
+                            
+                            if not top3_machines.empty:
+                                tmp_match_df = pd.merge(tmp_pred_df, top3_machines, on=['実際の稼働日', shop_col, '台番号'], how='left')
+                                tmp_match_df['is_top3'] = tmp_match_df['actual_rank'].notna().astype(int)
+                            else:
+                                tmp_match_df = tmp_pred_df.copy()
+                                tmp_match_df['is_top3'] = 0
+                                
+                            act_g = pd.to_numeric(tmp_match_df['結果_累計ゲーム'], errors='coerce').fillna(0)
+                            act_diff = pd.to_numeric(tmp_match_df['差枚_actual'], errors='coerce').fillna(0)
+                            tmp_match_df['valid_play'] = get_valid_play_mask(act_g, act_diff)
+                            tmp_match_df['is_win'] = tmp_match_df['valid_play'] & (act_diff > 0)
+                            tmp_match_df['valid_差枚_actual'] = np.where(tmp_match_df['valid_play'], tmp_match_df['差枚_actual'], np.nan)
+                            
+                            rank_stats = tmp_match_df.groupby('ai_daily_rank').agg(
+                                検証台数=('台番号', 'count'),
+                                有効稼働数=('valid_play', 'sum'),
+                                勝数=('is_win', 'sum'),
+                                合計差枚=('差枚_actual', 'sum'),
+                                平均差枚=('valid_差枚_actual', 'mean'),
+                                トップ3獲得数=('is_top3', 'sum'),
+                                平均期待度=(score_col, 'mean'),
+                                合計G=('結果_累計ゲーム', 'sum')
+                            ).reset_index()
+                            
+                            rank_stats['勝率'] = np.where(rank_stats['有効稼働数'] > 0, (rank_stats['勝数'] / rank_stats['有効稼働数']) * 100, 0.0)
+                            rank_stats['機械割'] = np.where(rank_stats['合計G'] > 0, ((rank_stats['合計G'] * 3) + rank_stats['合計差枚']) / (rank_stats['合計G'] * 3) * 100, 0.0)
+                            rank_stats['平均期待度'] = rank_stats['平均期待度'] * 100
+                            rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(int)
+                            rank_stats = rank_stats.sort_values('ai_daily_rank')
+                            
+                            total_count = rank_stats['検証台数'].sum()
+                            total_valid = rank_stats['有効稼働数'].sum()
+                            total_win = rank_stats['勝数'].sum()
+                            total_diff = rank_stats['合計差枚'].sum()
+                            total_top3 = rank_stats['トップ3獲得数'].sum()
+                            total_g = rank_stats['合計G'].sum()
+                            avg_diff = total_diff / total_valid if total_valid > 0 else 0
+                            total_win_rate = (total_win / total_valid) * 100 if total_valid > 0 else 0.0
+                            total_avg_score = tmp_match_df[score_col].mean() * 100 if not tmp_match_df.empty else 0.0
+                            total_payout_rate = ((total_g * 3) + total_diff) / (total_g * 3) * 100 if total_g > 0 else 0.0
+                            
+                            rank_stats['ai_daily_rank'] = rank_stats['ai_daily_rank'].astype(str) + "位"
+                            total_row = pd.DataFrame([{
+                                'ai_daily_rank': '合計/平均',
+                                '平均期待度': total_avg_score,
+                                '検証台数': total_count,
+                                '有効稼働数': total_valid,
+                                '勝率': total_win_rate,
+                                '合計差枚': total_diff,
+                                '平均差枚': avg_diff,
+                                '機械割': total_payout_rate,
+                                'トップ3獲得数': total_top3
+                            }])
+                            rank_stats = pd.concat([rank_stats, total_row], ignore_index=True)
+                            
+                            st.dataframe(
+                                rank_stats[['ai_daily_rank', '平均期待度', '検証台数', '有効稼働数', '勝率', '合計差枚', '平均差枚', '機械割', 'トップ3獲得数']],
+                                column_config={
+                                    "ai_daily_rank": st.column_config.TextColumn("AI予測順位"),
+                                    "平均期待度": st.column_config.ProgressColumn("平均期待度", format="%.1f%%", min_value=0, max_value=100),
+                                    "検証台数": st.column_config.NumberColumn("台数"),
+                                    "有効稼働数": st.column_config.NumberColumn("有効稼働"),
+                                    "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100),
+                                    "合計差枚": st.column_config.NumberColumn("合計差枚", format="%+d 枚"),
+                                    "平均差枚": st.column_config.NumberColumn("平均差枚", format="%+d 枚"),
+                                    "機械割": st.column_config.NumberColumn("機械割", format="%.1f%%"),
+                                    "トップ3獲得数": st.column_config.NumberColumn("Top3的中", format="%d 回"),
+                                },
+                                hide_index=True,
+                                use_container_width=True
+                            )
+
+                        tabs = st.tabs(["👑 総合 (高い方)", "🚀 変更(上げ)予測", "🔁 据え置き予測"])
+                        with tabs[0]:
+                            render_rank_stats('max_score', '総合予測')
+                        with tabs[1]:
+                            render_rank_stats('prediction_score', '変更(上げ)予測')
+                        with tabs[2]:
+                            render_rank_stats('sueoki_score', '据え置き予測')
 
                 # 実際のランキング のデータ準備 (平均ゲーム数計算のため先に実行)
                 target_ts = pd.Timestamp(selected_date)
