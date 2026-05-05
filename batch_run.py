@@ -14,11 +14,11 @@ import sys
 
 # Streamlitのアプリ画面外で実行した際のエラーを防ぐための「おまじない」
 import streamlit as st
-st.warning = lambda *args, **kwargs: print("[WARNING]", *args)
-st.error = lambda *args, **kwargs: print("[ERROR]", *args)
-st.success = lambda *args, **kwargs: print("[SUCCESS]", *args)
-st.info = lambda *args, **kwargs: print("[INFO]", *args)
-st.caption = lambda *args, **kwargs: print("[CAPTION]", *args)
+st.warning = lambda *args, **kwargs: print("\n[WARNING]", *args, flush=True)
+st.error = lambda *args, **kwargs: print("\n[ERROR]", *args, flush=True)
+st.success = lambda *args, **kwargs: print("\n[SUCCESS]", *args, flush=True)
+st.info = lambda *args, **kwargs: print("\n[INFO]", *args, flush=True)
+st.caption = lambda *args, **kwargs: print("\n[CAPTION]", *args, flush=True)
 
 import backend
 
@@ -27,14 +27,15 @@ def main():
     sys.stdout.flush() # GitHub Actionsの画面にログをリアルタイムで出力させる
     
     print("1. データの読み込み中...")
+    sys.stdout.flush()
     df_raw = backend.load_data()
     df_events = backend.load_shop_events()
     df_island = backend.load_island_master()
     shop_hyperparams = backend.load_shop_ai_settings()
     
     if df_raw.empty:
-        print("データが空です。処理を終了します。")
-        os._exit(1)
+        print("❌ データが空です。読み込みエラーが発生している可能性があります。処理を終了します。", flush=True)
+        sys.exit(1)
 
     # JSTで現在時刻を取得し、実行日（今日）をターゲットに設定
     jst = datetime.timezone(datetime.timedelta(hours=9))
