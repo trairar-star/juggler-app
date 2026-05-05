@@ -35,7 +35,7 @@ jobs:
       run: |
         echo "$GCP_SERVICE_ACCOUNT_JSON" > service_account.json
 
-    # 5. バッチ実行スクリプトを起動
+    # 5. バッチ実行スクリプトを起動 (StreamlitサーバーではなくPythonコマンドとして純粋に計算のみを実行)
     - name: Run Batch Analysis
       run: |
         python batch_run.py

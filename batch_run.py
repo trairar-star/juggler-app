@@ -10,6 +10,7 @@ import pandas as pd
 import datetime
 import os
 import time
+import sys
 
 # Streamlitのアプリ画面外で実行した際のエラーを防ぐための「おまじない」
 import streamlit as st
@@ -23,6 +24,7 @@ import backend
 
 def main():
     print("=== バッチ分析開始 ===")
+    sys.stdout.flush() # GitHub Actionsの画面にログをリアルタイムで出力させる
     
     print("1. データの読み込み中...")
     df_raw = backend.load_data()
