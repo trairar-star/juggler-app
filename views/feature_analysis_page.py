@@ -274,7 +274,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                                 cold_mac_stats['信頼度'] = cold_mac_stats['サンプル数'].apply(get_confidence_indicator)
                                 cold_mac_stats['REG確率'] = cold_mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
                                 
-                                st.dataframe(cold_mac_stats[['機種名', '平均差枚', '高設定率', 'REG確率', 'サンプル数', '信頼度']], column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("平均REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度")}, hide_index=True, use_container_width=True)
                                 st.dataframe(cold_mac_stats[['機種名', '平均差枚', '高設定率', '勝率', 'REG確率', 'サンプル数', '信頼度']], column_config={"平均差枚": st.column_config.NumberColumn(format="%+d 枚"), "高設定率": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100), "勝率": st.column_config.ProgressColumn("勝率(有効稼働)", format="%.1f%%", min_value=0, max_value=100), "REG確率": st.column_config.TextColumn("平均REG確率"), "サンプル数": st.column_config.NumberColumn(format="%d 件"), "信頼度": st.column_config.TextColumn("信頼度")}, hide_index=True, use_container_width=True)
                             else:
                                 st.info(f"過去の回収日に稼働データがありませんでした。（回収日: {len(cold_dates)}日）")
