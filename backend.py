@@ -2177,6 +2177,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['shifted_diff_wd'] = df.groupby('weekday')['差枚'].shift(1)
     df['weekday_avg_diff'] = df.groupby('weekday')['shifted_diff_wd'].expanding().mean().reset_index(level=0, drop=True).fillna(0)
     
+    if shop_col and '台番号' in df.columns:
+        df['shifted_diff_wd_mac_no'] = df.groupby([shop_col, 'weekday', '台番号'])['差枚'].shift(1)
+        df['wd_x_machine_no_avg_diff'] = df.groupby([shop_col, 'weekday', '台番号'])['shifted_diff_wd_mac_no'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+
     if '日付要素' in df.columns:
         df['shifted_diff_ev'] = df.groupby('日付要素')['差枚'].shift(1)
         df['event_avg_diff'] = df.groupby('日付要素')['shifted_diff_ev'].expanding().mean().reset_index(level=0, drop=True).fillna(0)
@@ -2186,9 +2190,18 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             df['shifted_diff_ev_mac'] = df.groupby([shop_col, 'イベント名', '機種名'])['差枚'].shift(1)
             df['event_x_machine_avg_diff'] = df.groupby([shop_col, 'イベント名', '機種名'])['shifted_diff_ev_mac'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
             
+        if '台番号' in df.columns:
+            df['shifted_diff_ev_mac_no'] = df.groupby([shop_col, 'イベント名', '台番号'])['差枚'].shift(1)
+            df['event_x_machine_no_avg_diff'] = df.groupby([shop_col, 'イベント名', '台番号'])['shifted_diff_ev_mac_no'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+            
         if '末尾番号' in df.columns:
             df['shifted_diff_ev_end'] = df.groupby([shop_col, 'イベント名', '末尾番号'])['差枚'].shift(1)
             df['event_x_end_digit_avg_diff'] = df.groupby([shop_col, 'イベント名', '末尾番号'])['shifted_diff_ev_end'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+
+        if 'island_id' in df.columns:
+            df['shifted_diff_ev_isl'] = df.groupby([shop_col, 'イベント名', 'island_id'])['差枚'].shift(1)
+            df['event_x_island_avg_diff'] = df.groupby([shop_col, 'イベント名', 'island_id'])['shifted_diff_ev_isl'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+            df.loc[df['island_id'] == 'Unknown', 'event_x_island_avg_diff'] = 0
 
     if shop_col and '末尾番号' in df.columns:
         df['shifted_diff_pure_tail'] = df.groupby([shop_col, '末尾番号'])['差枚'].shift(1)
@@ -2381,6 +2394,28 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         island_reg_stats['past_island_reg_prob'] = np.where(island_reg_stats['isl_total_g'] > 0, island_reg_stats['isl_total_reg'] / island_reg_stats['isl_total_g'], 0)
         df = pd.merge(df, island_reg_stats[[shop_col, 'island_id', 'past_island_reg_prob']], on=[shop_col, 'island_id'], how='left')
         df['past_island_reg_prob'] = df['past_island_reg_prob'].fillna(0)
+
+        # --- 新規: 過去の特定日(末尾)×島ごとの合算REG確率 ---
+        island_digit_sum = df[df['island_id'] != "Unknown"].groupby([shop_col, '対象日付', 'island_id'])[['累計ゲーム', 'REG']].sum().reset_index()
+        island_digit_sum['digit'] = island_digit_sum['対象日付'].dt.day % 10
+        digit_island_reg_stats = island_digit_sum.groupby([shop_col, 'digit', 'island_id']).agg(
+            digit_isl_total_g=('累計ゲーム', 'sum'),
+            digit_isl_total_reg=('REG', 'sum')
+        ).reset_index()
+        digit_island_reg_stats['past_digit_island_reg_prob'] = np.where(digit_island_reg_stats['digit_isl_total_g'] > 0, digit_island_reg_stats['digit_isl_total_reg'] / digit_island_reg_stats['digit_isl_total_g'], 0)
+        df = pd.merge(df, digit_island_reg_stats[[shop_col, 'digit', 'island_id', 'past_digit_island_reg_prob']], left_on=[shop_col, 'target_date_end_digit', 'island_id'], right_on=[shop_col, 'digit', 'island_id'], how='left').drop(columns=['digit'])
+        df['past_digit_island_reg_prob'] = df['past_digit_island_reg_prob'].fillna(0)
+
+        # --- 新規: 過去の曜日×島ごとの合算REG確率 ---
+        island_wd_sum = df[df['island_id'] != "Unknown"].groupby([shop_col, '対象日付', 'island_id'])[['累計ゲーム', 'REG']].sum().reset_index()
+        island_wd_sum['wd'] = island_wd_sum['対象日付'].dt.dayofweek
+        wd_island_reg_stats = island_wd_sum.groupby([shop_col, 'wd', 'island_id']).agg(
+            wd_isl_total_g=('累計ゲーム', 'sum'),
+            wd_isl_total_reg=('REG', 'sum')
+        ).reset_index()
+        wd_island_reg_stats['past_wd_island_reg_prob'] = np.where(wd_island_reg_stats['wd_isl_total_g'] > 0, wd_island_reg_stats['wd_isl_total_reg'] / wd_island_reg_stats['wd_isl_total_g'], 0)
+        df = pd.merge(df, wd_island_reg_stats[[shop_col, 'wd', 'island_id', 'past_wd_island_reg_prob']], left_on=[shop_col, 'target_weekday', 'island_id'], right_on=[shop_col, 'wd', 'island_id'], how='left').drop(columns=['wd'])
+        df['past_wd_island_reg_prob'] = df['past_wd_island_reg_prob'].fillna(0)
 
         # --- 新規追加: 過去の島のフェイク率 ---
         df['is_fake_high_tmp'] = ((df['累計ゲーム'] >= 1000) & (df['REG確率'] >= (1/300)) & (df['差枚'] <= 0)).astype(int)
@@ -2615,7 +2650,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_moved_machine'] = 0
 
     # 一時的に作成したフラグは削除
-    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'spec_reg1', 'BIG分母', 'total_prob', 'z_score_reg', 'next_z_score_reg'], errors='ignore')
+    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'shifted_diff_ev_isl', 'shifted_diff_ev_mac_no', 'shifted_diff_wd_mac_no', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'spec_reg1', 'BIG分母', 'total_prob', 'z_score_reg', 'next_z_score_reg'], errors='ignore')
 
     df = df.rename(columns=lambda x: re.sub(r'[",\[\]{}:]', '', str(x)))
     df = df.loc[:, ~df.columns.duplicated()]

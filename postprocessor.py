@@ -528,6 +528,20 @@ def postprocess_predictions(predict_df, train_df):
             end_digit = int(row.get('末尾番号', -1))
             if end_digit != -1: reasons.append(f"【当たり末尾】過去の{ev_label}において、末尾『{end_digit}』は対象になりやすい強い傾向があります(平均+{int(evt_end_avg)}枚)。")
 
+        evt_isl_avg = row.get('event_x_island_avg_diff', 0)
+        if evt_isl_avg > 200:
+            reasons.append(f"【対象島】過去の{ev_label}において、この島(列)は対象になりやすい強い傾向があります(平均+{int(evt_isl_avg)}枚)。")
+
+        evt_mac_no_avg = row.get('event_x_machine_no_avg_diff', 0)
+        if evt_mac_no_avg > 300:
+            reasons.append(f"【🎯特効台】過去の{ev_label}において、この台はピンポイントで甘く使われている傾向があります(平均+{int(evt_mac_no_avg)}枚)。")
+
+        wd_mac_no_avg = row.get('wd_x_machine_no_avg_diff', 0)
+        if wd_mac_no_avg > 300:
+            w_name = ['月', '火', '水', '木', '金', '土', '日'][int(row['target_weekday'])] if 'target_weekday' in row and 0 <= row['target_weekday'] <= 6 else ''
+            if w_name:
+                reasons.append(f"【🎯特効台】過去の{w_name}曜日において、この台はピンポイントで甘く使われている傾向があります(平均+{int(wd_mac_no_avg)}枚)。")
+
         if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
         
         neighbor_high_count = row.get('neighbor_high_setting_count', 0)
