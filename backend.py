@@ -3059,6 +3059,7 @@ def get_machine_basic_stats(df_raw_shop, specs):
     mac_df['valid_設定5近似度'] = np.where(mac_df['valid_play'], mac_df['設定5近似度'], np.nan)
     mac_df['valid_REG確率'] = np.where(mac_df['valid_play'], mac_df['REG確率_val'], np.nan)
     mac_df['valid_累計ゲーム'] = np.where(mac_df['valid_play'], mac_df['累計ゲーム'], np.nan)
+    mac_df['is_win'] = mac_df['valid_play'] & (mac_df['差枚'] > 0)
 
     mac_stats = mac_df.groupby('機種名').agg(
         平均差枚=('valid_差枚', 'mean'),
@@ -3066,9 +3067,12 @@ def get_machine_basic_stats(df_raw_shop, specs):
         高設定率=('高設定率', 'mean'),
         平均REG確率=('valid_REG確率', 'mean'),
         平均回転数=('valid_累計ゲーム', 'mean'),
-        サンプル数=('台番号', 'count')
+        サンプル数=('台番号', 'count'),
+        勝数=('is_win', 'sum'),
+        有効稼働数=('valid_play', 'sum')
     ).reset_index().sort_values('設定5近似度', ascending=False)
     
+    mac_stats['勝率'] = np.where(mac_stats['有効稼働数'] > 0, (mac_stats['勝数'] / mac_stats['有効稼働数']) * 100, 0.0)
     mac_stats['信頼度'] = mac_stats['サンプル数'].apply(get_confidence_indicator)
     mac_stats['REG確率'] = mac_stats['平均REG確率'].apply(lambda x: f"1/{int(1/x)}" if x > 0 else "-")
     

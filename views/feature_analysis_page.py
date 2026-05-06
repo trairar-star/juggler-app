@@ -424,7 +424,6 @@ def render_feature_analysis_page(df_train, df_importance=None, df_events=None, d
                             st.altair_chart(chart_mac, width="stretch")
                         with col_m2:
                             st.dataframe(
-                                mac_stats,
                                 mac_stats[['機種名', '設定5近似度', '高設定率', '勝率', '平均差枚', 'REG確率', '平均回転数', 'サンプル数', '信頼度']],
                                 column_config={
                                     "機種名": st.column_config.TextColumn("機種"),
