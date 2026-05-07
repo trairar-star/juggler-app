@@ -17,6 +17,7 @@ from views import island_map_page
 from views import verification_page
 from views import ranking_comparison_page
 from views import weekly_schedule_page
+from views import grape_simulator_page
 from utils import get_confidence_indicator
 
 # ---------------------------------------------------------
@@ -174,7 +175,7 @@ def main():
     if "global_selected_shop" not in st.session_state:
         st.session_state["global_selected_shop"] = "全て"
         
-    pages = ["🏪 店舗別詳細データ", "🤖 AIチャット相談", "📊 予測の実績検証・AI設定", "📅 週間スケジュール予測", "🗺️ 店舗間ヒートマップ", "🗺️ 機種・島サマリーマップ", "🗺️ 島マップ (神視点)", "⚙️ 島マスター管理", "⚙️ イベント管理", "💰 マイ収支管理"]
+    pages = ["🏪 店舗別詳細データ", "🤖 AIチャット相談", "📊 予測の実績検証・AI設定", "📅 週間スケジュール予測", "🗺️ 店舗間ヒートマップ", "🗺️ 機種・島サマリーマップ", "🗺️ 島マップ (神視点)", "🍇 ぶどう逆算シミュレーター", "⚙️ 島マスター管理", "⚙️ イベント管理", "💰 マイ収支管理"]
     
     # --- ページ切り替えメニュー (サイドバーの一番上) ---
     page = st.sidebar.radio(
@@ -316,6 +317,8 @@ def main():
         elif page == "🗺️ 島マップ (神視点)":
             df_pred_log = backend.load_prediction_log()
             island_map_page.render_island_map_page(df_raw, df_pred_log, df_island, df)
+        elif page == "🍇 ぶどう逆算シミュレーター":
+            grape_simulator_page.render_grape_simulator_page()
         elif page == "⚙️ 島マスター管理":
             island_master_page.render_island_master_page(df_raw)
         elif page == "⚙️ イベント管理":
