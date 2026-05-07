@@ -467,7 +467,33 @@ def diagnose_allocation_types(df_train, shop_col, specs):
         top_machines = pd.merge(top_machines, daily_island.rename(columns={'差枚': 'island_avg'}), on=['対象日付', 'island_id'], how='left')
         point_hit_rate = len(top_machines[(top_machines['差枚'] >= 2500) & (top_machines['island_avg'] <= 0)]) / len(top_machines) if not top_machines.empty else 0
 
-        if each_mac_rate >= 0.20 and each_mac_rate > island_hit_rate and each_mac_rate > mac_hit_rate:
+        # --- 店舗全体の並び・塊傾向の事前計算 (メイン判定やローテーション型サブ分析用) ---
+        narabi_rate_shop = 0
+        one_skip_rate_shop = 0
+        if '台番号' in valid_df.columns:
+            valid_df_n = valid_df.copy()
+            valid_df_n['台番号_num'] = pd.to_numeric(valid_df_n['台番号'], errors='coerce')
+            valid_df_n = valid_df_n.dropna(subset=['台番号_num']).sort_values(['対象日付', '台番号_num'])
+            
+            narabi_blocks_shop = 0
+            one_skip_blocks_shop = 0
+            total_active_days = valid_df_n['対象日付'].nunique()
+            
+            if total_active_days > 0:
+                for d, group in valid_df_n.groupby('対象日付'):
+                    group['is_hot'] = group['差枚'] >= 500
+                    group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
+                    hot_blocks_counts = group[group['is_hot']].groupby('block').size()
+                    if not hot_blocks_counts.empty and hot_blocks_counts.max() >= 3:
+                         narabi_blocks_shop += 1
+                narabi_rate_shop = narabi_blocks_shop / total_active_days
+
+        # --- 配分型のメイン判定 ---
+        if narabi_rate_shop >= 0.25 and point_hit_rate >= 0.30:
+            is_point = True
+            main_type = "塊＋ピン混在型 (1箇所並び＋他単体)"
+            messages.append("☯️ **塊＋ピン混在型 (1箇所並び＋他は単体散らし)**\nお店のどこかに明確な「3台以上の並び(塊)」の当たり箇所を作りつつ、それ以外の場所には散らすように「ピン(単体)」の当たりやフェイクを混ぜてくる傾向が強いです。\n  └ 💡 **立ち回りアドバイス**: ピンで出ている台（周りが凹んでいるのによく出ている台）は、本物の場合もありますが「塊」を探すカモフラージュ（見せ台）として使われている危険があります。ピンの出玉に安易に飛びつかず、まずは店内全体の「塊」の場所を特定することを優先してください。")
+        elif each_mac_rate >= 0.20 and each_mac_rate > island_hit_rate and each_mac_rate > mac_hit_rate:
             main_type = "各機種散らし型 (各機種イチ・ニ配分)"
             messages.append("🎯 **各機種散らし型 (各機種イチ・ニ配分)**\n特定の島や全台系を作るのではなく、「多くの機種に1〜2台ずつ当たり台を散らばらせる」傾向が強いです。島全体の強さに騙されず、自分が打っている機種の中にまだ当たり台(高設定)が見えていないかを重視して立ち回ってください。\n  └ 💡 **立ち回りアドバイス**: パイ（当たり）の奪い合いになります。すでに同じ機種の中に明らかな当たり台がある場合、自分が座っている台は『中間設定のフェイク』である危険性が高いため、強い警戒が必要です。")
             is_point = True # 周りの台(島全体)の挙動に引っ張られすぎないように単体型ベースで学習させる
@@ -560,27 +586,18 @@ def diagnose_allocation_types(df_train, shop_col, specs):
             main_type = "単体型 (点配分)"
             messages.append("📍 **単体型 (点配分)**\n島や機種全体は死んでいるのに、ポツンと1台だけ突出して出ている日が多いです。ヒキ依存や当て物(ピンポイント)の要素が強く、周りの状況はアテになりません。深追いは禁物です。\n  └ 💡 **立ち回りアドバイス**: 各島（列）に1〜2台しか当たりがない傾向が強いため、同じ島内にすでに別の大当たり台がある場合、自分の台はフェイクの罠である可能性が高まります。パイの奪い合いを意識した撤退判断をおすすめします。")
         else:
-            main_type = "複合型 (散らし配分)"
-            messages.append("🧩 **複合型 (散らし配分)**\n島・機種・単体が複雑に混ざっています。明確な「面」が形成されにくいため、複数の根拠(店癖や波)を掛け合わせて狙う必要があります。\n  └ 💡 **立ち回りアドバイス**: 特定の「全台系」や「島単位」の狙いだけに固執せず、広く視野を持つことが重要です。周りの状況に流されず、目の前の台の単体挙動や、AIが提示する複数の根拠（店癖など）が重なっている台を優先して押し引きを判断してください。")
+            # 全ての法則性（並び・島・機種・単体）の発生率が極端に低い場合
+            if narabi_rate_shop < 0.15 and each_mac_rate < 0.15 and island_hit_rate < 0.15 and mac_hit_rate < 0.15 and point_hit_rate < 0.20:
+                main_type = "法則隠蔽型 (完全ランダム配分)"
+                messages.append("🥷 **法則隠蔽型 (完全ランダム配分)**\n過去のデータから、並び・全台系・特定末尾などの「分かりやすい法則（店癖）」を意図的に作らない、または頻繁にフェイクを混ぜて傾向を特定させないようにしている可能性が高いです。\n  └ 💡 **立ち回りアドバイス**: 法則探し（周りの台の状況からの推測）が通用しにくい店舗です。「角だから」「隣が出ているから」といった理由で粘るのは危険です。目の前の台の単体挙動のみを信じてシビアに押し引きしてください。")
+            else:
+                main_type = "複合型 (散らし配分)"
+                messages.append("🧩 **複合型 (散らし配分)**\n島・機種・単体が複雑に混ざっています。明確な「面」が形成されにくいため、複数の根拠(店癖や波)を掛け合わせて狙う必要があります。\n  └ 💡 **立ち回りアドバイス**: 特定の「全台系」や「島単位」の狙いだけに固執せず、広く視野を持つことが重要です。周りの状況に流されず、目の前の台の単体挙動や、AIが提示する複数の根拠（店癖など）が重なっている台を優先して押し引きを判断してください。")
 
-        # --- 店舗全体の並び・塊傾向の事前計算 (ローテーション型や客層反応型のサブ分析用) ---
-        narabi_rate_shop = 0
-        if '台番号' in valid_df.columns:
-            valid_df_n = valid_df.copy()
-            valid_df_n['台番号_num'] = pd.to_numeric(valid_df_n['台番号'], errors='coerce')
-            valid_df_n = valid_df_n.dropna(subset=['台番号_num']).sort_values(['対象日付', '台番号_num'])
-            
-            narabi_blocks_shop = 0
-            total_active_days = valid_df_n['対象日付'].nunique()
-            
-            if total_active_days > 0:
-                for d, group in valid_df_n.groupby('対象日付'):
-                    group['is_hot'] = group['差枚'] >= 500
-                    group['block'] = (group['is_hot'] != group['is_hot'].shift()).cumsum()
-                    hot_blocks_counts = group[group['is_hot']].groupby('block').size()
-                    if not hot_blocks_counts.empty and hot_blocks_counts.max() >= 3:
-                         narabi_blocks_shop += 1
-                narabi_rate_shop = narabi_blocks_shop / total_active_days
+        has_one_skip_trend = False
+        if one_skip_rate_shop >= 0.20:
+            has_one_skip_trend = True
+            messages.append("⏭️ **1つ飛ばし配分の傾向**\n当たり台（高設定）を並べずに、「1台おき（◯・×・◯）」に設定を投入する独特の配分パターンを好んで使う傾向が確認されています。\n  └ 💡 **立ち回りアドバイス**: 自分が打っている台の両隣が爆出ししている場合、あなたの台はハズレ（間の×）である危険性が跳ね上がります。逆に、当たり台の「1つ隣（2つ隣の台）」は積極的に狙う価値があります。")
 
         # 3. ローテーション型
         age_rate = shop_df[(shop_df['連続マイナス日数'] >= 2) & (shop_df['累計ゲーム'] >= 3000)]['target'].mean()
@@ -595,8 +612,10 @@ def diagnose_allocation_types(df_train, shop_col, specs):
             messages.append(rot_msg)
         
         # 4. 客層反応型
+        is_reactive = False
         low_kado_hit = shop_df[(shop_df['prev_累計ゲーム'] < 1500) & (shop_df['prev_累計ゲーム'] > 0)]['target'].mean()
         if pd.notna(low_kado_hit) and low_kado_hit >= 0.20:
+            is_reactive = True
             reac_msg = "👥 **客層反応型 (リアクティブ)**\n客に見切られて稼働が落ちた(空き台が増えた)台や島に対して、テコ入れで設定を入れてくる傾向が見られます。"
             if narabi_rate_shop >= 0.30:
                 reac_msg += "\n  └ 🤝 **島ごとテコ入れ**: 低稼働になった列や島を、塊で一気に全台系・半列系にしてテコ入れしてくる傾向があります。"
@@ -605,7 +624,23 @@ def diagnose_allocation_types(df_train, shop_col, specs):
             reac_msg += "\n  └ 💡 **立ち回りアドバイス**: 前日あまり回されなかった「放置台」が狙い目になります。人が少ない島や、稼働が落ちている機種にチャンスが眠っている可能性が高いです。"
             messages.append(reac_msg)
 
-        # --- 5. 具体的な狙い目 (ピンポイント投入傾向) の抽出 ---
+        # --- 5. 看板機種 一点集中型の判定 ---
+        is_top_mac_concentrated = False
+        top_mac_name = ""
+        if '機種名' in valid_df.columns and 'target' in valid_df.columns:
+            mac_hit_counts = valid_df[valid_df['target'] == 1].groupby('機種名').size()
+            total_hits = mac_hit_counts.sum()
+            if total_hits >= 10:
+                top_mac = mac_hit_counts.idxmax()
+                top_mac_hits = mac_hit_counts.max()
+                top_mac_rate = top_mac_hits / total_hits
+                # 特定機種が全体の当たりの半分以上を占める場合
+                if top_mac_rate >= 0.50:
+                    is_top_mac_concentrated = True
+                    top_mac_name = top_mac
+                    messages.append(f"👑 **看板機種 一点集中型**\n店舗全体の当たり台のうち、約{top_mac_rate*100:.0f}%が『{top_mac}』に極端に集中しています。\n  └ 💡 **立ち回りアドバイス**: 他の機種は見せ台やフェイクの可能性が高いため、この店舗では『{top_mac}』を最優先で狙う立ち回りが最も勝率が高くなります。")
+
+        # --- 6. 具体的な狙い目 (ピンポイント投入傾向) の抽出 ---
         hekomi_threshold = -1000
         win_threshold = 1000
         low_kado_threshold = 2000
@@ -629,6 +664,21 @@ def diagnose_allocation_types(df_train, shop_col, specs):
                 if corner_hit_rate > all_hit_rate * 1.5 and corner_hit_rate >= 0.15:
                     target_hints.append(f"「角台」 (高設定率 {corner_hit_rate*100:.1f}%)")
                     
+            if 'is_corner_2' in valid_df.columns:
+                corner2_hit_rate = valid_df[valid_df['is_corner_2'] == 1]['target'].mean() if len(valid_df[valid_df['is_corner_2'] == 1]) > 0 else 0
+                if corner2_hit_rate > all_hit_rate * 1.5 and corner2_hit_rate >= 0.15:
+                    target_hints.append(f"「カド2」 (高設定率 {corner2_hit_rate*100:.1f}%)")
+                    
+            if 'is_zorome' in valid_df.columns:
+                zorome_hit_rate = valid_df[valid_df['is_zorome'] == 1]['target'].mean() if len(valid_df[valid_df['is_zorome'] == 1]) > 0 else 0
+                if zorome_hit_rate > all_hit_rate * 1.5 and zorome_hit_rate >= 0.15:
+                    target_hints.append(f"「ゾロ目台番号」 (高設定率 {zorome_hit_rate*100:.1f}%)")
+                    
+            if 'is_machine_border' in valid_df.columns:
+                border_hit_rate = valid_df[valid_df['is_machine_border'] == 1]['target'].mean() if len(valid_df[valid_df['is_machine_border'] == 1]) > 0 else 0
+                if border_hit_rate > all_hit_rate * 1.5 and border_hit_rate >= 0.15:
+                    target_hints.append(f"「機種またぎ(隣と機種が違う台)」 (高設定率 {border_hit_rate*100:.1f}%)")
+
             if 'prev_差枚' in valid_df.columns:
                 hekomi_hit_rate = valid_df[valid_df['prev_差枚'] <= hekomi_threshold]['target'].mean() if len(valid_df[valid_df['prev_差枚'] <= hekomi_threshold]) > 0 else 0
                 if hekomi_hit_rate > all_hit_rate * 1.5 and hekomi_hit_rate >= 0.15:
@@ -682,6 +732,10 @@ def diagnose_allocation_types(df_train, shop_col, specs):
             "is_mislead": is_mislead,
             "is_point": is_point,
             "main_type": main_type,
+            "has_one_skip_trend": has_one_skip_trend,
+            "is_reactive": is_reactive,
+            "is_top_mac_concentrated": is_top_mac_concentrated,
+            "top_mac_name": top_mac_name,
             "messages": messages,
             "hekomi_threshold": hekomi_threshold,
             "win_threshold": win_threshold,

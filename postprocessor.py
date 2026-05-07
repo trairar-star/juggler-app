@@ -239,6 +239,7 @@ def postprocess_predictions(predict_df, train_df):
             shop_info = alloc_types.get(s_name, {})
             main_type = shop_info.get("main_type", "不明")
             is_point = shop_info.get("is_point", False)
+            has_one_skip = shop_info.get("has_one_skip_trend", False)
             
             # 各機種散らし型（各機種イチ・ニ配分）の場合、機種内の3番手以降をペナルティ
             if main_type == "各機種散らし型 (各機種イチ・ニ配分)" and '機種名' in group.columns:
@@ -276,10 +277,79 @@ def postprocess_predictions(predict_df, train_df):
                             new_r = "【⚠️配分上限警戒】この店は『点配分（単体型）』の傾向が強いですが、同じ島内にさらにAI評価が高い本命台が存在するため、フェイクの危険性を考慮して評価を大きく下げました。"
                             df_res.loc[idx, '根拠'] = (orig + " " + new_r).strip() if orig and orig != '-' else new_r
 
+            # 1つ飛ばし配分の店舗における「隣り合わせのペナルティ」
+            if has_one_skip and '台番号' in group.columns:
+                group_sorted = group.copy()
+                group_sorted['台番号_num'] = pd.to_numeric(group_sorted['台番号'], errors='coerce')
+                group_sorted = group_sorted.dropna(subset=['台番号_num']).sort_values('台番号_num')
+                
+                group_sorted['max_s'] = group_sorted[['prediction_score', 'sueoki_score']].max(axis=1) if 'sueoki_score' in group_sorted.columns else group_sorted['prediction_score']
+                
+                # 期待度が30%以上の本命台が隣り合っていた場合、スコアが低い方を罠(フェイク)と見なしてペナルティ
+                high_score_mask = group_sorted['max_s'] >= 0.30
+                group_sorted['prev_no'] = group_sorted['台番号_num'].shift(1)
+                group_sorted['prev_is_high'] = high_score_mask.shift(1).fillna(False)
+                group_sorted['prev_score'] = group_sorted['max_s'].shift(1).fillna(0)
+                
+                conflict_mask = high_score_mask & group_sorted['prev_is_high'] & ((group_sorted['台番号_num'] - group_sorted['prev_no']) <= 2)
+                
+                for idx, row_c in group_sorted[conflict_mask].iterrows():
+                    prev_idx = group_sorted.index[group_sorted.index.get_loc(idx) - 1]
+                    target_idx = idx if row_c['max_s'] < row_c['prev_score'] else prev_idx
+                        
+                    df_res.loc[target_idx, 'prediction_score'] *= 0.60
+                    if 'sueoki_score' in df_res.columns: df_res.loc[target_idx, 'sueoki_score'] *= 0.60
+                    orig = str(df_res.loc[target_idx, '根拠'])
+                    if orig == 'nan': orig = ''
+                    new_r = "【⚠️1つ飛ばし警戒】この店は『1つ飛ばし』で当たりを入れる傾向が強いため、AI推奨台が隣り合っているこの場所は片方がフェイクである危険性が高く、相対的に評価を下げました。"
+                            df_res.loc[idx, '根拠'] = (orig + " " + new_r).strip() if orig and orig != '-' else new_r
+
         return df_res
 
     predict_df = apply_allocation_limit_penalty(predict_df)
     train_df = apply_allocation_limit_penalty(train_df)
+
+    # --- 店舗特有の配分傾向（看板機種、客層反応など）による補正 ---
+    def apply_shop_specific_trend_correction(df_target):
+        if df_target.empty or not shop_col: return df_target
+        
+        def _correct(row):
+            score = row.get('prediction_score', 0)
+            sue_score = row.get('sueoki_score', 0)
+            games = row.get('累計ゲーム', 0)
+            machine_name = row.get('機種名', '')
+            s_name = row.get(shop_col)
+            
+            shop_info = alloc_types.get(s_name, {})
+            is_reactive = shop_info.get("is_reactive", False)
+            is_top_mac_concentrated = shop_info.get("is_top_mac_concentrated", False)
+            top_mac_name = shop_info.get("top_mac_name", "")
+            
+            reasons = []
+            
+            if is_top_mac_concentrated and top_mac_name and machine_name != top_mac_name:
+                score *= 0.60
+                if 'sueoki_score' in row: sue_score *= 0.60
+                reasons.append(f"【⚠️看板機種以外警戒】この店は『{top_mac_name}』に当たりが極端に集中する傾向があるため、他機種のこの台はフェイクの危険性が高く評価を下げました。")
+                
+            if is_reactive and games < 1500:
+                score = score + (1.0 - score) * 0.20
+                reasons.append("【🎯客層反応(放置台)狙い】この店は『稼働が落ちた放置台にテコ入れする』傾向が強いため、前日低稼働のこの台の上げ期待度を特別に評価しました。")
+                
+            if reasons:
+                existing_reason = str(row.get('根拠', ''))
+                if existing_reason == 'nan': existing_reason = ''
+                new_reason = " ".join(reasons)
+                row['根拠'] = (existing_reason + " " + new_reason).strip() if existing_reason and existing_reason != '-' else new_reason
+                
+            row['prediction_score'] = score
+            if 'sueoki_score' in row: row['sueoki_score'] = sue_score
+            return row
+            
+        return df_target.apply(_correct, axis=1)
+
+    predict_df = apply_shop_specific_trend_correction(predict_df)
+    train_df = apply_shop_specific_trend_correction(train_df)
 
     # --- 予測スコアから「前日の自己評価スコア(past_prediction_score)」を作成 ---
     predict_df['_orig_index'] = predict_df.index
