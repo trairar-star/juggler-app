@@ -2,7 +2,20 @@ import pandas as pd
 import numpy as np
 import streamlit as st # type: ignore
 import altair as alt # type: ignore
+import re
 import backend
+
+def _parse_memo_stats(memo_text):
+    """メモ欄の文字列から自分稼働の (G, B, R) を抽出して返す"""
+    if pd.isna(memo_text): return 0, 0, 0
+    memo_str = str(memo_text)
+    m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', memo_str)
+    if m_new:
+        return int(m_new.group(1)), int(m_new.group(2)), int(m_new.group(3))
+    m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', memo_str)
+    if m_old:
+        return int(m_old.group(1)), int(m_old.group(2)), int(m_old.group(3))
+    return 0, 0, 0
 
 def render_my_balance_page(df_raw):
     st.header("💰 マイ収支管理")
@@ -24,25 +37,30 @@ def render_my_balance_page(df_raw):
                 col1, col2 = st.columns(2)
                 with col1:
                     # 既存データから店名リストを取得
+                    last_shop = df_balance['店名'].iloc[0] if not df_balance.empty else None
                     shops = []
                     if not df_raw.empty:
                         shop_col = '店名' if '店名' in df_raw.columns else '店舗名'
                         if shop_col in df_raw.columns:
                             shops = list(df_raw[shop_col].unique())
-                    input_shop = st.selectbox("店舗名", shops + ["その他 (手入力)"])
+                            
+                    shop_options = shops + ["その他 (手入力)"]
+                    default_shop_idx = shop_options.index(last_shop) if last_shop in shop_options else 0
+                    input_shop = st.selectbox("店舗名", shop_options, index=default_shop_idx)
                     if input_shop == "その他 (手入力)":
                         input_shop = st.text_input("店舗名を入力")
                     
                     input_number = st.text_input("台番号", placeholder="例: 123")
                     
                 with col2:
+                    last_mac = df_balance['機種名'].iloc[0] if not df_balance.empty else "マイジャグラーV"
                     # 機種名リスト
                     machines = []
                     if not df_raw.empty and '機種名' in df_raw.columns:
                         machines = list(df_raw['機種名'].dropna().unique())
                         
                     machine_options = machines + ["その他 (手入力)"]
-                    default_idx = machine_options.index("マイジャグラーV") if "マイジャグラーV" in machine_options else 0
+                    default_idx = machine_options.index(last_mac) if last_mac in machine_options else (machine_options.index("マイジャグラーV") if "マイジャグラーV" in machine_options else 0)
                     
                     input_machine = st.selectbox("機種名", machine_options, index=default_idx)
                     if input_machine == "その他 (手入力)":
@@ -339,20 +357,9 @@ def render_my_balance_page(df_raw):
     win_rate = win_count / total_count if total_count > 0 else 0
     
     # 通算の自力合算の計算
-    import re
-    def _extract_sum_data(x, kind):
-        if pd.isna(x): return 0.0
-        m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', x)
-        if m_new:
-            return int(m_new.group(1)) if kind == 'G' else int(m_new.group(2)) if kind == 'B' else int(m_new.group(3))
-        m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', x)
-        if m_old:
-            return int(m_old.group(1)) if kind == 'G' else int(m_old.group(2)) if kind == 'B' else int(m_old.group(3))
-        return 0
-        
-    df_balance['自力G'] = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'G'))
-    df_balance['自力B'] = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'B'))
-    df_balance['自力R'] = df_balance['メモ'].apply(lambda x: _extract_sum_data(x, 'R'))
+    df_balance['自力G'] = df_balance['メモ'].apply(lambda x: _parse_memo_stats(x)[0])
+    df_balance['自力B'] = df_balance['メモ'].apply(lambda x: _parse_memo_stats(x)[1])
+    df_balance['自力R'] = df_balance['メモ'].apply(lambda x: _parse_memo_stats(x)[2])
     
     total_my_g = df_balance['自力G'].sum()
     total_my_b = df_balance['自力B'].sum()
@@ -640,22 +647,10 @@ def render_my_balance_page(df_raw):
     st.subheader("📝 稼働履歴一覧")
     
     def extract_my_prob(memo_text):
-        if pd.isna(memo_text): return None
-        memo_str = str(memo_text)
-        import re
-        m_new = re.search(r'自分稼働:(\d+)G BIG:(\d+) REG:(\d+)', memo_str)
-        if m_new:
-            g, b, r = int(m_new.group(1)), int(m_new.group(2)), int(m_new.group(3))
-            if b + r > 0 and g > 0: return f"1/{g / (b + r):.1f}"
-            elif g > 0: return "1/--"
-            return None
-        m_old = re.search(r'総回転:(\d+)G BIG:(\d+) REG:(\d+)', memo_str)
-        if m_old:
-            g, b, r = int(m_old.group(1)), int(m_old.group(2)), int(m_old.group(3))
-            if b + r > 0 and g > 0: return f"1/{g / (b + r):.1f}"
-            elif g > 0: return "1/--"
-            return None
-        return None
+        g, b, r = _parse_memo_stats(memo_text)
+        if g == 0: return None
+        if b + r > 0: return f"1/{g / (b + r):.1f}"
+        return "1/--"
 
     df_balance['自力合算'] = df_balance['メモ'].apply(extract_my_prob)
 

@@ -549,7 +549,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
 
         # --- 🤖 据え置き傾向 独立診断 ＆ 変更トリガー分析 ---
         if selected_shop != '全て' and df_train is not None and not df_train.empty:
-            trigger_info = backend.analyze_sueoki_and_change_triggers(df_train, selected_shop, shop_col)
+            from shop_trends import analyze_sueoki_and_change_triggers
+            trigger_info = analyze_sueoki_and_change_triggers(df_train, selected_shop, shop_col)
             if trigger_info:
                 st.markdown("### 🤖 独立診断：据え置き傾向 ＆ 変更トリガー")
                 st.text(f"据え置き傾向：{trigger_info['sue_tendency']}\n"

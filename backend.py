@@ -37,10 +37,6 @@ HISTORY_CACHE_FILE = os.path.join(BASE_DIR, 'history_cache.parquet')
 # （「予測の実績検証」ページで、新旧ロジックの成績比較ができるようになります）
 APP_VERSION = "v4.66.0" 
 
-def analyze_sueoki_and_change_triggers(df_train, shop_name, shop_col='店名'):
-    from shop_trends import analyze_sueoki_and_change_triggers as _analyze
-    return _analyze(df_train, shop_name, shop_col)
-
 # ---------------------------------------------------------
 # 機種スペック情報
 # ---------------------------------------------------------

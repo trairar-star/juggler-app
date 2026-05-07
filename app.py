@@ -159,6 +159,22 @@ def main():
                 width: 44px !important;
             }
         </style>
+        <script>
+            // スマホ環境で、プルダウン(selectbox)タップ時にキーボードが立ち上がるのを防ぐ
+            const doc = window.parent.document;
+            if (window.parent.innerWidth <= 768) {
+                const observer = new MutationObserver(function(mutations) {
+                    const selectInputs = doc.querySelectorAll('div[data-baseweb="select"] input');
+                    selectInputs.forEach(input => {
+                        // 検索入力枠を「読み取り専用」にすることで、キーボードのポップアップを防ぐ
+                        if (!input.hasAttribute('readonly')) {
+                            input.setAttribute('readonly', 'true');
+                        }
+                    });
+                });
+                observer.observe(doc.body, { childList: true, subtree: true });
+            }
+        </script>
     """, unsafe_allow_html=True)
 
     # --- パスワード認証（ログイン機能） ---
