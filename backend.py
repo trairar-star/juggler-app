@@ -2100,9 +2100,9 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         digit_stats = shop_daily_avg2.groupby([shop_col, 'digit'])['shop_daily_avg_diff'].mean().reset_index(name='past_digit_avg')
         wd_digit_stats = shop_daily_avg2.groupby([shop_col, 'wd', 'digit'])['shop_daily_avg_diff'].mean().reset_index(name='past_wd_digit_avg')
         
-        df = pd.merge(df, wd_stats, left_on=[shop_col, 'target_weekday'], right_on=[shop_col, 'wd'], how='left').drop(columns=['wd'])
-        df = pd.merge(df, digit_stats, left_on=[shop_col, 'target_date_end_digit'], right_on=[shop_col, 'digit'], how='left').drop(columns=['digit'])
-        df = pd.merge(df, wd_digit_stats, left_on=[shop_col, 'target_weekday', 'target_date_end_digit'], right_on=[shop_col, 'wd', 'digit'], how='left').drop(columns=['wd', 'digit'])
+        df = pd.merge(df, wd_stats.rename(columns={'wd': 'target_weekday'}), on=[shop_col, 'target_weekday'], how='left')
+        df = pd.merge(df, digit_stats.rename(columns={'digit': 'target_date_end_digit'}), on=[shop_col, 'target_date_end_digit'], how='left')
+        df = pd.merge(df, wd_digit_stats.rename(columns={'wd': 'target_weekday', 'digit': 'target_date_end_digit'}), on=[shop_col, 'target_weekday', 'target_date_end_digit'], how='left')
         
         # 曜日と特定日、より強い方(還元要素)をベースにする
         base_target_diff = df[['past_wd_avg', 'past_digit_avg']].max(axis=1)
@@ -2135,8 +2135,8 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         ).reset_index()
         digit_reg_stats['past_digit_reg_prob'] = np.where(digit_reg_stats['digit_total_g'] > 0, digit_reg_stats['digit_total_reg'] / digit_reg_stats['digit_total_g'], 0)
 
-        df = pd.merge(df, wd_reg_stats[[shop_col, 'wd', 'past_wd_reg_prob']], left_on=[shop_col, 'target_weekday'], right_on=[shop_col, 'wd'], how='left').drop(columns=['wd'])
-        df = pd.merge(df, digit_reg_stats[[shop_col, 'digit', 'past_digit_reg_prob']], left_on=[shop_col, 'target_date_end_digit'], right_on=[shop_col, 'digit'], how='left').drop(columns=['digit'])
+        df = pd.merge(df, wd_reg_stats[[shop_col, 'wd', 'past_wd_reg_prob']].rename(columns={'wd': 'target_weekday'}), on=[shop_col, 'target_weekday'], how='left')
+        df = pd.merge(df, digit_reg_stats[[shop_col, 'digit', 'past_digit_reg_prob']].rename(columns={'digit': 'target_date_end_digit'}), on=[shop_col, 'target_date_end_digit'], how='left')
         df['past_wd_reg_prob'] = df['past_wd_reg_prob'].fillna(0)
         df['past_digit_reg_prob'] = df['past_digit_reg_prob'].fillna(0)
 
@@ -2374,7 +2374,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         ).reset_index()
         digit_mac_reg_stats['past_digit_mac_reg_prob'] = np.where(digit_mac_reg_stats['digit_mac_total_g'] > 0, digit_mac_reg_stats['digit_mac_total_reg'] / digit_mac_reg_stats['digit_mac_total_g'], 0)
         
-        df = pd.merge(df, digit_mac_reg_stats[[shop_col, 'digit', '機種名', 'past_digit_mac_reg_prob']], left_on=[shop_col, 'target_date_end_digit', '機種名'], right_on=[shop_col, 'digit', '機種名'], how='left').drop(columns=['digit'])
+        df = pd.merge(df, digit_mac_reg_stats[[shop_col, 'digit', '機種名', 'past_digit_mac_reg_prob']].rename(columns={'digit': 'target_date_end_digit'}), on=[shop_col, 'target_date_end_digit', '機種名'], how='left')
         df['past_digit_mac_reg_prob'] = df['past_digit_mac_reg_prob'].fillna(0)
 
         # --- 新規: 過去の曜日×機種ごとの合算REG確率 ---
@@ -2387,7 +2387,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         ).reset_index()
         wd_mac_reg_stats['past_wd_mac_reg_prob'] = np.where(wd_mac_reg_stats['wd_mac_total_g'] > 0, wd_mac_reg_stats['wd_mac_total_reg'] / wd_mac_reg_stats['wd_mac_total_g'], 0)
         
-        df = pd.merge(df, wd_mac_reg_stats[[shop_col, 'wd', '機種名', 'past_wd_mac_reg_prob']], left_on=[shop_col, 'target_weekday', '機種名'], right_on=[shop_col, 'wd', '機種名'], how='left').drop(columns=['wd'])
+        df = pd.merge(df, wd_mac_reg_stats[[shop_col, 'wd', '機種名', 'past_wd_mac_reg_prob']].rename(columns={'wd': 'target_weekday'}), on=[shop_col, 'target_weekday', '機種名'], how='left')
         df['past_wd_mac_reg_prob'] = df['past_wd_mac_reg_prob'].fillna(0)
 
     if shop_col and 'island_id' in df.columns:
@@ -2408,7 +2408,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             digit_isl_total_reg=('REG', 'sum')
         ).reset_index()
         digit_island_reg_stats['past_digit_island_reg_prob'] = np.where(digit_island_reg_stats['digit_isl_total_g'] > 0, digit_island_reg_stats['digit_isl_total_reg'] / digit_island_reg_stats['digit_isl_total_g'], 0)
-        df = pd.merge(df, digit_island_reg_stats[[shop_col, 'digit', 'island_id', 'past_digit_island_reg_prob']], left_on=[shop_col, 'target_date_end_digit', 'island_id'], right_on=[shop_col, 'digit', 'island_id'], how='left').drop(columns=['digit'])
+        df = pd.merge(df, digit_island_reg_stats[[shop_col, 'digit', 'island_id', 'past_digit_island_reg_prob']].rename(columns={'digit': 'target_date_end_digit'}), on=[shop_col, 'target_date_end_digit', 'island_id'], how='left')
         df['past_digit_island_reg_prob'] = df['past_digit_island_reg_prob'].fillna(0)
 
         # --- 新規: 過去の曜日×島ごとの合算REG確率 ---
@@ -2419,7 +2419,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
             wd_isl_total_reg=('REG', 'sum')
         ).reset_index()
         wd_island_reg_stats['past_wd_island_reg_prob'] = np.where(wd_island_reg_stats['wd_isl_total_g'] > 0, wd_island_reg_stats['wd_isl_total_reg'] / wd_island_reg_stats['wd_isl_total_g'], 0)
-        df = pd.merge(df, wd_island_reg_stats[[shop_col, 'wd', 'island_id', 'past_wd_island_reg_prob']], left_on=[shop_col, 'target_weekday', 'island_id'], right_on=[shop_col, 'wd', 'island_id'], how='left').drop(columns=['wd'])
+        df = pd.merge(df, wd_island_reg_stats[[shop_col, 'wd', 'island_id', 'past_wd_island_reg_prob']].rename(columns={'wd': 'target_weekday'}), on=[shop_col, 'target_weekday', 'island_id'], how='left')
         df['past_wd_island_reg_prob'] = df['past_wd_island_reg_prob'].fillna(0)
 
         # --- 新規追加: 過去の島のフェイク率 ---
