@@ -2066,6 +2066,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         
     df['target_weekday'] = df['next_date'].dt.dayofweek
     df['target_date_end_digit'] = df['next_date'].dt.day % 10
+    df['target_week_of_month'] = ((df['next_date'].dt.day - 1) // 7) + 1
         
     # 月初(還元されやすい)と月末(回収されやすい)のフラグ
     if 'next_date' in df.columns:
@@ -2174,9 +2175,17 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     # 【高速化】遅い transform(lambda...) を groupby.rolling() に変更
     df = df.sort_values('対象日付').reset_index(drop=True)
     df['weekday'] = df['対象日付'].dt.dayofweek
+    df['digit'] = df['対象日付'].dt.day % 10
     df['shifted_diff_wd'] = df.groupby('weekday')['差枚'].shift(1)
     df['weekday_avg_diff'] = df.groupby('weekday')['shifted_diff_wd'].expanding().mean().reset_index(level=0, drop=True).fillna(0)
     
+    if shop_col and '機種名' in df.columns:
+        df['shifted_diff_wd_mac'] = df.groupby([shop_col, 'weekday', '機種名'])['差枚'].shift(1)
+        df['wd_x_machine_avg_diff'] = df.groupby([shop_col, 'weekday', '機種名'])['shifted_diff_wd_mac'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+
+        df['shifted_diff_digit_mac'] = df.groupby([shop_col, 'digit', '機種名'])['差枚'].shift(1)
+        df['digit_x_machine_avg_diff'] = df.groupby([shop_col, 'digit', '機種名'])['shifted_diff_digit_mac'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
+
     if shop_col and '台番号' in df.columns:
         df['shifted_diff_wd_mac_no'] = df.groupby([shop_col, 'weekday', '台番号'])['差枚'].shift(1)
         df['wd_x_machine_no_avg_diff'] = df.groupby([shop_col, 'weekday', '台番号'])['shifted_diff_wd_mac_no'].expanding().mean().reset_index(level=[0,1,2], drop=True).fillna(0)
@@ -2650,7 +2659,7 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         df['is_moved_machine'] = 0
 
     # 一時的に作成したフラグは削除
-    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'shifted_diff_ev_isl', 'shifted_diff_ev_mac_no', 'shifted_diff_wd_mac_no', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'spec_reg1', 'BIG分母', 'total_prob', 'z_score_reg', 'next_z_score_reg'], errors='ignore')
+    df = df.drop(columns=['is_heavy_lose', 'is_play_machine', 'shifted_g', 'shifted_reg', 'shifted_diff_wd', 'shifted_is_win_wd', 'shifted_diff_ev', 'shifted_is_win_ev', 'shifted_diff_ev_mac', 'shifted_is_win_ev_mac', 'shifted_diff_ev_end', 'shifted_diff_ev_isl', 'shifted_diff_ev_mac_no', 'shifted_diff_wd_mac_no', 'shifted_diff_wd_mac', 'shifted_diff_digit_mac', 'digit', 'spec_reg', 'spec_tot', 'spec_reg3', 'spec_b6_den', 'spec_reg1', 'BIG分母', 'total_prob', 'z_score_reg', 'next_z_score_reg'], errors='ignore')
 
     df = df.rename(columns=lambda x: re.sub(r'[",\[\]{}:]', '', str(x)))
     df = df.loc[:, ~df.columns.duplicated()]

@@ -755,6 +755,72 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         for _, row in mac_stats.iterrows():
                             context_data += f"・{row['機種名']} (平均 +{int(row['machine_30days_avg_diff'])}枚)\n"
 
+            # --- 3.2. & 3.3. 今週（月の第〇週）のお気に入り機種・末尾 ---
+            if not df_raw.empty and '対象日付' in df_raw.columns:
+                shop_raw_week = df_raw[df_raw[shop_col] == selected_shop].copy()
+                if not shop_raw_week.empty:
+                    shop_raw_week['対象日付'] = pd.to_datetime(shop_raw_week['対象日付'])
+                    shop_raw_week['週'] = ((shop_raw_week['対象日付'].dt.day - 1) // 7) + 1
+                    target_week = ((pd.to_datetime(target_date_val).day - 1) // 7) + 1
+                    
+                    week_data = shop_raw_week[shop_raw_week['週'] == target_week]
+                    if not week_data.empty:
+                        if '機種名' in week_data.columns:
+                            week_mac_stats = week_data.groupby('機種名').agg(
+                                平均差枚=('差枚', 'mean'),
+                                サンプル=('台番号', 'count')
+                            ).reset_index()
+                            week_mac_stats = week_mac_stats[week_mac_stats['サンプル'] >= 10]
+                            if not week_mac_stats.empty:
+                                best_week_macs = week_mac_stats[week_mac_stats['平均差枚'] > 100].sort_values('平均差枚', ascending=False).head(3)
+                                if not best_week_macs.empty:
+                                    context_data += f"\n【{selected_shop} の「第{target_week}週」のお気に入り機種 (過去実績)】\n"
+                                    context_data += "※お客様から「今週のおすすめ機種は？」「今週のお気に入り機種は？」と聞かれた場合は、このデータを回答してください。\n"
+                                    for _, row in best_week_macs.iterrows():
+                                        context_data += f"・{row['機種名']} (第{target_week}週の過去平均 +{int(row['平均差枚'])}枚)\n"
+                                        
+                        if '台番号' in week_data.columns:
+                            tmp_week_data = week_data.copy()
+                            if '末尾番号' not in tmp_week_data.columns:
+                                tmp_week_data['末尾番号'] = tmp_week_data['台番号'].astype(str).str[-1]
+                            week_end_stats = tmp_week_data.groupby('末尾番号').agg(
+                                平均差枚=('差枚', 'mean'),
+                                サンプル=('台番号', 'count')
+                            ).reset_index()
+                            week_end_stats = week_end_stats[week_end_stats['サンプル'] >= 10]
+                            if not week_end_stats.empty:
+                                best_week_ends = week_end_stats[week_end_stats['平均差枚'] > 100].sort_values('平均差枚', ascending=False).head(3)
+                                if not best_week_ends.empty:
+                                    context_data += f"\n【{selected_shop} の「第{target_week}週」のお気に入り末尾 (過去実績)】\n"
+                                    context_data += "※お客様から「今週のおすすめ末尾は？」「今週のお気に入り末尾は？」と聞かれた場合は、このデータを回答してください。\n"
+                                    for _, row in best_week_ends.iterrows():
+                                        context_data += f"・末尾 {row['末尾番号']} (第{target_week}週の過去平均 +{int(row['平均差枚'])}枚)\n"
+
+            # --- 3.4. 今週（月の第〇週）のお気に入り島（列） ---
+            if not df_verify.empty and '対象日付' in df_verify.columns and 'island_id' in df_verify.columns:
+                shop_verify_week = df_verify[df_verify[shop_col] == selected_shop].copy()
+                if not shop_verify_week.empty:
+                    shop_verify_week['対象日付'] = pd.to_datetime(shop_verify_week['対象日付'])
+                    shop_verify_week['週'] = ((shop_verify_week['対象日付'].dt.day - 1) // 7) + 1
+                    target_week = ((pd.to_datetime(target_date_val).day - 1) // 7) + 1
+                    
+                    week_data_isl = shop_verify_week[(shop_verify_week['週'] == target_week) & (shop_verify_week['island_id'] != "Unknown")].copy()
+                    if not week_data_isl.empty:
+                        week_data_isl['島名'] = week_data_isl['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                        week_isl_stats = week_data_isl.groupby('島名').agg(
+                            平均差枚=('差枚', 'mean'),
+                            サンプル=('台番号', 'count')
+                        ).reset_index()
+                        
+                        week_isl_stats = week_isl_stats[week_isl_stats['サンプル'] >= 10]
+                        if not week_isl_stats.empty:
+                            best_week_isls = week_isl_stats[week_isl_stats['平均差枚'] > 100].sort_values('平均差枚', ascending=False).head(3)
+                            if not best_week_isls.empty:
+                                context_data += f"\n【{selected_shop} の「第{target_week}週」のお気に入り島・列 (過去実績)】\n"
+                                context_data += "※お客様から「今週のおすすめ島は？」「今週のお気に入り列は？」と聞かれた場合は、このデータを回答してください。\n"
+                                for _, row in best_week_isls.iterrows():
+                                    context_data += f"・{row['島名']} (第{target_week}週の過去平均 +{int(row['平均差枚'])}枚)\n"
+
             # --- 3.5. 最近大きく凹んでいる台（上げリセット候補） ---
             if not df_predict.empty and '連続マイナス日数' in df_predict.columns and 'cons_minus_total_diff' in df_predict.columns:
                 shop_pred = df_predict[df_predict[shop_col] == selected_shop]

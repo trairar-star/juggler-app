@@ -38,7 +38,7 @@ def main():
     alloc_types = diagnose_allocation_types(train_df, shop_col, MACHINE_SPECS)
     
     actual_features = [f for f in BASE_FEATURES if f in train_df.columns]
-    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit', 'target_week_of_month'] if f in actual_features]
     
     keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
     change_features = actual_features.copy()

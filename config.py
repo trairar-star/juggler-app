@@ -2,7 +2,7 @@
 # AI特徴量定義 (全体共通)
 # ---------------------------------------------------------
 BASE_FEATURES = [
-    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 
+    '累計ゲーム', 'REG確率', 'BIG確率', '差枚', '末尾番号', 'target_weekday', 'target_date_end_digit', 'target_week_of_month',
     'mean_7days_diff', 'median_7days_diff', 'std_7days_diff', 'win_rate_7days', 'plus_rate_7days', 
     'min_7days_diff', 'bb_reg_ratio_diff', 'machine_play_volume_rank', 'target_date_type_avg_diff',
     'past_wd_avg', 'past_digit_avg', 'pure_tail_number_avg_diff', 'recovery_day_sweet_machine',
@@ -23,7 +23,7 @@ BASE_FEATURES = [
     'is_main_island', 'is_wall_island', 'event_avg_diff', 'event_code', 'event_rank_score', 'prev_event_rank_score',
     'relative_games_ratio', 'shop_7days_avg_diff', 'prev_shop_daily_avg_diff', 'machine_30days_avg_diff', 'machine_30days_high_rate',
     'shop_avg_games', 'shop_abandon_rate', 'event_x_machine_avg_diff', 'event_x_machine_no_avg_diff',
-    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 'wd_x_machine_no_avg_diff',
+    'event_x_end_digit_avg_diff', 'machine_no_30days_avg_diff', 'machine_no_30days_high_rate', 'shop_monthly_cumulative_diff', 'wd_x_machine_no_avg_diff', 'wd_x_machine_avg_diff', 'digit_x_machine_avg_diff',
     'shop_pred_diff_7d_avg', 'prev_推定ぶどう確率', 'weekday_high_rate', 'weekday_avg_diff',
     'island_high_setting_ratio', 'reg_diff_interaction', 'big_reg_ratio_gap', 
     'reg_efficiency_penalty', 'machine_3days_avg_diff', 
@@ -57,7 +57,7 @@ KEEP_ALLOWED_FEATURES = [
 FEATURE_NAME_MAP = {
     '累計ゲーム': '前日 累計G数', 'REG確率': '前日 REG確率', 'BIG確率': '前日 BIG確率',
     '差枚': '前日 差枚数', '末尾番号': '台番号末尾', 'target_weekday': '予測日 曜日',
-    'target_date_end_digit': '日付末尾', 'weekday_avg_diff': '店舗 曜日平均差枚', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
+    'target_date_end_digit': '日付末尾', 'target_week_of_month': '予測日 月の第〇週', 'weekday_avg_diff': '店舗 曜日平均差枚', 'weekday_high_rate': '店舗 曜日高設定率', 'mean_7days_reg_prob': '台 7日平均REG確率',
     'mean_7days_diff': '台 直近7日平均差枚', 'median_7days_diff': '台 7日差枚中央値', 'win_rate_7days': '台 7日間高設定率', 'plus_rate_7days': '台 7日間勝率',
     'mean_7days_games': '台 直近7日平均G数', 'min_7days_diff': '台 7日最小差枚(最大凹み)', 'mean_3days_diff': '台 直近3日平均差枚', 'mean_3days_reg_prob': '台 3日平均REG確率', 'mean_3days_games': '台 直近3日平均G数',
     'bb_reg_ratio_diff': '前日 BB/REG比率乖離度', 'machine_play_volume_rank': '同機種内 前日稼働ランク', 'target_date_type_avg_diff': '予測日属性 過去店舗平均差枚',
@@ -76,7 +76,7 @@ FEATURE_NAME_MAP = {
     'machine_30days_avg_diff': '機種 30日平均差枚', 'machine_30days_high_rate': '機種 30日高設定率',
     'prev_推定ぶどう確率': '前日 ぶどう確率', 'shop_avg_games': '店舗 平均稼働G数', 'shop_abandon_rate': '店舗 見切り割合',
     'event_x_machine_avg_diff': 'イベント×機種 差枚', 'event_x_end_digit_avg_diff': 'イベント×末尾 差枚', 'event_x_island_avg_diff': 'イベント×島 差枚', 'event_x_machine_no_avg_diff': 'イベント×台番号 差枚',
-    'wd_x_machine_no_avg_diff': '曜日×台番号 差枚',
+    'wd_x_machine_no_avg_diff': '曜日×台番号 差枚', 'wd_x_machine_avg_diff': '曜日×機種 差枚', 'digit_x_machine_avg_diff': '末尾×機種 差枚',
     'history_count': '台 履歴データ数',
     'cons_minus_total_diff': '前回放出からの累計差枚', 'machine_no_30days_avg_diff': '場所 30日平均差枚', 'machine_no_30days_high_rate': '場所 30日高設定率', 'std_7days_diff': '台 7日差枚の標準偏差(荒れ具合)',
     'is_beginning_of_month': '月初フラグ', 'is_end_of_month': '月末フラグ', 'is_pension_day': '年金支給日フラグ',

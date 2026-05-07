@@ -22,7 +22,7 @@ def train_models(train_df, predict_df, features, shop_hyperparams, target_shops=
     change_features = features.copy()
 
     # カテゴリ変数として扱う特徴量のリストを定義
-    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in features]
+    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit', 'target_week_of_month'] if f in features]
 
     # 予測結果格納用の列を初期化
     if not predict_df.empty and '予測差枚数' not in predict_df.columns:

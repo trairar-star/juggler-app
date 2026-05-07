@@ -542,6 +542,18 @@ def postprocess_predictions(predict_df, train_df):
             if w_name:
                 reasons.append(f"【🎯特効台】過去の{w_name}曜日において、この台はピンポイントで甘く使われている傾向があります(平均+{int(wd_mac_no_avg)}枚)。")
 
+        wd_mac_avg = row.get('wd_x_machine_avg_diff', 0)
+        if wd_mac_avg > 200:
+            w_name = ['月', '火', '水', '木', '金', '土', '日'][int(row['target_weekday'])] if 'target_weekday' in row and 0 <= row['target_weekday'] <= 6 else ''
+            if w_name:
+                reasons.append(f"【🎯曜日特効機種】過去の{w_name}曜日において、この機種は甘く使われている傾向があります(平均+{int(wd_mac_avg)}枚)。")
+
+        digit_mac_avg = row.get('digit_x_machine_avg_diff', 0)
+        if digit_mac_avg > 200:
+            digit = int(row.get('target_date_end_digit', -1))
+            if digit != -1:
+                reasons.append(f"【🎯末尾特効機種】過去の『{digit}のつく日』において、この機種は甘く使われている傾向があります(平均+{int(digit_mac_avg)}枚)。")
+
         if row.get('is_corner', 0) == 1: reasons.append("角台（設定優遇枠）のため期待大です。")
         
         neighbor_high_count = row.get('neighbor_high_setting_count', 0)
