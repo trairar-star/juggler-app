@@ -120,6 +120,7 @@ def main():
             }
             .stButton button {
                 font-size: 0.9rem !important;
+                min-height: 44px !important; /* ボタンもタップしやすく */
             }
             label p {
                 font-size: 0.85rem !important;
@@ -140,6 +141,22 @@ def main():
             }
             [data-testid="stMetricValue"] div {
                 font-size: 1.4rem !important;
+            }
+            /* --- スマホ入力最適化 (Fat Finger対策 & ズーム防止) --- */
+            /* プルダウンや入力枠の高さと文字サイズ(16px以上にしてiOSの自動ズームを防ぐ) */
+            div[data-baseweb="select"] > div, input[type="text"], input[type="number"], div[data-baseweb="input"] {
+                min-height: 44px !important;
+                font-size: 16px !important; 
+            }
+            /* プルダウンを開いた時の選択肢(リスト)のタップ領域を調整（大きすぎないように） */
+            ul[role="listbox"] li {
+                font-size: 16px !important;
+                padding-top: 8px !important;
+                padding-bottom: 8px !important;
+            }
+            /* NumberInputのプラス/マイナスボタンの幅を広げる */
+            div[data-testid="stNumberInputStepUp"], div[data-testid="stNumberInputStepDown"] {
+                width: 44px !important;
             }
         </style>
     """, unsafe_allow_html=True)
