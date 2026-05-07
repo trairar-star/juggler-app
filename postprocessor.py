@@ -302,7 +302,7 @@ def postprocess_predictions(predict_df, train_df):
                     orig = str(df_res.loc[target_idx, '根拠'])
                     if orig == 'nan': orig = ''
                     new_r = "【⚠️1つ飛ばし警戒】この店は『1つ飛ばし』で当たりを入れる傾向が強いため、AI推奨台が隣り合っているこの場所は片方がフェイクである危険性が高く、相対的に評価を下げました。"
-                            df_res.loc[idx, '根拠'] = (orig + " " + new_r).strip() if orig and orig != '-' else new_r
+                    df_res.loc[target_idx, '根拠'] = (orig + " " + new_r).strip() if orig and orig != '-' else new_r
 
         return df_res
 
