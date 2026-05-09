@@ -106,20 +106,30 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     # --- UI: 指標と機種の選択 ---
     col_m1, col_m2 = st.columns(2)
     with col_m1:
-        metric_choice = st.radio("表示する指標", ["REG確率", "平均差枚", "高設定率"], horizontal=True)
+        metric_choice = st.radio("表示する指標", ["REG確率", "合算確率", "BIG確率", "平均差枚", "前日比(差枚)", "勝率", "高設定率", "機械割(推測設定)", "平均稼働"], horizontal=True)
     with col_m2:
         all_machines = ["(全機種平均)"] + sorted(list(df_recent['機種名'].dropna().unique()))
-        selected_machine = st.selectbox("機種で絞り込み (REG確率のみ)", all_machines)
+        selected_machine = st.selectbox("機種で絞り込み (REG確率・機械割のみ有効)", all_machines)
 
-    # 機種が選択されている場合、指標は強制的にREG確率にする
+    # 機種が選択されている場合、指標の制御
     if selected_machine != "(全機種平均)":
-        metric_choice = "REG確率"
-        st.caption(f"※機種「{selected_machine}」が選択されているため、指標はREG確率で表示されます。")
+        if metric_choice not in ["REG確率", "機械割(推測設定)"]:
+            metric_choice = "REG確率"
+            st.caption(f"※機種「{selected_machine}」が選択されているため、指標は自動的に {metric_choice} に変更されました。")
     
     if metric_choice == "平均差枚":
         pivot_df = df_recent.pivot_table(index=shop_col, columns='表示日', values='差枚', aggfunc='mean')
         fmt = "{:+.0f}"
         cmap = "RdYlBu_r" # 赤(プラス)〜青(マイナス)
+        vmin, vmax = -300, 300
+    elif metric_choice == "前日比(差枚)":
+        daily_diff = source_df.groupby([shop_col, date_col, '表示日'])['差枚'].mean().reset_index()
+        daily_diff = daily_diff.sort_values([shop_col, date_col])
+        daily_diff['前日差枚'] = daily_diff.groupby(shop_col)['差枚'].shift(1)
+        daily_diff['前日比'] = daily_diff['差枚'] - daily_diff['前日差枚']
+        pivot_df = daily_diff.pivot_table(index=shop_col, columns='表示日', values='前日比', aggfunc='mean')
+        fmt = "{:+.0f}"
+        cmap = "PRGn" # 紫(マイナス成長)〜緑(プラス成長)
         vmin, vmax = -300, 300
     elif metric_choice == "高設定率":
         pivot_df = df_recent.pivot_table(index=shop_col, columns='表示日', values='is_high', aggfunc='mean')
@@ -127,6 +137,26 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         fmt = "{:.1f}%"
         cmap = "Greens" # 緑が濃いほど高設定率が高い
         vmin, vmax = 0, 30
+    elif metric_choice == "機械割(推測設定)":
+        source_df = df_recent.copy()
+        if selected_machine != "(全機種平均)":
+            source_df = source_df[source_df['機種名'] == selected_machine]
+            
+        daily_shop_sum = source_df.groupby([shop_col, '表示日']).agg(
+            sum_g=('累計ゲーム', 'sum'),
+            sum_diff=('差枚', 'sum')
+        ).reset_index()
+        
+        daily_shop_sum['機械割'] = np.where(
+            daily_shop_sum['sum_g'] > 0,
+            ((daily_shop_sum['sum_g'] * 3) + daily_shop_sum['sum_diff']) / (daily_shop_sum['sum_g'] * 3) * 100,
+            np.nan
+        )
+        pivot_df = daily_shop_sum.pivot_table(index=shop_col, columns='表示日', values='機械割', aggfunc='mean')
+        pivot_df = pivot_df.reindex(df_recent[shop_col].unique())
+        fmt = "{:.1f}%"
+        cmap = "RdYlBu_r"
+        vmin, vmax = 96.0, 104.0
     else: # REG確率
         source_df = df_recent.copy()
         if selected_machine != "(全機種平均)":
@@ -152,6 +182,8 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
     pivot_df = pivot_df[sorted(pivot_df.columns)]
     
     st.caption("※色が濃い（赤い/緑色）ほど優秀な営業日だったことを示します。横に見れば『店舗の好不調の波』が、縦に見れば『その日一番強かった店』がわかります。")
+    if metric_choice == "機械割(推測設定)":
+        st.info("💡 **平均設定の目安 (ジャグラー全体)**: [設定1] 約96%〜97% / [設定2] 約98% / [設定3] 約99% / [設定4] 約101% / [設定5] 約103% / [設定6] 約105%以上\n\n※色が赤系(100%超え)であれば、店舗全体（または対象機種）に平均して設定4以上が使われ、客側の黒字だった可能性が高いです。")
     
     # Pandas Stylerを使ってヒートマップ化
     styled_pivot = pivot_df.style.background_gradient(cmap=cmap, axis=None, vmin=vmin, vmax=vmax, text_color_threshold=0.5).format(fmt, na_rep="-")

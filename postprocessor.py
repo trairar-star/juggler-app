@@ -7,6 +7,10 @@ from shop_trends import calculate_shop_trends, apply_trends_to_row, diagnose_all
 from config import MACHINE_SPECS
 
 def postprocess_predictions(predict_df, train_df):
+    # DataFrameのフラグメンテーション(メモリ細分化)警告を防ぐためのデフラグ処理
+    if not predict_df.empty: predict_df = predict_df.copy()
+    if not train_df.empty: train_df = train_df.copy()
+
     specs = MACHINE_SPECS
     shop_col = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     
@@ -296,7 +300,7 @@ def postprocess_predictions(predict_df, train_df):
                 for idx, row_c in group_sorted[conflict_mask].iterrows():
                     prev_idx = group_sorted.index[group_sorted.index.get_loc(idx) - 1]
                     target_idx = idx if row_c['max_s'] < row_c['prev_score'] else prev_idx
-                        
+                    
                     df_res.loc[target_idx, 'prediction_score'] *= 0.60
                     if 'sueoki_score' in df_res.columns: df_res.loc[target_idx, 'sueoki_score'] *= 0.60
                     orig = str(df_res.loc[target_idx, '根拠'])
