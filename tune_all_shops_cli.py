@@ -93,11 +93,11 @@ def main():
             def objective_mode(trial):
                 params = {
                     'n_estimators': trial.suggest_int('n_estimators', 100, 600, step=50),
-                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.05, log=True),
+                    'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.05, log=True),
                     'max_depth': trial.suggest_int('max_depth', 3, 6),
-                    'min_child_samples': trial.suggest_int('min_child_samples', 20, 80, step=10),
-                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 2.0),
-                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 2.0)
+                    'min_child_samples': trial.suggest_int('min_child_samples', 30, 100, step=10),
+                    'reg_alpha': trial.suggest_float('reg_alpha', 0.0, 5.0),
+                    'reg_lambda': trial.suggest_float('reg_lambda', 0.0, 5.0)
                 }
                 max_leaves = min(127, (2 ** params['max_depth']) - 1)
                 params['num_leaves'] = trial.suggest_int('num_leaves', min(7, max_leaves), max_leaves)

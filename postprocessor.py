@@ -146,6 +146,12 @@ def postprocess_predictions(predict_df, train_df):
             penalty_factor *= 0.60
             reasons.append("【🔻大幅減点】前日大勝していますがREG確率が悪く、低設定のまぐれ吹きの可能性が高いです。本日の反動(回収)に警戒してください。")
             
+        # --- 新規追加: 中間設定のタコ粘りフェイクに対する強制ペナルティ ---
+        if games >= 5000 and diff <= 500 and reg_prob > 0 and (1.0 / reg_prob) >= 280:
+            # 前日しっかり回されREGもそこそこ引けたが、差枚が伸びなかった不発台
+            penalty_factor *= 0.70
+            reasons.append("【⚠️中間設定フェイク警戒】前日しっかり回されていますが差枚が伸びきっていません。勝率の低い中間設定(設定3・4)の罠であるリスクが高いため、AI評価を強制的に下げました。")
+            
         if win_rate_7d == 0 and diff < 0 and games >= 1000:
             penalty_factor *= 0.70
             reasons.append("【🔻減点】過去1週間で高設定挙動がなく、店側が全く設定を入れていない(見捨てられている)可能性が高いです。")
