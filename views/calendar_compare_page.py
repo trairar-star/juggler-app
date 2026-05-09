@@ -260,3 +260,41 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
             )
         else:
             st.info("過去90日間にAIが「回収日」と判定した営業日がありません。")
+
+        # --- 新規追加: 毎日高設定(設定5基準) 投入率ランキング ---
+        st.divider()
+        st.subheader("🌟 【安定度】毎日高設定(設定5基準) 投入率ランキング (直近90日)")
+        st.caption("過去90日間の全営業日のうち、**「店舗内に設定5以上の基準を満たした台が1台以上あった日」** の割合を店舗ごとに比較します。この確率が100%に近い店舗は、「行けば必ずどこかに当たりがある（常に設定5以上がある）」という安心感があります。")
+
+        daily_stats['高設定あり'] = (daily_stats['高設定台数'] >= 1).astype(int)
+        
+        everyday_summary = daily_stats.groupby(shop_col).agg(
+            営業日数=('対象日付', 'count'),
+            投入日数=('高設定あり', 'sum'),
+            平均高設定台数=('高設定台数', 'mean')
+        ).reset_index()
+        
+        everyday_summary['毎日投入率'] = np.where(everyday_summary['営業日数'] > 0, (everyday_summary['投入日数'] / everyday_summary['営業日数']) * 100, 0.0)
+        
+        def get_everyday_badge(rate):
+            if rate >= 95.0: return "👑 絶対安心 (ほぼ毎日投入)"
+            elif rate >= 80.0: return "✨ 安定 (高頻度で投入)"
+            elif rate >= 50.0: return "🟡 普通 (ない日も多い)"
+            else: return "⚠️ 不安定 (ない日がデフォ)"
+            
+        everyday_summary['安定度評価'] = everyday_summary['毎日投入率'].apply(get_everyday_badge)
+        everyday_summary = everyday_summary.sort_values('毎日投入率', ascending=False)
+        
+        st.dataframe(
+            everyday_summary[[shop_col, '安定度評価', '営業日数', '投入日数', '平均高設定台数', '毎日投入率']],
+            column_config={
+                shop_col: st.column_config.TextColumn("店舗名"),
+                "安定度評価": st.column_config.TextColumn("安定度評価", help="毎日投入率が95%以上なら絶対安心、80%以上で安定店と判定します。"),
+                "営業日数": st.column_config.NumberColumn("集計営業日数", format="%d日"),
+                "投入日数": st.column_config.NumberColumn("高設定投入日数", format="%d日", help="設定5基準の台が1台以上あった日数"),
+                "平均高設定台数": st.column_config.NumberColumn("1日平均 高設定台数", format="%.1f台"),
+                "毎日投入率": st.column_config.ProgressColumn("毎日投入率", format="%.1f%%", min_value=0, max_value=100)
+            },
+            width="stretch",
+            hide_index=True
+        )
