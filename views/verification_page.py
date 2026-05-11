@@ -313,7 +313,8 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
             if orig_col not in ['prediction_score', '予測差枚数', '機種名', '予測信頼度', 'おすすめ度', '根拠', 'next_diff', 'next_BIG', 'next_REG', 'next_累計ゲーム', 'ai_version', 'app_version']:
                 base_df[orig_col] = base_df[col]
 
-    base_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
+    base_df = base_df.dropna(subset=['差枚_actual'])
+    base_df = base_df[base_df['prediction_score'].notna() | base_df['sueoki_score'].notna()].copy()
     
     if base_df.empty:
         st.info("まだ結果が判明している予測がありません。")

@@ -178,7 +178,8 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
     if target_score_col == 'sueoki_score' and sueoki_no_dates:
         base_df.loc[base_df['予測対象日_merge'].isin(sueoki_no_dates), 'sueoki_score'] = 0.0
 
-    merged_df = base_df.dropna(subset=['差枚_actual', 'prediction_score']).copy()
+    merged_df = base_df.dropna(subset=['差枚_actual'])
+    merged_df = merged_df[merged_df['prediction_score'].notna() | merged_df['sueoki_score'].notna()].copy()
 
     if merged_df.empty:
         st.info("まだ結果が判明している予測がありません。")
