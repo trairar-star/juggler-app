@@ -201,11 +201,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
         # --- アプリ内のデータをGemini用に文字列化して準備 ---
         context_data = ""
         
-        # --- 共通: 現在AIが使用している特徴量一覧 ---
-        context_data += "\n【現在AIが学習に使用している特徴量（データ項目）一覧】\n"
-        feature_list_strs = [f"{FEATURE_NAME_MAP.get(f, f)} (内部名: {f})" for f in BASE_FEATURES]
-        context_data += "、".join(feature_list_strs) + "\n"
-        
         # --- 選択中の台の情報をコンテキストに追加 ---
         if st.session_state.get('rt_sel_shop') and st.session_state.get('rt_sel_mac') and not df_predict.empty:
             sel_s = st.session_state.rt_sel_shop
@@ -638,14 +633,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                     context_data += "※この店舗の配分思想（店長のクセ）の根本的な結論です。この前提に沿ってアドバイスしてください。\n"
                     for msg in shop_alloc["messages"]:
                         context_data += f"・{msg}\n"
-                        
-                # 動的基準値の共有
-                hekomi_th = shop_alloc.get("hekomi_threshold", -1000)
-                win_th = shop_alloc.get("win_threshold", 1000)
-                low_kado_th = shop_alloc.get("low_kado_threshold", 2000)
-                context_data += f"\n【{selected_shop} の動的基準値 (店舗の荒さや客層に基づく)】\n"
-                context_data += f"・大凹み基準: {hekomi_th}枚以下\n・大勝ち基準: +{win_th}枚以上\n・低稼働(放置)基準: {low_kado_th}G未満\n"
-                context_data += "※お客様から「この店の大凹み・大勝ち・低稼働の基準は？」などと聞かれた場合は、店舗の荒さや客層に合わせてこの数値で判定されていることを答えてください。\n"
 
             # --- 1.96. 据え置き前提判定 ---
             if not df_raw.empty:
@@ -754,72 +741,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         context_data += f"\n【{selected_shop} の好調機種 (直近30日の平均差枚が優秀)】\n"
                         for _, row in mac_stats.iterrows():
                             context_data += f"・{row['機種名']} (平均 +{int(row['machine_30days_avg_diff'])}枚)\n"
-
-            # --- 3.2. & 3.3. 今週（月の第〇週）のお気に入り機種・末尾 ---
-            if not df_raw.empty and '対象日付' in df_raw.columns:
-                shop_raw_week = df_raw[df_raw[shop_col] == selected_shop].copy()
-                if not shop_raw_week.empty:
-                    shop_raw_week['対象日付'] = pd.to_datetime(shop_raw_week['対象日付'])
-                    shop_raw_week['週'] = ((shop_raw_week['対象日付'].dt.day - 1) // 7) + 1
-                    target_week = ((pd.to_datetime(target_date_val).day - 1) // 7) + 1
-                    
-                    week_data = shop_raw_week[shop_raw_week['週'] == target_week]
-                    if not week_data.empty:
-                        if '機種名' in week_data.columns:
-                            week_mac_stats = week_data.groupby('機種名').agg(
-                                平均差枚=('差枚', 'mean'),
-                                サンプル=('台番号', 'count')
-                            ).reset_index()
-                            week_mac_stats = week_mac_stats[week_mac_stats['サンプル'] >= 10]
-                            if not week_mac_stats.empty:
-                                best_week_macs = week_mac_stats[week_mac_stats['平均差枚'] > 100].sort_values('平均差枚', ascending=False).head(3)
-                                if not best_week_macs.empty:
-                                    context_data += f"\n【{selected_shop} の「第{target_week}週」のお気に入り機種 (過去実績)】\n"
-                                    context_data += "※お客様から「今週のおすすめ機種は？」「今週のお気に入り機種は？」と聞かれた場合は、このデータを回答してください。\n"
-                                    for _, row in best_week_macs.iterrows():
-                                        context_data += f"・{row['機種名']} (第{target_week}週の過去平均 +{int(row['平均差枚'])}枚)\n"
-                                        
-                        if '台番号' in week_data.columns:
-                            tmp_week_data = week_data.copy()
-                            if '末尾番号' not in tmp_week_data.columns:
-                                tmp_week_data['末尾番号'] = tmp_week_data['台番号'].astype(str).str[-1]
-                            week_end_stats = tmp_week_data.groupby('末尾番号').agg(
-                                平均差枚=('差枚', 'mean'),
-                                サンプル=('台番号', 'count')
-                            ).reset_index()
-                            week_end_stats = week_end_stats[week_end_stats['サンプル'] >= 10]
-                            if not week_end_stats.empty:
-                                best_week_ends = week_end_stats[week_end_stats['平均差枚'] > 100].sort_values('平均差枚', ascending=False).head(3)
-                                if not best_week_ends.empty:
-                                    context_data += f"\n【{selected_shop} の「第{target_week}週」のお気に入り末尾 (過去実績)】\n"
-                                    context_data += "※お客様から「今週のおすすめ末尾は？」「今週のお気に入り末尾は？」と聞かれた場合は、このデータを回答してください。\n"
-                                    for _, row in best_week_ends.iterrows():
-                                        context_data += f"・末尾 {row['末尾番号']} (第{target_week}週の過去平均 +{int(row['平均差枚'])}枚)\n"
-
-            # --- 3.4. 今週（月の第〇週）のお気に入り島（列） ---
-            if not df_verify.empty and '対象日付' in df_verify.columns and 'island_id' in df_verify.columns:
-                shop_verify_week = df_verify[df_verify[shop_col] == selected_shop].copy()
-                if not shop_verify_week.empty:
-                    shop_verify_week['対象日付'] = pd.to_datetime(shop_verify_week['対象日付'])
-                    shop_verify_week['週'] = ((shop_verify_week['対象日付'].dt.day - 1) // 7) + 1
-                    target_week = ((pd.to_datetime(target_date_val).day - 1) // 7) + 1
-                    
-                    week_data_isl = shop_verify_week[(shop_verify_week['週'] == target_week) & (shop_verify_week['island_id'] != "Unknown")].copy()
-                    if not week_data_isl.empty:
-                        week_data_isl['島名'] = week_data_isl['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
-                        week_isl_stats = week_data_isl.groupby('島名').agg(
-                            平均差枚=('差枚', 'mean'),
-                            サンプル=('台番号', 'count')
-                        ).reset_index()
-                        
-                        week_isl_stats = week_isl_stats[week_isl_stats['サンプル'] >= 10]
-                        if not week_isl_stats.empty:
-                            best_week_isls = week_isl_stats[week_isl_stats['平均差枚'] > 100].sort_values('平均差枚', ascending=False).head(3)
-                            if not best_week_isls.empty:
-                                context_data += f"\n【{selected_shop} の「第{target_week}週」のお気に入り島・列 (過去実績)】\n"
-                                context_data += "※お客様から「今週のおすすめ島は？」「今週のお気に入り列は？」と聞かれた場合は、このデータを回答してください。\n"
-                                for _, row in best_week_isls.iterrows():
-                                    context_data += f"・{row['島名']} (第{target_week}週の過去平均 +{int(row['平均差枚'])}枚)\n"
 
             # --- 3.5. 最近大きく凹んでいる台（上げリセット候補） ---
             if not df_predict.empty and '連続マイナス日数' in df_predict.columns and 'cons_minus_total_diff' in df_predict.columns:
@@ -931,7 +852,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                                 context_data += "※お客様から「特定の条件（REG確率、差枚、連敗など）を満たす台を探して」と依頼された場合は、このデータから条件に合致する台を探して回答してください。確率は(総回転数÷REG回数)等で計算してください。\n"
                                 
                                 hist_all_df['date_str'] = hist_all_df['対象日付'].dt.strftime('%m/%d')
-                                hist_all_df['台番号'] = hist_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                                hist_all_df['台番号'] = hist_all_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                                 
                                 def make_hist_line(r):
                                     g = int(r.get('累計ゲーム', 0))
@@ -963,12 +884,12 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                     df_pred_log_shop = df_pred_log_temp[df_pred_log_temp[shop_col_pred] == selected_shop].copy()
                     
                     if not df_pred_log_shop.empty:
-                        df_pred_log_shop['台番号'] = df_pred_log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        df_pred_log_shop['台番号'] = df_pred_log_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                         if '実行日時' in df_pred_log_shop.columns:
                             df_pred_log_shop = df_pred_log_shop.sort_values('実行日時', ascending=False).drop_duplicates(subset=['予測対象日_merge', '台番号'], keep='first')
                             
                         df_raw_temp = df_raw[df_raw[shop_col] == selected_shop].copy()
-                        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                         df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
                         
                         merged_acc = pd.merge(
@@ -985,10 +906,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                                 merged_acc['sueoki_score'] = 0.0
                             merged_acc['sueoki_score'] = pd.to_numeric(merged_acc['sueoki_score'], errors='coerce')
                             
-                            merged_acc['c_daily_rank'] = merged_acc.groupby('予測対象日_merge')['prediction_score'].rank(method='first', ascending=False)
-                            merged_acc['s_daily_rank'] = merged_acc.groupby('予測対象日_merge')['sueoki_score'].rank(method='first', ascending=False)
-
-                            top_k = max(3, min(10, int(df_raw_temp['台番号'].nunique() * 0.10)))
                             
                             act_g = pd.to_numeric(merged_acc['累計ゲーム'], errors='coerce').fillna(0)
                             act_diff = pd.to_numeric(merged_acc['差枚'], errors='coerce').fillna(0)
@@ -1015,8 +932,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                             merged_acc['is_high_setting'] = ((((reg_prob_den > 0) & (reg_prob_den <= spec_reg_val)) | ((tot_prob_den > 0) & (tot_prob_den <= spec_tot_val) & (reg_prob_den > 0) & (reg_prob_den <= spec_reg3_val)) | (z_score >= 1.64))).astype(int)
                             merged_acc['valid_high'] = merged_acc['valid_high_play'] & (merged_acc['is_high_setting'] == 1)
 
-                            c_df = merged_acc[merged_acc['c_daily_rank'] <= top_k].copy()
-                            s_df = merged_acc[merged_acc['s_daily_rank'] <= top_k].copy()
+                            c_df = merged_acc[merged_acc['prediction_score'] >= 0.30].copy()
+                            s_df = merged_acc[merged_acc['sueoki_score'] >= 0.30].copy()
 
                             c_valid = c_df['valid_play'].sum()
                             c_win = c_df['valid_win'].sum()
@@ -1324,7 +1241,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 <回答のガイドライン>
 1. 【結論ファースト】: お客様の質問に対する直接的な答えを最初に述べてください。
 2. 【根拠の提示】: 提供された<最新データ>に基づいて、なぜその結論になったのかを説明してください。データにないことは推測で作らず、「現在のデータからは分かりかねます」と誠実に答えてください（嘘の防止）。
-3. 【超・簡潔に】: 現場でスマホでサッと確認できるよう、長文・冗長な前置きは絶対に避け、全体で300文字以内を目安に極力短く回答してください。要点のみを短い箇条書きでまとめ、コンパクトに出力してください。
+3. 【超・簡潔に】: 現場でスマホでサッと確認できるよう、長文・冗長な前置きは絶対に避けてください。要点のみを短い箇条書きでまとめ、コンパクトに出力してください。
 4. 【具体的なアドバイス】: 状況に応じて、ヤメ時の目安や撤退基準、狙い目の台番号や機種などを具体的に提案してください。
 
 <分析・評価の重要ルール>
@@ -1332,7 +1249,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
 - [当日観測更新日の明示]: 強い回収日ではなく、かつ強い特定日や明確な店癖にも合致せず、AIの「変更予測」と「据え置き予測」の期待度が拮抗している（世界線が収束していない）日は、無理に事前予測で台を当てることを目的としないでください。このような日は【当日観測更新日】と定義し、「本日は事前に狙いを確定させるのが困難ですが、配分が存在する可能性はあります。朝からの決め打ちは避け、当日に島・機種・並びの挙動が『揃い始めた』のを確認してから後ヅモを狙うべき日です」とアドバイスし、「後ヅモで取れればラッキー、取れなくても負けない日」というスタンスを強調してください。さらに、当日の現場でどのような状況（特定の機種全体の合算確率の良さ、特定の島の複数台でのREG先行、並びでの出玉感など、過去の店舗傾向を踏まえた具体的な指標）が観測できれば『世界線が更新された（＝設定投入の傾向が見えた）』と判断して攻めに転じてよいか、具体的な観測ポイントを言語化して提示してください。
 - [据え置き前提の遵守]: 提供された【据え置き前提判定】が「NO」の場合は、AIの据え置き期待度(sueoki_score)が高くても無視し、「本日は設定変更（リセット）が主役の日なので、据え置きは狙えません」とキッパリ切り捨ててください。
 - [配分型の前提]: 提供されている「配分型」完全マップ診断の結論と、それに付随するサブタイプ（「塊・並び集中」「ランダム・散らし」「フェイク交じり」など）を最優先の前提として立ち回りをアドバイスしてください。例えば「並び集中」とあれば出ている台の隣を積極的に狙うよう推奨し、「各機種散らし型」とあれば機種ごとの当たり台(機種イチ)を探すよう指示し、「ランダム」とあれば隣を狙わず単体の挙動を重視するよう指示してください。「フェイク交じり」の場合はREGが良くても差枚が伴わない台は罠であると強く警告してください。
-- [後ヅモ・台選びの提案]: お客様から「夕方からの後ヅモ」「稼働途中の台選び」「どの台を探せばいいか」を相談された場合、提供されている「配分型」完全マップ診断の結論や「具体的なピンポイント狙い目 (後ヅモ・台選びのヒント)」を絶対に参考にして、具体的にどういう台を探すべきか（例：前日大凹み台、稼働が落ちている台、角台など）を論理的に提案してください。
 - [イベント評価]: 「パチンコ専用」や「他機種」イベント時、システムは一旦「シワ寄せ回収リスク」としてマイナスのイベントスコアを与えます。しかし最終的な予測期待度は、そのスコアを踏まえて「過去その店舗が実際にどういう営業をしたか」をAIが学習して算出しています。アドバイスの際は、「一般的には回収リスクがあるイベント」であることを前提にしつつも、最終的には「AIの予測データや店癖がそれに対してどういう答えを出しているか」を最も重視して回答してください。
 - [シワ寄せの判断]: お客様が「他機種イベントの日の状況はどう？」と質問された場合、提供されている「過去イベント時のジャグラー平均差枚」のデータを見て、ジャグラーが回収されているか還元されているかを的確に回答してください。
 - [AI実績の考慮]: AIの直近勝率データがある場合、その勝率が低ければ「現在は予測が当たりにくい危険な状態なので様子見が無難」といった客観的な警告を行ってください。
@@ -1351,7 +1267,6 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
   1. 検証台数（有効稼働数）が30台未満と少ない場合は「まだデータが少ないため、たまたまのヒキでブレている可能性が高いです。パラメータは変更せずにもう少し（30台以上貯まるまで）様子を見ることをおすすめします」と案内してください。
   2. 検証台数が十分な場合で、全体の勝率が低くても「還元日の勝率」が高ければ、「AIは正しく傾向を読めています。回収日のフェイクに騙されて全体勝率が落ちているだけなので、設定は変えずに還元日のみを狙えば勝てますよ」とアドバイスしてください。
   3. 還元日の勝率も低い場合は、AIが過去のまぐれ吹きを必勝法と勘違いしている「過学習」の可能性を疑い、「深さ制限(max_depth)を下げる」「最小データ数(min_child_samples)を増やす」などの具体的なパラメータ変更を提案してください。また「特徴量上位10件」から、AIがどのデータを重視して予測を立てているか（店癖）も解説し、その店癖が現状とズレていそうなら「学習期間を直近1〜3ヶ月に短縮する」などのアドバイスを行ってください。
-- [特徴量の選定アドバイス]: お客様から「不要な特徴量について相談したい」と言われた場合は、「私は案内スタッフですので、詳しいAIの特徴量(データ項目)の選別については、上部の相談相手を『データアナリスト』に切り替えてご相談いただけますと、的確なアドバイスが可能です！」と案内してください。
 
 現在日時: {now_str}
 ※提供されているデータは【{target_date_str}】の予測・イベント情報、および向こう3日間のスケジュール検討用データです。
@@ -1375,12 +1290,10 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
    - 例：「直近の店癖が大きく変わっている可能性があるため、学習期間を『直近1ヶ月』に短縮してみる価値があります」
    - 【LSTMモデル（波読み）のチューニング】: 提供された「LSTM 波読みモデル」の設定についても、過学習や未学習の兆候があれば、「lstm_epochsを増やす」「lstm_hidden_sizeを下げる」などのアドバイスを行ってください。
 5. 【検証のアドバイス】: チューニング後にどのようなデータ（還元日の勝率など）に注目して結果を確認すべきかアドバイスしてください。
-6. 【簡潔さ】: 専門的でありながらも、冗長な説明は省き、全体で300文字以内を目安に極力短く回答してください。要点を箇条書きでスマートにまとめてください。
+6. 【簡潔さ】: 専門的でありながらも、冗長な説明は省き、要点を箇条書きでスマートにまとめてください。
 7. 【店舗未選択時の対応】: 提供されたデータの中に「AI予測実績」や「現在のAIモデル設定」が含まれていない（＝店舗が指定されていない）場合は、無理に推測せず、「具体的なチューニング提案を行うには、画面上部のプルダウンから分析対象の店舗を選択してください」と案内してください。
 8. 【予測エラー分析】: 「期待外れ台」や「逃したお宝台」のデータが提供されている場合、なぜモデルがそれらの台の評価を誤ったのか（特徴量の重み付けの偏り、過学習、未学習など）を考察し、再発防止のためのパラメータ調整や特徴量エンジニアリングのアイデアを提案してください。
 9. 【配分型の考慮】: 「配分型」完全マップ診断の結論が提供されている場合、その店舗の配分思想（誤認誘導型など）と現在のAIモデルの予測傾向にズレがないかを評価してください。「誤認誘導型」の店で過学習が起きている場合は、中間設定のフェイクにAIが騙されている可能性が高いため、その旨を指摘してペナルティや特徴量の調整を提案してください。
-10. 【特徴量の選定アドバイス】: お客様から「不要な特徴量を削りたい」「今の特徴量でいらないものはあるか」と相談された場合、提供されている「現在AIが学習に使用している特徴量一覧」と、対象店舗の傾向（配分型や店癖など）を照らし合わせて分析してください。例えば、並びや塊の傾向がない店であれば『隣台のREG』関連を、末尾の傾向がない店であれば『末尾』関連をノイズとして削除するよう提案してください。削除の方法については、「現状アプリの画面からは直接削れないため、お手数ですが `config.py` 内の `BASE_FEATURES` のリストから該当の内部名をコメントアウト（または削除）していただく必要があります」と具体的に案内してください。
-11. 【フェイク要因の診断（何に騙されているか）】: お客様から「今のAIは何に騙されているか？」「なぜ外れるのか？」と質問された場合、提供されている「予測エラー分析」の期待外れ台のデータや、店舗の「配分型」「店癖(特徴量)」から、店長の仕掛けた罠をAIがどう勘違いしているかをスロッター目線で診断してください。（例：「REGだけ引けて出玉が伴わない中間設定を、高設定の不発と誤認して据え置きを狙いに行っている」「低設定のまぐれ吹きを『連勝据え置きの店癖』だと過学習している」など）。その上で、パラメータの `max_depth` を下げる等のシステム的な対策や、「この店では〇〇という条件のAI推奨台は無視したほうがいい」といった運用面の対策を提案してください。
 
 現在日時: {now_str}
 ※提供されているデータは、対象店舗の予測データおよびAIのバックテスト実績・パラメータ設定です。

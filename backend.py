@@ -830,7 +830,7 @@ def save_prediction_log(df):
         
         # 保存用に台番号のフォーマットを綺麗に統一する
         if '台番号' in df_combined.columns:
-            df_combined['台番号'] = df_combined['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+            df_combined['台番号'] = df_combined['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
             
         # 一時カラムを除外し、順番を固定してリスト化
         df_combined = df_combined[STANDARD_HEADER].fillna('')
@@ -2949,14 +2949,14 @@ def get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, sho
         if shop_col != shop_col_pred:
             df_pred_log_temp = df_pred_log_temp.rename(columns={shop_col_pred: shop_col})
             
-        df_pred_log_temp['台番号'] = df_pred_log_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_pred_log_temp['台番号'] = df_pred_log_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
         if '実行日時' in df_pred_log_temp.columns:
             df_pred_log_temp = df_pred_log_temp.sort_values('実行日時', ascending=False).drop_duplicates(
                 subset=['予測対象日_merge', shop_col, '台番号'], keep='first'
             )
 
         df_raw_temp = df_raw.copy()
-        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
         df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
         
         merged = pd.merge(df_pred_log_temp, df_raw_temp, left_on=['予測対象日_merge', shop_col, '台番号'], right_on=['対象日付', shop_col, '台番号'], how='inner', suffixes=('_pred', '_raw'))

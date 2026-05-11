@@ -264,7 +264,7 @@ def render_my_balance_page(df_raw):
             )
             
         df_balance['日付_merge'] = pd.to_datetime(df_balance['日付'])
-        df_balance['台番号_str'] = df_balance['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_balance['台番号_str'] = df_balance['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
         df_pred_log_temp['prediction_score'] = pd.to_numeric(df_pred_log_temp['prediction_score'], errors='coerce')
         if 'sueoki_score' not in df_pred_log_temp.columns:
             df_pred_log_temp['sueoki_score'] = np.nan
@@ -324,7 +324,7 @@ def render_my_balance_page(df_raw):
                             shop_col_pred = '店名' if '店名' in df_pred_temp.columns else '店舗名'
                             if shop_col_pred != '店名':
                                 df_pred_temp = df_pred_temp.rename(columns={shop_col_pred: '店名'})
-                            df_pred_temp['台番号'] = df_pred_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                            df_pred_temp['台番号'] = df_pred_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                             if 'sueoki_score' not in df_pred_temp.columns:
                                 df_pred_temp['sueoki_score'] = 0.0
                             new_preds.append(df_pred_temp[['予測対象日', '店名', '台番号', 'prediction_score', 'sueoki_score']])

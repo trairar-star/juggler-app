@@ -57,7 +57,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
         return
 
     df_target = df_day[df_day[shop_col] == selected_shop].copy()
-    df_target['台番号'] = df_target['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_target['台番号'] = df_target['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
 
     # --- 現在のAIでバックテスト（シミュレーション）を実行 ---
     with st.spinner(f"🤖 現在のAI設定で {selected_date.strftime('%Y-%m-%d')} の予測をシミュレーション中..."):
@@ -69,7 +69,7 @@ def render_daily_result_page(df_raw, df_events, df_island, shop_hyperparams):
             df_pred_target = df_pred[df_pred[pred_shop_col] == selected_shop].copy()
             
             if not df_pred_target.empty:
-                df_pred_target['台番号'] = df_pred_target['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                df_pred_target['台番号'] = df_pred_target['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                 # 必要なカラムだけ残す
                 cols_to_merge = ['台番号', 'prediction_score', 'sueoki_score', '予測信頼度', '根拠']
                 cols_to_merge = [c for c in cols_to_merge if c in df_pred_target.columns]

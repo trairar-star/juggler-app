@@ -50,7 +50,7 @@ def render_island_master_page(df_raw):
                         except: pass
 
         if input_shop and input_shop != "店舗を選択してください" and not df_raw.empty:
-            raw_machines = df_raw[df_raw[shop_col] == input_shop]['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).unique()
+            raw_machines = df_raw[df_raw[shop_col] == input_shop]['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True).unique()
             available_machines = [m for m in raw_machines if m not in registered_machines]
             try:
                 machine_list = sorted(available_machines, key=lambda x: int(x))

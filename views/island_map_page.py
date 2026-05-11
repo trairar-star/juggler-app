@@ -114,7 +114,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                     pred_date_disp = latest_pred_date.strftime('%m/%d') + " "
                 
                 if '台番号' in df_shop_pred.columns and 'prediction_score' in df_shop_pred.columns:
-                    df_shop_pred['台番号_str'] = df_shop_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                    df_shop_pred['台番号_str'] = df_shop_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                     for _, r in df_shop_pred.iterrows():
                         if 'sueoki_score' in r:
                             max_s = max(r.get('prediction_score', 0), r.get('sueoki_score', 0))
@@ -148,7 +148,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                     df_latest_pred = df_latest_pred.sort_values('実行日時', ascending=False).drop_duplicates(subset=['台番号'])
                 
                 if '台番号' in df_latest_pred.columns and 'prediction_score' in df_latest_pred.columns:
-                    df_latest_pred['台番号_str'] = df_latest_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                    df_latest_pred['台番号_str'] = df_latest_pred['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                     for _, r in df_latest_pred.iterrows():
                         if 'sueoki_score' in r:
                             max_s = max(r.get('prediction_score', 0), r.get('sueoki_score', 0))
@@ -159,7 +159,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     df_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
     df_shop['対象日付'] = pd.to_datetime(df_shop['対象日付'], errors='coerce')
     df_shop = df_shop.dropna(subset=['対象日付', '台番号'])
-    df_shop['台番号'] = df_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_shop['台番号'] = df_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
 
     # --- 過去の事前予測データ(df_pred_log)を実績データに結合 ---
     if not df_pred_log.empty:
@@ -173,7 +173,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
                 else:
                     temp_log['予測対象日_merge'] = pd.to_datetime(temp_log['対象日付'], errors='coerce') + pd.Timedelta(days=1)
                 
-                temp_log['台番号'] = temp_log['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+                temp_log['台番号'] = temp_log['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
                 
                 if '実行日時' in temp_log.columns:
                     temp_log['実行日時'] = pd.to_datetime(temp_log['実行日時'], errors='coerce')

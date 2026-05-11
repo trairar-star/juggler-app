@@ -34,7 +34,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
         df_pred_log = df_pred_log.rename(columns={shop_col_pred: shop_col})
         
     # 台番号を文字列化して型を統一（結合ミス防止）
-    df_pred_log['台番号'] = df_pred_log['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_pred_log['台番号'] = df_pred_log['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
     
     # 重複して保存された予測データへの対策（最新の実行日時のデータを優先して残す）
     if '実行日時' in df_pred_log.columns:
@@ -46,7 +46,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
     # df_verify と df_predict を結合して全台の特徴量ベースを作る
     full_feature_df = pd.concat([df_verify, df_predict], ignore_index=True)
     if '台番号' in full_feature_df.columns:
-        full_feature_df['台番号'] = full_feature_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        full_feature_df['台番号'] = full_feature_df['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
 
     if 'next_date' in full_feature_df.columns:
         full_feature_df['予測対象日_merge'] = pd.to_datetime(full_feature_df['next_date'], errors='coerce')
@@ -96,7 +96,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
     # --- 実際の成績を df_raw から直接取得 (未稼働台のデータ落ちを防ぐ) ---
     if '台番号' in df_raw.columns:
         df_raw_temp = df_raw.copy()
-        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+        df_raw_temp['台番号'] = df_raw_temp['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
         df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
         
         # 実績データ側の店舗カラム名を統一

@@ -90,7 +90,7 @@ def render_summary_map_page(df_raw, df_island):
     df_shop = df_raw[df_raw[shop_col] == selected_shop].copy()
     df_shop['対象日付'] = pd.to_datetime(df_shop['対象日付'], errors='coerce')
     df_shop = df_shop.dropna(subset=['対象日付', '台番号'])
-    df_shop['台番号'] = df_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True)
+    df_shop['台番号'] = df_shop['台番号'].astype(str).str.replace(r'\.0$', '', regex=True).str.replace(r'^0+(?=[0-9])', '', regex=True)
 
     if table_period == "直近30日":
         max_date = df_shop['対象日付'].max()
