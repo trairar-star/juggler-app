@@ -523,6 +523,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
                     df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
                     df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+                    def classify_period(d):
+                        if d <= 7: return '月初'
+                        elif d >= 25: return '月末'
+                        else: return '中旬'
+                    df_raw_temp['月内期間'] = df_raw_temp['対象日付'].dt.day.apply(classify_period)
                     shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾'])['差枚'].mean().reset_index()
                     
                     curr_wd = pred_date.dayofweek
@@ -534,11 +539,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         if not shop_data.empty:
                             wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].mean()
                             digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].mean()
+                            period_diff = shop_data[shop_data['月内期間'] == classify_period(pred_date.day)]['差枚'].mean()
+                            
+                            valid_trends = {}
+                            if pd.notna(wd_diff): valid_trends['weekday'] = wd_diff
+                            if pd.notna(digit_diff): valid_trends['digit'] = digit_diff
+                            if pd.notna(period_diff): valid_trends['period'] = period_diff
                             
                             trend_base = np.nan
-                            if pd.notna(digit_diff) and pd.notna(wd_diff): trend_base = digit_diff if abs(digit_diff) > 50 else (digit_diff + wd_diff) / 2
-                            elif pd.notna(digit_diff): trend_base = digit_diff
-                            elif pd.notna(wd_diff): trend_base = wd_diff
+                            if valid_trends:
+                                strongest_trend_name = max(valid_trends, key=lambda k: abs(valid_trends[k]))
+                                strongest_trend_value = valid_trends[strongest_trend_name]
+                                if abs(strongest_trend_value) >= 75: # Threshold for strong trend
+                                    trend_base = strongest_trend_value
+                                else:
+                                    trend_base = sum(valid_trends.values()) / len(valid_trends)
                                 
                             corrected_diffs[s_name] = (ai_diff * 0.3) + (trend_base * 0.7) if pd.notna(trend_base) else ai_diff
                         else: corrected_diffs[s_name] = ai_diff
@@ -865,6 +880,11 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
                     df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
                     df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+                    def classify_period(d):
+                        if d <= 7: return '月初'
+                        elif d >= 25: return '月末'
+                        else: return '中旬'
+                    df_raw_temp['月内期間'] = df_raw_temp['対象日付'].dt.day.apply(classify_period)
                     shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾'])['差枚'].mean().reset_index()
                     
                     curr_wd = pred_date.dayofweek
@@ -876,11 +896,21 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         if not shop_data.empty:
                             wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].mean()
                             digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].mean()
+                            period_diff = shop_data[shop_data['月内期間'] == classify_period(pred_date.day)]['差枚'].mean()
+                            
+                            valid_trends = {}
+                            if pd.notna(wd_diff): valid_trends['weekday'] = wd_diff
+                            if pd.notna(digit_diff): valid_trends['digit'] = digit_diff
+                            if pd.notna(period_diff): valid_trends['period'] = period_diff
                             
                             trend_base = np.nan
-                            if pd.notna(digit_diff) and pd.notna(wd_diff): trend_base = digit_diff if abs(digit_diff) > 50 else (digit_diff + wd_diff) / 2
-                            elif pd.notna(digit_diff): trend_base = digit_diff
-                            elif pd.notna(wd_diff): trend_base = wd_diff
+                            if valid_trends:
+                                strongest_trend_name = max(valid_trends, key=lambda k: abs(valid_trends[k]))
+                                strongest_trend_value = valid_trends[strongest_trend_name]
+                                if abs(strongest_trend_value) >= 75: # Threshold for strong trend
+                                    trend_base = strongest_trend_value
+                                else:
+                                    trend_base = sum(valid_trends.values()) / len(valid_trends)
                                 
                             if pd.notna(trend_base) and pd.notna(row['予測平均差枚']):
                                 shop_stats.at[idx, '予測平均差枚'] = (row['予測平均差枚'] * 0.3) + (trend_base * 0.7)

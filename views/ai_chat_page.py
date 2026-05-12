@@ -421,6 +421,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                     
                     wd_stats = shop_daily_df.groupby('曜日')['店舗平均差枚'].mean()
                     digit_stats = shop_daily_df.groupby('末尾')['店舗平均差枚'].mean()
+                    period_stats = shop_daily_df.groupby('月内期間')['店舗平均差枚'].mean()
                     ev_stats = shop_daily_df.groupby('イベント有無')['店舗平均差枚'].mean()
                     rank_stats = shop_daily_df.groupby('イベントランク')['店舗平均差枚'].mean().sort_values(ascending=False)
                     
@@ -432,6 +433,9 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         worst_digit = digit_stats.idxmin()
                         
                         context_data += f"\n【{selected_shop} の全体的な還元/回収の傾向 (過去実績)】\n"
+                        if not period_stats.empty:
+                            context_data += f"・月内期間別: 月初平均 {int(period_stats.get('月初', 0)):+d}枚 / 中旬平均 {int(period_stats.get('中旬', 0)):+d}枚 / 月末平均 {int(period_stats.get('月末', 0)):+d}枚\n"
+
                         context_data += f"・最も甘い(還元)曜日: {weekdays_map[best_wd]}曜日 (平均 {int(wd_stats[best_wd]):+d}枚)\n"
                         context_data += f"・最も辛い(回収)曜日: {weekdays_map[worst_wd]}曜日 (平均 {int(wd_stats[worst_wd]):+d}枚)\n"
                         context_data += f"・最も甘い(還元)特定日: {best_digit}のつく日 (平均 {int(digit_stats[best_digit]):+d}枚)\n"
