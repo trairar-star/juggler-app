@@ -49,6 +49,8 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
                 if not df_raw.empty and shop_col in df_raw.columns:
                     df_raw_temp = df_raw.copy()
                     df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                    target_dt = pd.to_datetime(target_date)
+                    df_raw_temp = df_raw_temp[df_raw_temp['対象日付'] >= (target_dt - pd.Timedelta(days=90))]
                     df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
                     df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
                     def classify_period(d):

@@ -48,6 +48,8 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
             # --- AI予測の平滑化問題を補正 (過去の実績トレンドを合成) ---
             df_raw_temp = df_raw.copy()
             df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+            target_dt = pd.to_datetime(target_date)
+            df_raw_temp = df_raw_temp[df_raw_temp['対象日付'] >= (target_dt - pd.Timedelta(days=90))]
             df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
             df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
             def classify_period(d):
@@ -60,7 +62,6 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                 店舗平均差枚=('差枚', 'mean')
             ).reset_index()
             
-            target_dt = pd.to_datetime(target_date)
             curr_wd = target_dt.dayofweek
             curr_digit = target_dt.day % 10
             curr_period = classify_period(target_dt.day)

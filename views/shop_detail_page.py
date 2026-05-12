@@ -521,6 +521,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 if not df_raw.empty and pd.notna(pred_date):
                     df_raw_temp = df_raw.copy()
                     df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                    pred_dt = pd.to_datetime(pred_date)
+                    df_raw_temp = df_raw_temp[df_raw_temp['対象日付'] >= (pred_dt - pd.Timedelta(days=90))]
                     df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
                     df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
                     def classify_period(d):
@@ -528,7 +530,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         elif d >= 25: return '月末'
                         else: return '中旬'
                     df_raw_temp['月内期間'] = df_raw_temp['対象日付'].dt.day.apply(classify_period)
-                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾'])['差枚'].mean().reset_index()
+                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾', '月内期間'])['差枚'].mean().reset_index()
                     
                     curr_wd = pred_date.dayofweek
                     curr_digit = pred_date.day % 10
@@ -878,6 +880,8 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 if '予測平均差枚' in shop_stats.columns and not df_raw.empty and pd.notna(pred_date):
                     df_raw_temp = df_raw.copy()
                     df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                    pred_dt = pd.to_datetime(pred_date)
+                    df_raw_temp = df_raw_temp[df_raw_temp['対象日付'] >= (pred_dt - pd.Timedelta(days=90))]
                     df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
                     df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
                     def classify_period(d):
@@ -885,7 +889,7 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         elif d >= 25: return '月末'
                         else: return '中旬'
                     df_raw_temp['月内期間'] = df_raw_temp['対象日付'].dt.day.apply(classify_period)
-                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾'])['差枚'].mean().reset_index()
+                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾', '月内期間'])['差枚'].mean().reset_index()
                     
                     curr_wd = pred_date.dayofweek
                     curr_digit = pred_date.day % 10
