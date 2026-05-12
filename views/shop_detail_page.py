@@ -539,9 +539,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                     for s_name, ai_diff in shop_mean_diff.items():
                         shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
                         if not shop_data.empty:
-                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].mean()
-                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].mean()
-                            period_diff = shop_data[shop_data['月内期間'] == classify_period(pred_date.day)]['差枚'].mean()
+                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].median()
+                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].median()
+                            period_diff = shop_data[shop_data['月内期間'] == classify_period(pred_date.day)]['差枚'].median()
                             
                             valid_trends = {}
                             if pd.notna(wd_diff): valid_trends['weekday'] = wd_diff
@@ -898,9 +898,9 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                         s_name = row[shop_col]
                         shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
                         if not shop_data.empty:
-                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].mean()
-                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].mean()
-                            period_diff = shop_data[shop_data['月内期間'] == classify_period(pred_date.day)]['差枚'].mean()
+                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].median()
+                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].median()
+                            period_diff = shop_data[shop_data['月内期間'] == classify_period(pred_date.day)]['差枚'].median()
                             
                             valid_trends = {}
                             if pd.notna(wd_diff): valid_trends['weekday'] = wd_diff

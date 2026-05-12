@@ -71,9 +71,9 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
                             curr_digit = target_date.day % 10
                             curr_period = classify_period(target_date.day)
                             
-                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['店舗平均差枚'].mean()
-                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['店舗平均差枚'].mean()
-                            period_diff = shop_data[shop_data['月内期間'] == curr_period]['店舗平均差枚'].mean()
+                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['店舗平均差枚'].median()
+                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['店舗平均差枚'].median()
+                            period_diff = shop_data[shop_data['月内期間'] == curr_period]['店舗平均差枚'].median()
                             
                             valid_trends = {}
                             if pd.notna(wd_diff): valid_trends['weekday'] = wd_diff

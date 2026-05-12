@@ -419,11 +419,11 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         shop_daily_df['イベント有無'] = '通常日'
                         shop_daily_df['イベントランク'] = '通常営業'
                     
-                    wd_stats = shop_daily_df.groupby('曜日')['店舗平均差枚'].mean()
-                    digit_stats = shop_daily_df.groupby('末尾')['店舗平均差枚'].mean()
-                    period_stats = shop_daily_df.groupby('月内期間')['店舗平均差枚'].mean()
-                    ev_stats = shop_daily_df.groupby('イベント有無')['店舗平均差枚'].mean()
-                    rank_stats = shop_daily_df.groupby('イベントランク')['店舗平均差枚'].mean().sort_values(ascending=False)
+                    wd_stats = shop_daily_df.groupby('曜日')['店舗平均差枚'].median()
+                    digit_stats = shop_daily_df.groupby('末尾')['店舗平均差枚'].median()
+                    period_stats = shop_daily_df.groupby('月内期間')['店舗平均差枚'].median()
+                    ev_stats = shop_daily_df.groupby('イベント有無')['店舗平均差枚'].median()
+                    rank_stats = shop_daily_df.groupby('イベントランク')['店舗平均差枚'].median().sort_values(ascending=False)
                     
                     if not wd_stats.empty and not digit_stats.empty:
                         weekdays_map = {0: '月', 1: '火', 2: '水', 3: '木', 4: '金', 5: '土', 6: '日'}
@@ -1047,8 +1047,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                         店舗平均稼働=('累計ゲーム', 'mean')
                     ).reset_index()
                     
-                    wd_stats = shop_daily[shop_daily['曜日'] == target_wd].groupby(shop_col).agg(平均差枚=('店舗平均差枚', 'mean'), 平均稼働=('店舗平均稼働', 'mean')).reset_index()
-                    digit_stats = shop_daily[shop_daily['末尾'] == target_digit].groupby(shop_col).agg(平均差枚=('店舗平均差枚', 'mean'), 平均稼働=('店舗平均稼働', 'mean')).reset_index()
+                    wd_stats = shop_daily[shop_daily['曜日'] == target_wd].groupby(shop_col).agg(平均差枚=('店舗平均差枚', 'median'), 平均稼働=('店舗平均稼働', 'mean')).reset_index()
+                    digit_stats = shop_daily[shop_daily['末尾'] == target_digit].groupby(shop_col).agg(平均差枚=('店舗平均差枚', 'median'), 平均稼働=('店舗平均稼働', 'mean')).reset_index()
                     
                     context_data += f"\n【本日の属性 ({target_dt.strftime('%m/%d')} {wd_str}曜 / {target_digit}のつく日) に対する各店舗の過去実績】\n"
                     for shop in shops:
@@ -1127,8 +1127,8 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                 if shop == "店舗を選択してください": continue
                 shop_data = shop_daily[shop_daily[shop_col] == shop]
                 if not shop_data.empty:
-                    shop_stats_by_wd[shop] = shop_data.groupby('曜日')['店舗平均差枚'].mean().to_dict()
-                    shop_stats_by_digit[shop] = shop_data.groupby('末尾')['店舗平均差枚'].mean().to_dict()
+                    shop_stats_by_wd[shop] = shop_data.groupby('曜日')['店舗平均差枚'].median().to_dict()
+                    shop_stats_by_digit[shop] = shop_data.groupby('末尾')['店舗平均差枚'].median().to_dict()
         
         for i in range(3):
             curr_dt = target_dt + pd.Timedelta(days=i)

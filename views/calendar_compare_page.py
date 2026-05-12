@@ -70,9 +70,9 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
                 s_name = row[shop_col]
                 shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
                 if not shop_data.empty:
-                    wd_diff = shop_data[shop_data['曜日'] == curr_wd]['店舗平均差枚'].mean()
-                    digit_diff = shop_data[shop_data['末尾'] == curr_digit]['店舗平均差枚'].mean()
-                    period_diff = shop_data[shop_data['月内期間'] == curr_period]['店舗平均差枚'].mean()
+                    wd_diff = shop_data[shop_data['曜日'] == curr_wd]['店舗平均差枚'].median()
+                    digit_diff = shop_data[shop_data['末尾'] == curr_digit]['店舗平均差枚'].median()
+                    period_diff = shop_data[shop_data['月内期間'] == curr_period]['店舗平均差枚'].median()
                     
                     valid_trends = {}
                     if pd.notna(wd_diff): valid_trends['weekday'] = wd_diff
