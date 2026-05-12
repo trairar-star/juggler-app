@@ -45,6 +45,36 @@ def render_weekly_schedule_page(df_raw, df_events, df_island, shop_hyperparams):
                     平均期待度=('max_score', 'mean')
                 ).reset_index()
                 
+                # --- AI予測の平滑化問題を補正 (過去の実績トレンドを合成) ---
+                if not df_raw.empty and shop_col in df_raw.columns:
+                    df_raw_temp = df_raw.copy()
+                    df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                    df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
+                    df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+                    
+                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾']).agg(
+                        店舗平均差枚=('差枚', 'mean')
+                    ).reset_index()
+                    
+                    for idx, row in shop_daily.iterrows():
+                        s_name = row[shop_col]
+                        shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
+                        if not shop_data.empty:
+                            curr_wd = target_date.weekday()
+                            curr_digit = target_date.day % 10
+                            
+                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['店舗平均差枚'].mean()
+                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['店舗平均差枚'].mean()
+                            
+                            trend_base = np.nan
+                            if pd.notna(digit_diff) and pd.notna(wd_diff):
+                                trend_base = digit_diff if abs(digit_diff) > 50 else (digit_diff + wd_diff) / 2
+                            elif pd.notna(digit_diff): trend_base = digit_diff
+                            elif pd.notna(wd_diff): trend_base = wd_diff
+                                
+                            if pd.notna(trend_base) and pd.notna(row['平均予測差枚']):
+                                shop_daily.at[idx, '平均予測差枚'] = (row['平均予測差枚'] * 0.3) + (trend_base * 0.7)
+                
                 shop_daily['予測対象日'] = target_date.strftime('%m/%d')
                 shop_daily['曜日'] = ["月", "火", "水", "木", "金", "土", "日"][target_date.weekday()]
                 shop_daily['日付(表示用)'] = shop_daily['予測対象日'] + "(" + shop_daily['曜日'] + ")"

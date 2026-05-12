@@ -27,6 +27,9 @@ def render_grape_simulator_page():
             other_out_per_g = 0.4412
         else: # チェリー狙い
             other_out_per_g = 0.4715
+            
+        use_1bet_loss = st.checkbox("ボーナス察知後の1枚掛け(ロス)を計算に含める", value=True, help="ボーナス1回につき1ゲームを1枚掛けとしてIN枚数を減算します。より厳密な逆算になります。")
+        use_grape_nuki = st.checkbox("ブドウ抜きを考慮する (1枚掛け時のブドウ取得)", value=True, help="1枚掛け時にブドウ抜きを実践している場合、その獲得期待値分を考慮して精度を高めます。")
 
         games = st.number_input("総回転数 (G)", min_value=0, value=3000, step=100)
         
@@ -47,11 +50,25 @@ def render_grape_simulator_page():
         st.subheader("💡 逆算結果")
         
         if games > 0:
-            in_tokens = games * 3
+            total_bonus = big_count + reg_count
+            
+            # 1枚掛けゲーム数の推定
+            estimated_1bet_games = total_bonus if use_1bet_loss else 0
+            
+            # IN枚数の厳密な計算
+            in_tokens = ((games - estimated_1bet_games) * 3) + (estimated_1bet_games * 1)
             out_tokens = in_tokens + diff_coins
+            
             bonus_out = (big_count * big_out) + (reg_count * reg_out)
+            
+            # 1枚掛け時のブドウ抜きによる平均払出を加味
+            if use_grape_nuki and estimated_1bet_games > 0:
+                # 1枚掛け時のブドウ成立確率を仮に1/28とした場合の期待値
+                grape_nuki_expected_out = estimated_1bet_games * (1/28.0) * grape_out_val
+                bonus_out += grape_nuki_expected_out
+                
             # 打ち方による小役（リプレイ・チェリー・ベル・ピエロ）の概算OUT
-            other_out = games * other_out_per_g 
+            other_out = (games - estimated_1bet_games) * other_out_per_g 
             
             grape_out = out_tokens - bonus_out - other_out
             grape_count = max(0, grape_out / grape_out_val)

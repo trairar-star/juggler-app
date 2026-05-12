@@ -44,6 +44,46 @@ def render_calendar_compare_page(df_raw, df_predict, target_date):
         
         if '予測平均差枚' not in shop_pred_stats.columns:
             shop_pred_stats['予測平均差枚'] = np.nan
+        else:
+            # --- AI予測の平滑化問題を補正 (過去の実績トレンドを合成) ---
+            df_raw_temp = df_raw.copy()
+            df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+            df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
+            df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+            
+            shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾']).agg(
+                店舗平均差枚=('差枚', 'mean')
+            ).reset_index()
+            
+            target_dt = pd.to_datetime(target_date)
+            curr_wd = target_dt.dayofweek
+            curr_digit = target_dt.day % 10
+            
+            for idx, row in shop_pred_stats.iterrows():
+                s_name = row[shop_col]
+                shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
+                if not shop_data.empty:
+                    wd_diff = shop_data[shop_data['曜日'] == curr_wd]['店舗平均差枚'].mean()
+                    digit_diff = shop_data[shop_data['末尾'] == curr_digit]['店舗平均差枚'].mean()
+                    
+                    trend_base = np.nan
+                    if pd.notna(digit_diff) and pd.notna(wd_diff):
+                        if abs(digit_diff) > 50:
+                            trend_base = digit_diff
+                        else:
+                            trend_base = (digit_diff + wd_diff) / 2
+                    elif pd.notna(digit_diff):
+                        trend_base = digit_diff
+                    elif pd.notna(wd_diff):
+                        trend_base = wd_diff
+                        
+                    if pd.notna(trend_base) and pd.notna(row['予測平均差枚']):
+                        shop_pred_stats.at[idx, '予測平均差枚'] = (row['予測平均差枚'] * 0.3) + (trend_base * 0.7)
+                        
+            # 補正後の値で営業予測バッジを付け直す
+            def get_eval_badge_after(row):
+                return backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 50), is_prediction=True)
+            shop_pred_stats['営業予測'] = shop_pred_stats.apply(get_eval_badge_after, axis=1)
         
         if not shop_pred_stats.empty:
             st.dataframe(

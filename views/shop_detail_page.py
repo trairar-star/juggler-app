@@ -517,6 +517,33 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
         if selected_shop == '全て' and shop_col in df.columns and '予測差枚数' in df.columns:
             shop_mean_diff = df.groupby(shop_col)['予測差枚数'].mean() if not df.empty else pd.Series()
             if not shop_mean_diff.empty:
+                # --- AI予測の平滑化問題を補正 (過去の実績トレンドを合成) ---
+                if not df_raw.empty and pd.notna(pred_date):
+                    df_raw_temp = df_raw.copy()
+                    df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                    df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
+                    df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾'])['差枚'].mean().reset_index()
+                    
+                    curr_wd = pred_date.dayofweek
+                    curr_digit = pred_date.day % 10
+                    
+                    corrected_diffs = {}
+                    for s_name, ai_diff in shop_mean_diff.items():
+                        shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
+                        if not shop_data.empty:
+                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].mean()
+                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].mean()
+                            
+                            trend_base = np.nan
+                            if pd.notna(digit_diff) and pd.notna(wd_diff): trend_base = digit_diff if abs(digit_diff) > 50 else (digit_diff + wd_diff) / 2
+                            elif pd.notna(digit_diff): trend_base = digit_diff
+                            elif pd.notna(wd_diff): trend_base = wd_diff
+                                
+                            corrected_diffs[s_name] = (ai_diff * 0.3) + (trend_base * 0.7) if pd.notna(trend_base) else ai_diff
+                        else: corrected_diffs[s_name] = ai_diff
+                    shop_mean_diff = pd.Series(corrected_diffs)
+                    
                 best_shop = shop_mean_diff.idxmax()
                 best_diff = shop_mean_diff.max()
                 
@@ -832,6 +859,37 @@ def render_shop_detail_page(df, df_raw, shop_col, df_events=None, df_train=None,
                 
                 shop_stats = backend.get_shop_prediction_ranking(df, df_raw, df_pred_log, specs, eval_period, shop_col)
                 
+                # --- AI予測の平滑化問題を補正 (過去の実績トレンドを合成) ---
+                if '予測平均差枚' in shop_stats.columns and not df_raw.empty and pd.notna(pred_date):
+                    df_raw_temp = df_raw.copy()
+                    df_raw_temp['対象日付'] = pd.to_datetime(df_raw_temp['対象日付'], errors='coerce')
+                    df_raw_temp['曜日'] = df_raw_temp['対象日付'].dt.dayofweek
+                    df_raw_temp['末尾'] = df_raw_temp['対象日付'].dt.day % 10
+                    shop_daily_act = df_raw_temp.groupby([shop_col, '対象日付', '曜日', '末尾'])['差枚'].mean().reset_index()
+                    
+                    curr_wd = pred_date.dayofweek
+                    curr_digit = pred_date.day % 10
+                    
+                    for idx, row in shop_stats.iterrows():
+                        s_name = row[shop_col]
+                        shop_data = shop_daily_act[shop_daily_act[shop_col] == s_name]
+                        if not shop_data.empty:
+                            wd_diff = shop_data[shop_data['曜日'] == curr_wd]['差枚'].mean()
+                            digit_diff = shop_data[shop_data['末尾'] == curr_digit]['差枚'].mean()
+                            
+                            trend_base = np.nan
+                            if pd.notna(digit_diff) and pd.notna(wd_diff): trend_base = digit_diff if abs(digit_diff) > 50 else (digit_diff + wd_diff) / 2
+                            elif pd.notna(digit_diff): trend_base = digit_diff
+                            elif pd.notna(wd_diff): trend_base = wd_diff
+                                
+                            if pd.notna(trend_base) and pd.notna(row['予測平均差枚']):
+                                shop_stats.at[idx, '予測平均差枚'] = (row['予測平均差枚'] * 0.3) + (trend_base * 0.7)
+                                
+                    # 営業予測バッジを付け直す
+                    def get_eval_badge_after(row):
+                        return backend.classify_shop_eval(row.get('予測平均差枚'), row.get('全台数', 50), is_prediction=True)
+                    shop_stats['営業予測'] = shop_stats.apply(get_eval_badge_after, axis=1)
+
                 st.caption(f"※{eval_period}の**ガチ予測（保存ログ）に対する正答率と勝率**です。この数値が極端に低い（40%未満）店舗は、AIの予測が通用しにくい（フェイクが多い等）と判断し、ランキング順位を下げるペナルティを適用しています。（※サンプル5台以上で適用）")
                 st.data_editor(
                     shop_stats[[shop_col, '営業予測', '予測平均差枚', '平均スコア', '推奨台数', '全台数', '収集日数', '変更勝率', '据え置き勝率']],
