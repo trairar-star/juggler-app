@@ -79,12 +79,12 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
     if 'prediction_score_saved' in base_df.columns:
         base_df['prediction_score'] = base_df['prediction_score_saved']
     if 'prediction_score' in base_df.columns:
-        base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce')
+        base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce').fillna(0.0)
         
     if 'sueoki_score_saved' in base_df.columns:
         base_df['sueoki_score'] = base_df['sueoki_score_saved']
     if 'sueoki_score' in base_df.columns:
-        base_df['sueoki_score'] = pd.to_numeric(base_df['sueoki_score'], errors='coerce')
+        base_df['sueoki_score'] = pd.to_numeric(base_df['sueoki_score'], errors='coerce').fillna(0.0)
     else:
         base_df['sueoki_score'] = 0.0
         
@@ -179,7 +179,7 @@ def render_ranking_comparison_page(df_pred_log, df_verify, df_predict, df_raw, s
         base_df.loc[base_df['予測対象日_merge'].isin(sueoki_no_dates), 'sueoki_score'] = 0.0
 
     merged_df = base_df.dropna(subset=['差枚_actual'])
-    merged_df = merged_df[merged_df['prediction_score'].notna() | merged_df['sueoki_score'].notna()].copy()
+    merged_df = merged_df[(merged_df['prediction_score'] > 0) | merged_df['sueoki_score'] > 0].copy()
 
     if merged_df.empty:
         st.info("まだ結果が判明している予測がありません。")

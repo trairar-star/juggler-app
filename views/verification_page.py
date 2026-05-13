@@ -203,12 +203,12 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
     if 'prediction_score_saved' in base_df.columns:
         base_df['prediction_score'] = base_df['prediction_score_saved']
     if 'prediction_score' in base_df.columns:
-        base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce')
+        base_df['prediction_score'] = pd.to_numeric(base_df['prediction_score'], errors='coerce').fillna(0.0)
         
     if 'sueoki_score_saved' in base_df.columns:
         base_df['sueoki_score'] = base_df['sueoki_score_saved']
     if 'sueoki_score' in base_df.columns:
-        base_df['sueoki_score'] = pd.to_numeric(base_df['sueoki_score'], errors='coerce')
+        base_df['sueoki_score'] = pd.to_numeric(base_df['sueoki_score'], errors='coerce').fillna(0.0)
     else:
         base_df['sueoki_score'] = 0.0
         
@@ -314,7 +314,7 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                 base_df[orig_col] = base_df[col]
 
     base_df = base_df.dropna(subset=['差枚_actual'])
-    base_df = base_df[base_df['prediction_score'].notna() | base_df['sueoki_score'].notna()].copy()
+    base_df = base_df[(base_df['prediction_score'] > 0) | (base_df['sueoki_score'] > 0)].copy()
     
     if base_df.empty:
         st.info("まだ結果が判明している予測がありません。")
@@ -775,11 +775,13 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
         recent_past = past_stats.tail(14)
         
         # 台数（サンプル数）を考慮した加重平均を計算する
-        total_past_score = (recent_past['avg_s5_score'] * recent_past['count']).sum()
+        total_past_score = (recent_past['avg_s5_score'].fillna(0.0) * recent_past['count']).sum()
         total_past_count = recent_past['count'].sum()
         past_avg_score = total_past_score / total_past_count if total_past_count > 0 else 0
         
         latest_score = latest_stat['avg_s5_score']
+        if pd.isna(latest_score):
+            latest_score = 0.0
         score_diff = latest_score - past_avg_score
         
         has_comparison = True
@@ -1100,8 +1102,16 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
             st.markdown(f"**⚔️ 変更(上げ)予測 vs 据え置き予測 精度比較 ({selected_period})**")
             st.caption("AIが「変更(上げ)」を狙った台と「据え置き」を狙った台（それぞれ期待度30%以上）の実際の成績を比較します。どちらの狙い目が今の店舗に合っているかが分かります。")
             
-            change_df = prob_analysis_df[prob_analysis_df['prediction_score'] >= 0.30].copy()
-            sueoki_df = prob_analysis_df[prob_analysis_df['sueoki_score'] >= 0.30].copy()
+            # ラジオボタンの影響を排除したベースデータから抽出
+            if period_options[selected_period] is not None:
+                latest_date = merged_df['対象日付'].max()
+                cutoff_date = latest_date - pd.Timedelta(days=period_options[selected_period])
+                compare_base_df = merged_df[merged_df['対象日付'] >= cutoff_date].copy()
+            else:
+                compare_base_df = merged_df.copy()
+                
+            change_df = compare_base_df[compare_base_df['prediction_score'] >= 0.30].copy()
+            sueoki_df = compare_base_df[compare_base_df['sueoki_score'] >= 0.30].copy()
             
             def calc_compare_stats(df, name):
                 if df.empty:
@@ -1392,6 +1402,9 @@ def _render_verification_stats(df_pred_log, df_verify, df_predict, df_raw, selec
                         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                         status_text.text("✅ 全店舗のOptunaチューニングが完了しました！")
                         st.toast("✅ 全店舗のAIパラメータを最適化しました！")
+                        backend.clear_local_cache()
+                        backend.clear_spreadsheet_cache()
+                        st.cache_data.clear()
                         st.rerun()
 
             st.divider()
@@ -1892,12 +1905,25 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
             st.session_state["shop_hyperparams"]["デフォルト"]['lstm_epochs'] = hp_lstm_epochs
             
         backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+        # 新しい設定で再計算させるためキャッシュをクリア
+        backend.clear_local_cache()
+        if selected_shop == "デフォルト":
+            backend.clear_spreadsheet_cache()
+        else:
+            backend.clear_spreadsheet_cache_for_shop(selected_shop)
+        st.cache_data.clear()
         st.rerun()
         
     if reset_btn:
         if selected_shop in st.session_state["shop_hyperparams"]:
             del st.session_state["shop_hyperparams"][selected_shop]
             backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
+            backend.clear_local_cache()
+            if selected_shop == "デフォルト":
+                backend.clear_spreadsheet_cache()
+            else:
+                backend.clear_spreadsheet_cache_for_shop(selected_shop)
+            st.cache_data.clear()
             st.rerun()
             
     if test_btn:
@@ -2373,6 +2399,9 @@ def _render_settings_tab(df_verify, df_raw, selected_shop, df_events=None):
                 }
                 backend.save_shop_ai_settings(st.session_state["shop_hyperparams"])
                 st.toast("✅ 自動チューニングが完了し、最も優秀だった設定を適用しました！")
+                backend.clear_local_cache()
+                backend.clear_spreadsheet_cache_for_shop(selected_shop)
+                st.cache_data.clear()
                 st.rerun()
 
     with st.expander("🔧 AIパラメータ調整用のシミュレーション結果 (答え合わせ)", expanded=True):
