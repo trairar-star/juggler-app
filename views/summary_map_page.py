@@ -126,7 +126,7 @@ def render_summary_map_page(df_raw, df_island):
     # 島情報の付与
     df_month = backend._apply_island_features(df_month, df_island, shop_col)
 
-    tab_mac, tab_isl = st.tabs(["🎰 機種別 サマリー", "🏝️ 島(列)別 サマリー"])
+    tab_mac, tab_isl_mac, tab_isl_all = st.tabs(["🎰 機種別 サマリー", "🏝️ 島×機種別 サマリー", "🏝️ 島全体 サマリー"])
 
     # 共通のCSSとJS
     custom_css_js = """
@@ -343,8 +343,8 @@ def render_summary_map_page(df_raw, df_island):
         else:
             st.info("機種別データがありません。")
 
-    # --- 🏝️ 島(列)別 サマリー ---
-    with tab_isl:
+    # --- 🏝️ 島×機種別 サマリー ---
+    with tab_isl_mac:
         if 'island_id' in df_month.columns:
             isl_df = df_month[df_month['island_id'] != "Unknown"].copy()
             if not isl_df.empty:
@@ -355,7 +355,7 @@ def render_summary_map_page(df_raw, df_island):
                     g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique')
                 ).reset_index()
                 
-                isl_order = isl_daily.groupby('島名')['count'].max().sort_values(ascending=False).index.tolist()
+                isl_order = sorted(isl_daily['島名'].unique().tolist())
                 
                 records = []
                 for (m, d), group in isl_daily.groupby(['島名', 'day_str']):
@@ -374,7 +374,47 @@ def render_summary_map_page(df_raw, df_island):
                     
                     st.info("💡 **便利機能**: 表のセルをマウスでドラッグして複数選択すると、選択した日・島の **合計データ** が下部に自動計算されます！")
                     
-                    html_content_isl = custom_css_js + generate_html_table(pivot_isl, '島名', 'isl-scroll')
+                    html_content_isl = custom_css_js + generate_html_table(pivot_isl, '島名', 'isl-mac-scroll')
+                    st.components.v1.html(html_content_isl, height=600, scrolling=False)
+                else:
+                    st.info("島別データがありません。")
+            else:
+                st.info("島マスターに登録された台の稼働データがありません。サイドバーの「⚙️ 島マスター管理」から島を登録してください。")
+        else:
+            st.info("島データがありません。")
+
+    # --- 🏝️ 島全体 サマリー ---
+    with tab_isl_all:
+        if 'island_id' in df_month.columns:
+            isl_df = df_month[df_month['island_id'] != "Unknown"].copy()
+            if not isl_df.empty:
+                isl_df['島名_元'] = isl_df['island_id'].apply(lambda x: str(x).split('_', 1)[1] if '_' in str(x) else str(x))
+                isl_df['島名'] = isl_df['島名_元']
+                
+                isl_daily = isl_df.groupby(['島名', 'day_str']).agg(
+                    g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique')
+                ).reset_index()
+                
+                isl_order = sorted(isl_daily['島名'].unique().tolist())
+                
+                records = []
+                for (m, d), group in isl_daily.groupby(['島名', 'day_str']):
+                    records.append({'島名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum())})
+                    
+                if records:
+                    pivot_isl = pd.DataFrame(records).pivot(index='島名', columns='day_str', values='val')
+                    date_cols = sorted(pivot_isl.columns)
+                    pivot_isl = pivot_isl.reindex(isl_order)
+                    pivot_isl = pivot_isl[date_cols]
+                    
+                    st.markdown(f"**(色分けの目安 - {table_metric})**")
+                    if table_metric == "平均差枚": st.markdown("🟥: 台平均+500枚以上 / 🟧: 台平均+200枚以上 / 🟨: プラス / 🟦: 台平均-500枚以下")
+                    elif table_metric == "合計差枚": st.markdown("🟥: 島合計+3000枚以上 / 🟧: 島合計+1000枚以上 / 🟨: プラス / 🟦: 島合計-3000枚以下")
+                    else: st.markdown("🟥: 1/260以下 / 🟧: 1/300以下 / 🟨: 1/340以下")
+                    
+                    st.info("💡 **便利機能**: 表のセルをマウスでドラッグして複数選択すると、選択した日・島の **合計データ** が下部に自動計算されます！")
+                    
+                    html_content_isl = custom_css_js + generate_html_table(pivot_isl, '島名', 'isl-all-scroll')
                     st.components.v1.html(html_content_isl, height=600, scrolling=False)
                 else:
                     st.info("島別データがありません。")

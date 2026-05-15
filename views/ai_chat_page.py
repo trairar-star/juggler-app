@@ -37,6 +37,176 @@ def save_chat_history(messages):
     except Exception:
         pass
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def _get_chat_backtest_summary(selected_shop, shop_col, _df_verify, _shop_hyperparams, _df_events, _df_raw):
+    backtest_summary = ""
+    try:
+        shop_df = _df_verify[_df_verify[shop_col] == selected_shop].copy()
+        if len(shop_df) >= 50:
+            from shop_trends import diagnose_allocation_types
+            from config import MACHINE_SPECS
+            alloc_types = diagnose_allocation_types(shop_df, shop_col, MACHINE_SPECS)
+            is_point = alloc_types.get(selected_shop, {}).get("is_point", False)
+            
+            actual_features = [f for f in BASE_FEATURES if f in shop_df.columns]
+            if is_point:
+                ignore_features = [
+                    'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
+                    'past_island_reg_prob', 'is_main_island', 'is_wall_island'
+                ]
+                actual_features = [f for f in actual_features if f not in ignore_features]
+            cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
+            
+            shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
+            max_date = shop_df['対象日付'].max()
+            cutoff_date = max_date - pd.Timedelta(days=30)
+            train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
+            test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
+
+            if len(train_data) >= 30 and len(test_data) >= 10:
+                
+                keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
+                change_features = actual_features.copy()
+                
+                test_data_processed = test_data.copy()
+                test_data_processed['prediction_score'] = np.nan
+                test_data_processed['sueoki_score'] = np.nan
+                test_data_processed['予測差枚数'] = np.nan
+                train_data_processed = train_data.copy()
+                train_data_processed['prediction_score'] = np.nan
+                train_data_processed['sueoki_score'] = np.nan
+                train_data_processed['予測差枚数'] = np.nan
+                
+                default_hp = _shop_hyperparams.get("デフォルト", {})
+                shop_hp = _shop_hyperparams.get(selected_shop, default_hp)
+                
+                for mode in ['change', 'keep']:
+                    target_val = 0 if mode == 'change' else 1
+                    target_col = 'prediction_score' if mode == 'change' else 'sueoki_score'
+                    
+                    train_mode_mask = train_data['is_prev_high_reg'] == target_val
+                    test_mode_mask = test_data['is_prev_high_reg'] == target_val
+                    
+                    mode_train = train_data[train_mode_mask].copy()
+                    mode_test = test_data[test_mode_mask].copy()
+                    
+                    if len(mode_train) < 30 or len(mode_test) == 0:
+                        continue
+                        
+                    current_features = change_features if mode == 'change' else keep_features
+                    current_cat_features = [f for f in cat_features if f in current_features]
+                    
+                    X_train, y_train = mode_train[current_features], mode_train['target']
+                    X_test, y_test = mode_test[current_features], mode_test['target']
+                    
+                    days_diff = (mode_train['対象日付'].max() - mode_train['対象日付']).dt.days
+                    sample_weights = 0.995 ** days_diff
+                    
+                    p_prefix = "" if mode == 'change' else "k_"
+                    params = {
+                        'n_estimators': shop_hp.get(f'{p_prefix}n_estimators', shop_hp.get('n_estimators', 300)),
+                        'learning_rate': shop_hp.get(f'{p_prefix}learning_rate', shop_hp.get('learning_rate', 0.03)),
+                        'num_leaves': shop_hp.get(f'{p_prefix}num_leaves', shop_hp.get('num_leaves', 15)),
+                        'max_depth': shop_hp.get(f'{p_prefix}max_depth', shop_hp.get('max_depth', 4)),
+                        'min_child_samples': shop_hp.get(f'{p_prefix}min_child_samples', shop_hp.get('min_child_samples', 50)),
+                        'reg_alpha': shop_hp.get(f'{p_prefix}reg_alpha', shop_hp.get('reg_alpha', 0.0)),
+                        'reg_lambda': shop_hp.get(f'{p_prefix}reg_lambda', shop_hp.get('reg_lambda', 0.0))
+                    }
+                    
+                    reg_model = lgb.LGBMRegressor(objective='huber', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                    reg_model.fit(X_train, mode_train['next_diff'], sample_weight=sample_weights, categorical_feature=current_cat_features)
+                    
+                    X_train_st = X_train.copy(); X_train_st['predicted_diff'] = reg_model.predict(X_train)
+                    
+                    mode_train['valid_play_mask'] = get_valid_play_mask(mode_train['next_累計ゲーム'], mode_train['next_diff'])
+                    mode_train_cls = mode_train[mode_train['valid_play_mask']]
+                    if len(mode_train_cls) > 0 and mode_train_cls['target'].sum() > 0:
+                        X_train_cls = X_train_st.loc[mode_train_cls.index]
+                        y_train_cls = mode_train_cls['target']
+                        sw_cls = pd.Series(sample_weights, index=mode_train.index).loc[mode_train_cls.index]
+                        model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
+                        model.fit(X_train_cls, y_train_cls, sample_weight=sw_cls, categorical_feature=current_cat_features)
+                        
+                        X_test_st = X_test.copy(); X_test_st['predicted_diff'] = reg_model.predict(X_test)
+                        preds = model.predict_proba(X_test_st)[:, 1]
+                        
+                        test_data_processed.loc[mode_test.index, target_col] = preds
+                        test_data_processed.loc[mode_test.index, '予測差枚数'] = X_test_st['predicted_diff'].values
+                        
+                        train_data_processed.loc[mode_train.index, target_col] = model.predict_proba(X_train_st)[:, 1]
+                        train_data_processed.loc[mode_train.index, '予測差枚数'] = X_train_st['predicted_diff'].values
+                
+                test_data_processed['prediction_score'] = test_data_processed['prediction_score'].fillna(0.0)
+                test_data_processed['sueoki_score'] = test_data_processed['sueoki_score'].fillna(0.0)
+                test_data_processed['予測差枚数'] = test_data_processed['予測差枚数'].fillna(0)
+                train_data_processed['prediction_score'] = train_data_processed['prediction_score'].fillna(0.0)
+                train_data_processed['sueoki_score'] = train_data_processed['sueoki_score'].fillna(0.0)
+                train_data_processed['予測差枚数'] = train_data_processed['予測差枚数'].fillna(0)
+                
+                test_data_processed, _ = postprocess_predictions(test_data_processed, train_data_processed)
+                
+                sueoki_no_dates = set()
+                for d in test_data_processed['対象日付'].dt.date.unique():
+                    tgt_date = pd.to_datetime(d) + pd.Timedelta(days=1)
+                    premise, _ = backend.evaluate_sueoki_premise(_df_raw[_df_raw[shop_col] == selected_shop], tgt_date, _df_events)
+                    if premise == "NO":
+                        sueoki_no_dates.add(pd.to_datetime(d))
+                for d in sueoki_no_dates:
+                    test_data_processed.loc[test_data_processed['対象日付'] == d, 'sueoki_score'] = 0.0
+
+                test_data['pred_score'] = test_data_processed[['prediction_score', 'sueoki_score']].max(axis=1).values
+                test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
+                test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
+                
+                def get_prob_band(score):
+                    if score >= 0.50: return '50%以上'
+                    elif score >= 0.40: return '40%〜49%'
+                    elif score >= 0.30: return '30%〜39%'
+                    elif score >= 0.20: return '20%〜29%'
+                    else: return '20%未満'
+                
+                test_data['c_確率帯'] = test_data_processed['prediction_score'].apply(get_prob_band)
+                c_test_stats = test_data.groupby('c_確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
+                c_test_stats['勝率'] = np.where(c_test_stats['有効稼働数'] > 0, c_test_stats['勝数'] / c_test_stats['有効稼働数'] * 100, 0.0)
+                
+                all_test_valid = test_data['valid_play'].sum()
+                all_test_win = test_data['valid_win'].sum()
+                overall_test_win_rate = (all_test_win / all_test_valid * 100) if all_test_valid > 0 else 0.0
+                
+                test_data['s_確率帯'] = test_data_processed['sueoki_score'].apply(get_prob_band)
+                s_test_stats = test_data.groupby('s_確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
+                s_test_stats['勝率'] = np.where(s_test_stats['有効稼働数'] > 0, s_test_stats['勝数'] / s_test_stats['有効稼働数'] * 100, 0.0)
+                
+                c_test_stats['全体勝率'] = overall_test_win_rate
+                c_test_stats['勝率リフト'] = np.where(c_test_stats['全体勝率'] > 0, c_test_stats['勝率'] / c_test_stats['全体勝率'], 0.0)
+                s_test_stats['全体勝率'] = overall_test_win_rate
+                s_test_stats['勝率リフト'] = np.where(s_test_stats['全体勝率'] > 0, s_test_stats['勝率'] / s_test_stats['全体勝率'], 0.0)
+                
+                backtest_summary = f"\n【最重要・カンニングなしテストによるAI実力分析】\nこの店舗のテスト期間全体の勝率(適当に座った場合の勝率)は {overall_test_win_rate:.1f}% です。\nAI予測（カンニングなしのバックテスト）では、以下の確率帯を狙うのが最も勝率・期待値が高くなりました。AIに相談する際は、この期待度以上を狙うように指示すると効果的です。\n"
+                
+                c_filtered = c_test_stats[c_test_stats['有効稼働数'] >= 5]
+                if not c_filtered.empty:
+                    best_c = c_filtered.loc[c_filtered['勝率'].idxmax()]
+                    backtest_summary += f"・変更(上げ)予測: 期待度が「{best_c['c_確率帯']}」の台を狙うのが最も勝率が高く({best_c['勝率']:.1f}% / リフト {best_c['勝率リフト']:.2f}倍)、平均差枚も{int(best_c['平均差枚']):+d}枚と優秀です。\n"
+                    backtest_summary += "  [変更予測 各確率帯の成績]\n"
+                    for _, r in c_filtered.iterrows():
+                        backtest_summary += f"    - {r['c_確率帯']}: 勝率 {r['勝率']:.1f}% (リフト {r['勝率リフト']:.2f}倍) / 平均 {int(r['平均差枚']):+d}枚\n"
+                else:
+                    backtest_summary += "・変更(上げ)予測: 有効なテストデータが不足しています。\n"
+                    
+                s_filtered = s_test_stats[s_test_stats['有効稼働数'] >= 5]
+                if not s_filtered.empty:
+                    best_s = s_filtered.loc[s_filtered['勝率'].idxmax()]
+                    backtest_summary += f"・据え置き予測: 期待度が「{best_s['s_確率帯']}」の台を狙うのが最も勝率が高く({best_s['勝率']:.1f}% / リフト {best_s['勝率リフト']:.2f}倍)、平均差枚も{int(best_s['平均差枚']):+d}枚と優秀です。\n"
+                    backtest_summary += "  [据え置き予測 各確率帯の成績]\n"
+                    for _, r in s_filtered.iterrows():
+                        backtest_summary += f"    - {r['s_確率帯']}: 勝率 {r['勝率']:.1f}% (リフト {r['勝率リフト']:.2f}倍) / 平均 {int(r['平均差枚']):+d}枚\n"
+                else:
+                    backtest_summary += "・据え置き予測: 有効なテストデータが不足しています。\n"
+    except Exception:
+        pass
+    return backtest_summary
+
 def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None, df_importance=None, shop_hyperparams=None):
     # 会話履歴の初期化 (ファイルから復元)
     if "gemini_messages" not in st.session_state:
@@ -215,173 +385,7 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
         # --- カンニングなしテストを実行し、店舗の「スイートスポット」をAIに教える ---
         backtest_summary = ""
         if selected_shop != "店舗を選択してください" and not df_verify.empty:
-            try:
-                shop_df = df_verify[df_verify[shop_col] == selected_shop].copy()
-                if len(shop_df) >= 50:
-                    from shop_trends import diagnose_allocation_types
-                    from config import MACHINE_SPECS
-                    alloc_types = diagnose_allocation_types(shop_df, shop_col, MACHINE_SPECS)
-                    is_point = alloc_types.get(selected_shop, {}).get("is_point", False)
-                    
-                    actual_features = [f for f in BASE_FEATURES if f in shop_df.columns]
-                    if is_point:
-                        ignore_features = [
-                            'is_neighbor_high_reg', 'neighbor_reg_reliability_score', 'neighbor_high_setting_count',
-                            'past_island_reg_prob', 'is_main_island', 'is_wall_island'
-                        ]
-                        actual_features = [f for f in actual_features if f not in ignore_features]
-                    cat_features = [f for f in ['machine_code', 'shop_code', 'event_code', 'target_weekday', 'target_date_end_digit'] if f in actual_features]
-                    
-                    shop_df['対象日付'] = pd.to_datetime(shop_df['対象日付'])
-                    max_date = shop_df['対象日付'].max()
-                    cutoff_date = max_date - pd.Timedelta(days=30)
-                    train_data = shop_df[shop_df['対象日付'] <= cutoff_date].copy()
-                    test_data = shop_df[shop_df['対象日付'] > cutoff_date].copy()
-
-                    if len(train_data) >= 30 and len(test_data) >= 10:
-                        
-                        keep_features = [f for f in actual_features if f in KEEP_ALLOWED_FEATURES]
-                        change_features = actual_features.copy()
-                        
-                        test_data_processed = test_data.copy()
-                        test_data_processed['prediction_score'] = np.nan
-                        test_data_processed['sueoki_score'] = np.nan
-                        test_data_processed['予測差枚数'] = np.nan
-                        train_data_processed = train_data.copy()
-                        train_data_processed['prediction_score'] = np.nan
-                        train_data_processed['sueoki_score'] = np.nan
-                        train_data_processed['予測差枚数'] = np.nan
-                        
-                        default_hp = shop_hyperparams.get("デフォルト", {})
-                        shop_hp = shop_hyperparams.get(selected_shop, default_hp)
-                        
-                        for mode in ['change', 'keep']:
-                            target_val = 0 if mode == 'change' else 1
-                            target_col = 'prediction_score' if mode == 'change' else 'sueoki_score'
-                            
-                            train_mode_mask = train_data['is_prev_high_reg'] == target_val
-                            test_mode_mask = test_data['is_prev_high_reg'] == target_val
-                            
-                            mode_train = train_data[train_mode_mask].copy()
-                            mode_test = test_data[test_mode_mask].copy()
-                            
-                            if len(mode_train) < 30 or len(mode_test) == 0:
-                                continue
-                                
-                            current_features = change_features if mode == 'change' else keep_features
-                            current_cat_features = [f for f in cat_features if f in current_features]
-                            
-                            X_train, y_train = mode_train[current_features], mode_train['target']
-                            X_test, y_test = mode_test[current_features], mode_test['target']
-                            
-                            days_diff = (mode_train['対象日付'].max() - mode_train['対象日付']).dt.days
-                            sample_weights = 0.995 ** days_diff
-                            
-                            p_prefix = "" if mode == 'change' else "k_"
-                            params = {
-                                'n_estimators': shop_hp.get(f'{p_prefix}n_estimators', shop_hp.get('n_estimators', 300)),
-                                'learning_rate': shop_hp.get(f'{p_prefix}learning_rate', shop_hp.get('learning_rate', 0.03)),
-                                'num_leaves': shop_hp.get(f'{p_prefix}num_leaves', shop_hp.get('num_leaves', 15)),
-                                'max_depth': shop_hp.get(f'{p_prefix}max_depth', shop_hp.get('max_depth', 4)),
-                                'min_child_samples': shop_hp.get(f'{p_prefix}min_child_samples', shop_hp.get('min_child_samples', 50)),
-                                'reg_alpha': shop_hp.get(f'{p_prefix}reg_alpha', shop_hp.get('reg_alpha', 0.0)),
-                                'reg_lambda': shop_hp.get(f'{p_prefix}reg_lambda', shop_hp.get('reg_lambda', 0.0))
-                            }
-                            
-                            reg_model = lgb.LGBMRegressor(objective='huber', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
-                            reg_model.fit(X_train, mode_train['next_diff'], sample_weight=sample_weights, categorical_feature=current_cat_features)
-                            
-                            X_train_st = X_train.copy(); X_train_st['predicted_diff'] = reg_model.predict(X_train)
-                            
-                            mode_train['valid_play_mask'] = get_valid_play_mask(mode_train['next_累計ゲーム'], mode_train['next_diff'])
-                            mode_train_cls = mode_train[mode_train['valid_play_mask']]
-                            if len(mode_train_cls) > 0 and mode_train_cls['target'].sum() > 0:
-                                X_train_cls = X_train_st.loc[mode_train_cls.index]
-                                y_train_cls = mode_train_cls['target']
-                                sw_cls = pd.Series(sample_weights, index=mode_train.index).loc[mode_train_cls.index]
-                                model = lgb.LGBMClassifier(objective='binary', random_state=42, verbose=-1, **params, subsample=0.8, subsample_freq=1, colsample_bytree=0.7, min_split_gain=0.02)
-                                model.fit(X_train_cls, y_train_cls, sample_weight=sw_cls, categorical_feature=current_cat_features)
-                                
-                                X_test_st = X_test.copy(); X_test_st['predicted_diff'] = reg_model.predict(X_test)
-                                preds = model.predict_proba(X_test_st)[:, 1]
-                                
-                                test_data_processed.loc[mode_test.index, target_col] = preds
-                                test_data_processed.loc[mode_test.index, '予測差枚数'] = X_test_st['predicted_diff'].values
-                                
-                                train_data_processed.loc[mode_train.index, target_col] = model.predict_proba(X_train_st)[:, 1]
-                                train_data_processed.loc[mode_train.index, '予測差枚数'] = X_train_st['predicted_diff'].values
-                        
-                        test_data_processed['prediction_score'] = test_data_processed['prediction_score'].fillna(0.0)
-                        test_data_processed['sueoki_score'] = test_data_processed['sueoki_score'].fillna(0.0)
-                        test_data_processed['予測差枚数'] = test_data_processed['予測差枚数'].fillna(0)
-                        train_data_processed['prediction_score'] = train_data_processed['prediction_score'].fillna(0.0)
-                        train_data_processed['sueoki_score'] = train_data_processed['sueoki_score'].fillna(0.0)
-                        train_data_processed['予測差枚数'] = train_data_processed['予測差枚数'].fillna(0)
-                        
-                        test_data_processed, _ = postprocess_predictions(test_data_processed, train_data_processed)
-                        
-                        # 据え置き前提NOの日をリセット (AIチャット用)
-                        sueoki_no_dates = set()
-                        for d in test_data_processed['対象日付'].dt.date.unique():
-                            tgt_date = pd.to_datetime(d) + pd.Timedelta(days=1)
-                            premise, _ = backend.evaluate_sueoki_premise(df_raw[df_raw[shop_col] == selected_shop], tgt_date, df_events)
-                            if premise == "NO":
-                                sueoki_no_dates.add(pd.to_datetime(d))
-                        for d in sueoki_no_dates:
-                            test_data_processed.loc[test_data_processed['対象日付'] == d, 'sueoki_score'] = 0.0
-
-                        test_data['pred_score'] = test_data_processed[['prediction_score', 'sueoki_score']].max(axis=1).values
-
-                        test_data['valid_play'] = get_valid_play_mask(test_data['next_累計ゲーム'], test_data['next_diff'])
-                        test_data['valid_win'] = test_data['valid_play'] & (pd.to_numeric(test_data['next_diff'], errors='coerce').fillna(0) > 0)
-                        
-                        def get_prob_band(score):
-                            if score >= 0.50: return '50%以上'
-                            elif score >= 0.40: return '40%〜49%'
-                            elif score >= 0.30: return '30%〜39%'
-                            elif score >= 0.20: return '20%〜29%'
-                            else: return '20%未満'
-                        
-                        test_data['c_確率帯'] = test_data_processed['prediction_score'].apply(get_prob_band)
-                        c_test_stats = test_data.groupby('c_確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
-                        c_test_stats['勝率'] = np.where(c_test_stats['有効稼働数'] > 0, c_test_stats['勝数'] / c_test_stats['有効稼働数'] * 100, 0.0)
-                        
-                        all_test_valid = test_data['valid_play'].sum()
-                        all_test_win = test_data['valid_win'].sum()
-                        overall_test_win_rate = (all_test_win / all_test_valid * 100) if all_test_valid > 0 else 0.0
-                        
-                        test_data['s_確率帯'] = test_data_processed['sueoki_score'].apply(get_prob_band)
-                        s_test_stats = test_data.groupby('s_確率帯').agg(有効稼働数=('valid_play', 'sum'), 勝数=('valid_win', 'sum'), 平均差枚=('next_diff', 'mean')).reset_index()
-                        s_test_stats['勝率'] = np.where(s_test_stats['有効稼働数'] > 0, s_test_stats['勝数'] / s_test_stats['有効稼働数'] * 100, 0.0)
-                        
-                        c_test_stats['全体勝率'] = overall_test_win_rate
-                        c_test_stats['勝率リフト'] = np.where(c_test_stats['全体勝率'] > 0, c_test_stats['勝率'] / c_test_stats['全体勝率'], 0.0)
-                        s_test_stats['全体勝率'] = overall_test_win_rate
-                        s_test_stats['勝率リフト'] = np.where(s_test_stats['全体勝率'] > 0, s_test_stats['勝率'] / s_test_stats['全体勝率'], 0.0)
-                        
-                        backtest_summary = f"\n【最重要・カンニングなしテストによるAI実力分析】\nこの店舗のテスト期間全体の勝率(適当に座った場合の勝率)は {overall_test_win_rate:.1f}% です。\nAI予測（カンニングなしのバックテスト）では、以下の確率帯を狙うのが最も勝率・期待値が高くなりました。AIに相談する際は、この期待度以上を狙うように指示すると効果的です。\n"
-                        
-                        c_filtered = c_test_stats[c_test_stats['有効稼働数'] >= 5]
-                        if not c_filtered.empty:
-                            best_c = c_filtered.loc[c_filtered['勝率'].idxmax()]
-                            backtest_summary += f"・変更(上げ)予測: 期待度が「{best_c['c_確率帯']}」の台を狙うのが最も勝率が高く({best_c['勝率']:.1f}% / リフト {best_c['勝率リフト']:.2f}倍)、平均差枚も{int(best_c['平均差枚']):+d}枚と優秀です。\n"
-                            backtest_summary += "  [変更予測 各確率帯の成績]\n"
-                            for _, r in c_filtered.iterrows():
-                                backtest_summary += f"    - {r['c_確率帯']}: 勝率 {r['勝率']:.1f}% (リフト {r['勝率リフト']:.2f}倍) / 平均 {int(r['平均差枚']):+d}枚\n"
-                        else:
-                            backtest_summary += "・変更(上げ)予測: 有効なテストデータが不足しています。\n"
-                            
-                        s_filtered = s_test_stats[s_test_stats['有効稼働数'] >= 5]
-                        if not s_filtered.empty:
-                            best_s = s_filtered.loc[s_filtered['勝率'].idxmax()]
-                            backtest_summary += f"・据え置き予測: 期待度が「{best_s['s_確率帯']}」の台を狙うのが最も勝率が高く({best_s['勝率']:.1f}% / リフト {best_s['勝率リフト']:.2f}倍)、平均差枚も{int(best_s['平均差枚']):+d}枚と優秀です。\n"
-                            backtest_summary += "  [据え置き予測 各確率帯の成績]\n"
-                            for _, r in s_filtered.iterrows():
-                                backtest_summary += f"    - {r['s_確率帯']}: 勝率 {r['勝率']:.1f}% (リフト {r['勝率リフト']:.2f}倍) / 平均 {int(r['平均差枚']):+d}枚\n"
-                        else:
-                            backtest_summary += "・据え置き予測: 有効なテストデータが不足しています。\n"
-            except Exception:
-                pass # エラー時は何もせずスキップ
+            backtest_summary = _get_chat_backtest_summary(selected_shop, shop_col, df_verify, shop_hyperparams, df_events, df_raw)
         context_data += backtest_summary
 
         # --- 予測対象日の取得 (サイドバーで選んだ日付と一致させる) ---

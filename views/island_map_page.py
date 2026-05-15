@@ -321,10 +321,7 @@ def render_island_map_page(df_raw, df_pred_log, df_island, df_predict=None):
     pivot_val = pd.DataFrame(records)
 
     def get_sort_key(m_str):
-        if m_str in island_order:
-            return island_order.index(m_str)
-        else:
-            return 999999 + int(m_str) if str(m_str).isdigit() else 999999
+        return int(m_str) if str(m_str).isdigit() else 999999
             
     pivot_val['sort_key'] = pivot_val['台番号'].apply(get_sort_key)
     pivot_val = pivot_val.sort_values('sort_key').drop(columns=['sort_key'])
