@@ -258,7 +258,11 @@ def render_summary_map_page(df_raw, df_island):
             for i, col in enumerate(row.index):
                 val = row[col]
                 if not isinstance(val, tuple): continue
-                g, b, r, diff, count = val
+                if len(val) == 8:
+                    g, b, r, diff, count, exp_r4, exp_r5, exp_r6 = val
+                else:
+                    g, b, r, diff, count = val
+                    exp_r4, exp_r5, exp_r6 = g/300.0, g/260.0, g/240.0
                 if count == 0 or g == 0: continue
                 
                 bg_color = ""
