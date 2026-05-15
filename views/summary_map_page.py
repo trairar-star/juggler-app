@@ -119,6 +119,20 @@ def render_summary_map_page(df_raw, df_island):
     specs = backend.get_machine_specs()
     df_month['機種名_統一'] = df_month['機種名'].apply(lambda x: backend.get_matched_spec_key(x, specs) if pd.notna(x) else '不明')
     
+    # --- 各機種のスペック上の設定基準を取得し、稼働に基づく期待REG回数を計算する ---
+    def get_spec_reg(mac, setting="設定5", default_val=260.0):
+        if mac in specs and setting in specs[mac]:
+            return specs[mac][setting].get("REG", default_val)
+        return default_val
+
+    df_month['spec_r4'] = df_month['機種名_統一'].apply(lambda x: get_spec_reg(x, "設定4", 300.0))
+    df_month['spec_r5'] = df_month['機種名_統一'].apply(lambda x: get_spec_reg(x, "設定5", 260.0))
+    df_month['spec_r6'] = df_month['機種名_統一'].apply(lambda x: get_spec_reg(x, "設定6", 240.0))
+
+    df_month['exp_r4'] = df_month['g'] / df_month['spec_r4']
+    df_month['exp_r5'] = df_month['g'] / df_month['spec_r5']
+    df_month['exp_r6'] = df_month['g'] / df_month['spec_r6']
+    
     # 同一日・同台番号の重複は最新のデータを優先する
     df_month = df_month.sort_values('対象日付', ascending=False)
     df_month = df_month.drop_duplicates(subset=['台番号', 'day_str'], keep='first')
@@ -271,9 +285,15 @@ def render_summary_map_page(df_raw, df_island):
                     elif diff < 0: text_color = "#1565C0"
                 elif table_metric == "REG確率":
                     prob = g / r if r > 0 else 9999
-                    if prob <= 260: bg_color = "#FFCDD2"
-                    elif prob <= 300: bg_color = "#FFE082"
-                    elif prob <= 340: bg_color = "#FFF59D"
+                    
+                    # 稼働による加重平均基準値の算出
+                    th_r6 = g / exp_r6 if exp_r6 > 0 else 240.0
+                    th_r5 = g / exp_r5 if exp_r5 > 0 else 260.0
+                    th_r4 = g / exp_r4 if exp_r4 > 0 else 300.0
+
+                    if prob <= th_r6: bg_color = "#FFCDD2"
+                    elif prob <= th_r5: bg_color = "#FFE082"
+                    elif prob <= th_r4: bg_color = "#FFF59D"
                     
                 style_str = "vertical-align: middle; "
                 if bg_color: style_str += f"background-color: {bg_color}; "
@@ -286,13 +306,23 @@ def render_summary_map_page(df_raw, df_island):
 
         def fmt_cell(val):
             if isinstance(val, tuple):
-                g, b, r, diff, count = val
+                if len(val) == 8:
+                    g, b, r, diff, count, _, _, _ = val
+                else:
+                    g, b, r, diff, count = val
                 if count == 0 or g == 0: return "-"
                 
                 avg_diff = int(diff / count)
                 prob_str = f"1/{int(g/r)}" if r > 0 else "-"
                 
-                return f"<div class='cell-val' data-g='{int(g)}' data-b='{int(b)}' data-r='{int(r)}' data-diff='{int(diff)}' data-c='{int(count)}'>{int(count)}台<br>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚 (台{avg_diff:+d})</div>"
+                if table_metric == "平均差枚":
+                    disp_str = f"{int(count)}台<br>{int(g)}G<br>{int(r)}R ({prob_str})<br>{int(diff):+d}枚<br><span style='font-size:1.1em; font-weight:bold;'>(台{avg_diff:+d})</span>"
+                elif table_metric == "合計差枚":
+                    disp_str = f"{int(count)}台<br>{int(g)}G<br>{int(r)}R ({prob_str})<br><span style='font-size:1.1em; font-weight:bold;'>{int(diff):+d}枚</span><br>(台{avg_diff:+d})"
+                else:
+                    disp_str = f"{int(count)}台<br>{int(g)}G<br><span style='font-size:1.1em; font-weight:bold;'>{int(r)}R ({prob_str})</span><br>{int(diff):+d}枚 (台{avg_diff:+d})"
+                
+                return f"<div class='cell-val' data-g='{int(g)}' data-b='{int(b)}' data-r='{int(r)}' data-diff='{int(diff)}' data-c='{int(count)}'>{disp_str}</div>"
             return "-"
 
         format_dict = {c: fmt_cell for c in date_cols}
@@ -316,14 +346,15 @@ def render_summary_map_page(df_raw, df_island):
     # --- 🎰 機種別 サマリー ---
     with tab_mac:
         mac_daily = df_month.groupby(['機種名_統一', 'day_str']).agg(
-            g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique')
+            g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique'),
+            exp_r4=('exp_r4', 'sum'), exp_r5=('exp_r5', 'sum'), exp_r6=('exp_r6', 'sum')
         ).reset_index()
         
         mac_order = mac_daily.groupby('機種名_統一')['g'].sum().sort_values(ascending=False).index.tolist()
         
         records = []
         for (m, d), group in mac_daily.groupby(['機種名_統一', 'day_str']):
-            records.append({'機種名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum())})
+            records.append({'機種名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum(), group['exp_r4'].sum(), group['exp_r5'].sum(), group['exp_r6'].sum())})
             
         if records:
             pivot_mac = pd.DataFrame(records).pivot(index='機種名', columns='day_str', values='val')
@@ -334,7 +365,7 @@ def render_summary_map_page(df_raw, df_island):
             st.markdown(f"**(色分けの目安 - {table_metric})**")
             if table_metric == "平均差枚": st.markdown("🟥: 台平均+500枚以上 / 🟧: 台平均+200枚以上 / 🟨: プラス / 🟦: 台平均-500枚以下")
             elif table_metric == "合計差枚": st.markdown("🟥: 機種合計+3000枚以上 / 🟧: 機種合計+1000枚以上 / 🟨: プラス / 🟦: 機種合計-3000枚以下")
-            else: st.markdown("🟥: 1/260以下 / 🟧: 1/300以下 / 🟨: 1/340以下")
+            else: st.markdown("🟥: 設定6基準 / 🟧: 設定5基準 / 🟨: 設定4基準 (※各機種のスペックを稼働で加重平均して判定)")
             
             st.info("💡 **便利機能**: 表のセルをマウスでドラッグして複数選択すると、選択した日・機種の **合計データ** が下部に自動計算されます！")
             
@@ -352,14 +383,15 @@ def render_summary_map_page(df_raw, df_island):
                 isl_df['島名'] = isl_df['島名_元'] + " (" + isl_df['機種名_統一'] + ")"
                 
                 isl_daily = isl_df.groupby(['島名', 'day_str']).agg(
-                    g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique')
+                    g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique'),
+                    exp_r4=('exp_r4', 'sum'), exp_r5=('exp_r5', 'sum'), exp_r6=('exp_r6', 'sum')
                 ).reset_index()
                 
                 isl_order = sorted(isl_daily['島名'].unique().tolist())
                 
                 records = []
                 for (m, d), group in isl_daily.groupby(['島名', 'day_str']):
-                    records.append({'島名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum())})
+                    records.append({'島名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum(), group['exp_r4'].sum(), group['exp_r5'].sum(), group['exp_r6'].sum())})
                     
                 if records:
                     pivot_isl = pd.DataFrame(records).pivot(index='島名', columns='day_str', values='val')
@@ -370,7 +402,7 @@ def render_summary_map_page(df_raw, df_island):
                     st.markdown(f"**(色分けの目安 - {table_metric})**")
                     if table_metric == "平均差枚": st.markdown("🟥: 台平均+500枚以上 / 🟧: 台平均+200枚以上 / 🟨: プラス / 🟦: 台平均-500枚以下")
                     elif table_metric == "合計差枚": st.markdown("🟥: 島合計+3000枚以上 / 🟧: 島合計+1000枚以上 / 🟨: プラス / 🟦: 島合計-3000枚以下")
-                    else: st.markdown("🟥: 1/260以下 / 🟧: 1/300以下 / 🟨: 1/340以下")
+                    else: st.markdown("🟥: 設定6基準 / 🟧: 設定5基準 / 🟨: 設定4基準 (※各台のスペックを稼働で加重平均して判定)")
                     
                     st.info("💡 **便利機能**: 表のセルをマウスでドラッグして複数選択すると、選択した日・島の **合計データ** が下部に自動計算されます！")
                     
@@ -392,14 +424,15 @@ def render_summary_map_page(df_raw, df_island):
                 isl_df['島名'] = isl_df['島名_元']
                 
                 isl_daily = isl_df.groupby(['島名', 'day_str']).agg(
-                    g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique')
+                    g=('g', 'sum'), b=('b', 'sum'), r=('r', 'sum'), diff=('diff', 'sum'), count=('台番号', 'nunique'),
+                    exp_r4=('exp_r4', 'sum'), exp_r5=('exp_r5', 'sum'), exp_r6=('exp_r6', 'sum')
                 ).reset_index()
                 
                 isl_order = sorted(isl_daily['島名'].unique().tolist())
                 
                 records = []
                 for (m, d), group in isl_daily.groupby(['島名', 'day_str']):
-                    records.append({'島名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum())})
+                    records.append({'島名': m, 'day_str': d, 'val': (group['g'].sum(), group['b'].sum(), group['r'].sum(), group['diff'].sum(), group['count'].sum(), group['exp_r4'].sum(), group['exp_r5'].sum(), group['exp_r6'].sum())})
                     
                 if records:
                     pivot_isl = pd.DataFrame(records).pivot(index='島名', columns='day_str', values='val')
@@ -410,7 +443,7 @@ def render_summary_map_page(df_raw, df_island):
                     st.markdown(f"**(色分けの目安 - {table_metric})**")
                     if table_metric == "平均差枚": st.markdown("🟥: 台平均+500枚以上 / 🟧: 台平均+200枚以上 / 🟨: プラス / 🟦: 台平均-500枚以下")
                     elif table_metric == "合計差枚": st.markdown("🟥: 島合計+3000枚以上 / 🟧: 島合計+1000枚以上 / 🟨: プラス / 🟦: 島合計-3000枚以下")
-                    else: st.markdown("🟥: 1/260以下 / 🟧: 1/300以下 / 🟨: 1/340以下")
+                    else: st.markdown("🟥: 設定6基準 / 🟧: 設定5基準 / 🟨: 設定4基準 (※島内の各機種のスペックを稼働で加重平均して判定)")
                     
                     st.info("💡 **便利機能**: 表のセルをマウスでドラッグして複数選択すると、選択した日・島の **合計データ** が下部に自動計算されます！")
                     
