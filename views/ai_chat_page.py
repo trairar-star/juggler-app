@@ -409,6 +409,12 @@ def render_ai_chat_page(df_predict, df_raw, shop_col, df_verify, df_events=None,
                     shop_daily_df['曜日'] = shop_daily_df['対象日付'].dt.dayofweek
                     shop_daily_df['末尾'] = shop_daily_df['対象日付'].dt.day % 10
                     
+                    def classify_period(d):
+                        if d <= 7: return '月初'
+                        elif d >= 25: return '月末'
+                        else: return '中旬'
+                    shop_daily_df['月内期間'] = shop_daily_df['対象日付'].dt.day.apply(classify_period)
+                    
                     if df_events is not None and not df_events.empty:
                         events_shop = df_events[df_events['店名'] == selected_shop].drop_duplicates(subset=['イベント日付'], keep='last')
                         events_shop['イベント日付'] = pd.to_datetime(events_shop['イベント日付'])
