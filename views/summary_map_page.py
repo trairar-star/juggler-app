@@ -258,10 +258,11 @@ def render_summary_map_page(df_raw, df_island):
             for i, col in enumerate(row.index):
                 val = row[col]
                 if not isinstance(val, tuple): continue
-                if len(val) == 8:
-                    g, b, r, diff, count, exp_r4, exp_r5, exp_r6 = val
+                if len(val) < 5: continue
+                g, b, r, diff, count = val[:5]
+                if len(val) >= 8:
+                    exp_r4, exp_r5, exp_r6 = val[5:8]
                 else:
-                    g, b, r, diff, count = val
                     exp_r4, exp_r5, exp_r6 = g/300.0, g/260.0, g/240.0
                 if count == 0 or g == 0: continue
                 
@@ -310,10 +311,8 @@ def render_summary_map_page(df_raw, df_island):
 
         def fmt_cell(val):
             if isinstance(val, tuple):
-                if len(val) == 8:
-                    g, b, r, diff, count, _, _, _ = val
-                else:
-                    g, b, r, diff, count = val
+                if len(val) < 5: return "-"
+                g, b, r, diff, count = val[:5]
                 if count == 0 or g == 0: return "-"
                 
                 avg_diff = int(diff / count)
