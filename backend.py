@@ -2024,9 +2024,9 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['is_high_reg_minus_diff'] = ((df['is_prev_high_reg'] == 1) & (df['差枚'] <= 0)).astype(int)
     df['reg_diff_ratio'] = (df['差枚'] / df['REG'].replace(0, np.nan)).fillna(0)
 
-    # --- 新規追加: 3000枚以上の大勝と、REGが良いのに出すぎているフェイク(回収)警戒 ---
-    df['is_prev_diff_over_3000'] = (df['差枚'] >= 3000).astype(int)
-    df['is_high_reg_but_over_3000_diff'] = ((df['is_prev_high_reg'] == 1) & (df['差枚'] >= 3000)).astype(int)
+    # --- 新規追加: 出すぎ警戒特徴量（連続値） ---
+    df['excess_diff'] = np.maximum(0, df['差枚'] - 1000)
+    df['high_reg_excess_diff'] = df['is_prev_high_reg'] * df['excess_diff']
 
     # --- 新規追加: 時間軸と複合条件に基づく特徴量エンジニアリング ---
     if 'prev2_累計ゲーム' in df.columns and 'prev3_累計ゲーム' in df.columns:
@@ -2303,6 +2303,17 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
         shop_daily_fake['prev_shop_fake_rate'] = shop_daily_fake.groupby(shop_col)['daily_shop_fake_rate'].shift(1).fillna(0)
         df = pd.merge(df, shop_daily_fake[[shop_col, '対象日付', 'prev_shop_fake_rate']], on=[shop_col, '対象日付'], how='left')
         df = df.drop(columns=['is_fake_high'])
+
+        # --- 新規追加: 過去の大勝台（+2000枚以上）の据え置き実績率 ---
+        df_bw = df[df['差枚'] >= 2000].copy()
+        if not df_bw.empty:
+            bw_daily = df_bw.groupby([shop_col, '対象日付'])['valid_is_win'].mean().reset_index(name='daily_bw_sueoki_rate')
+            bw_daily = bw_daily.sort_values([shop_col, '対象日付'])
+            bw_daily['past_big_win_sueoki_rate'] = bw_daily.groupby(shop_col)['daily_bw_sueoki_rate'].transform(lambda x: x.shift(1).expanding().mean()).fillna(0)
+            df = pd.merge(df, bw_daily[[shop_col, '対象日付', 'past_big_win_sueoki_rate']], on=[shop_col, '対象日付'], how='left')
+            df['past_big_win_sueoki_rate'] = df.groupby(shop_col)['past_big_win_sueoki_rate'].ffill().fillna(0)
+        else:
+            df['past_big_win_sueoki_rate'] = 0.0
 
         # --- 新規追加: タコ粘りフェイク（稼働マジック）対策 ---
         if 'shop_avg_games' in df.columns:

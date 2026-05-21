@@ -181,6 +181,32 @@ def postprocess_predictions(predict_df, train_df):
     if not train_df.empty:
         train_df = train_df.apply(apply_hopeless_penalty, axis=1)
 
+    # --- 前日出すぎた台（差枚大）に対する据え置き期待度の連続的ペナルティ ---
+    def apply_sueoki_excess_penalty(row):
+        sue_score = row.get('sueoki_score', 0)
+        diff = row.get('差枚', 0)
+        
+        # +1500枚を超えたら、そこから差枚が増えるにつれて据え置き期待度を連続的に下げる
+        if diff > 1500 and sue_score > 0:
+            # 例: 1500枚で1.0 (減点なし), +500枚ごとに10%減点 (2000枚で0.9, 3000枚で0.7, 4500枚で0.4)
+            excess = diff - 1500
+            penalty = max(0.1, 1.0 - (excess / 500.0) * 0.10)
+            
+            if penalty < 1.0:
+                row['sueoki_score'] = sue_score * penalty
+                
+                existing_reason = str(row.get('根拠', ''))
+                if existing_reason == 'nan': existing_reason = ''
+                reason_msg = f"【⚠️出すぎ警戒】前日{int(diff)}枚と大きくプラスになっています。出すぎた台は据え置き率が下がる傾向があるため、差枚に応じて据え置き期待度を下げました。"
+                row['根拠'] = (existing_reason + " " + reason_msg).strip() if existing_reason and existing_reason != '-' else reason_msg
+                
+        return row
+
+    if not predict_df.empty:
+        predict_df = predict_df.apply(apply_sueoki_excess_penalty, axis=1)
+    if not train_df.empty:
+        train_df = train_df.apply(apply_sueoki_excess_penalty, axis=1)
+
     # --- 回収日の「完全ベタピン店」判定の事前計算 ---
     shop_col_for_betapin = '店名' if '店名' in train_df.columns else ('店舗名' if '店舗名' in train_df.columns else None)
     betapin_shops = set()
