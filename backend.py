@@ -2024,6 +2024,10 @@ def _generate_features(df, df_events, df_island, df_daily_scores, target_date):
     df['is_high_reg_minus_diff'] = ((df['is_prev_high_reg'] == 1) & (df['差枚'] <= 0)).astype(int)
     df['reg_diff_ratio'] = (df['差枚'] / df['REG'].replace(0, np.nan)).fillna(0)
 
+    # --- 新規追加: 3000枚以上の大勝と、REGが良いのに出すぎているフェイク(回収)警戒 ---
+    df['is_prev_diff_over_3000'] = (df['差枚'] >= 3000).astype(int)
+    df['is_high_reg_but_over_3000_diff'] = ((df['is_prev_high_reg'] == 1) & (df['差枚'] >= 3000)).astype(int)
+
     # --- 新規追加: 時間軸と複合条件に基づく特徴量エンジニアリング ---
     if 'prev2_累計ゲーム' in df.columns and 'prev3_累計ゲーム' in df.columns:
         # X日前REG高確率フラグ (Zスコア救済を含む is_prev_high_reg をシフトして生成)
