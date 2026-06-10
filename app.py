@@ -297,12 +297,42 @@ def main():
 
         st.sidebar.info(f"📚 **学習データ統計**\n\n期間: {min_str} 〜 {max_str}\n総数: {total_records:,} 件{capacity_warning}")
 
-    # 分析実行
-    with st.spinner("AIがデータを分析し、予測を生成しています..."):
-        # キャッシュキーとしてデータの長さを利用（簡易的）
-        df, df_verify, df_importance = backend.run_analysis(df_raw, _df_events=df_events, _df_island=df_island, shop_hyperparams=st.session_state["shop_hyperparams"], target_date=predict_target_date)
+    # --- 予測の取得または生成 ---
+    latest_data_date = pd.to_datetime(df_raw['対象日付']).max().date() if '対象日付' in df_raw.columns else pd.Timestamp.now(tz='Asia/Tokyo').date()
     
+    run_heavy_ai = True
+    df, df_verify, df_importance = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    # 「明日の予測（最新データより後の日付）」の場合は、自動作成されたログを優先表示し、アプリ側での重い新規作成処理をスキップする
+    if predict_target_date > latest_data_date:
+        with st.spinner("バッチ処理で作成された予測ログを確認中..."):
+            df_pred_log_temp = backend.load_prediction_log()
+            
+        if not df_pred_log_temp.empty and '対象日付' in df_pred_log_temp.columns:
+            df_log_target = df_pred_log_temp[pd.to_datetime(df_pred_log_temp['対象日付']).dt.date == predict_target_date]
+            
+            if not df_log_target.empty:
+                df = df_log_target.copy()
+                run_heavy_ai = False
+                st.info(f"✅ バッチで自動作成された {predict_target_date.strftime('%m/%d')} の予測を読み込みました。")
+            else:
+                run_heavy_ai = False
+                st.warning(f"⚠️ {predict_target_date.strftime('%m/%d')} の予測データはまだ自動作成されていません。夜間のバッチ処理をお待ちください。")
+
+    if run_heavy_ai:
+        # 分析実行 (過去の検証や手動実行が必要な場合)
+        with st.spinner("AIがデータを分析し、予測を生成しています..."):
+            df, df_verify, df_importance = backend.run_analysis(
+                df_raw, 
+                _df_events=df_events, 
+                _df_island=df_island, 
+                shop_hyperparams=st.session_state["shop_hyperparams"], 
+                target_date=predict_target_date
+            )
+
     if df.empty and df_verify.empty:
+        if not run_heavy_ai:
+            return # すでにバッチ待ちの警告を出しているためそのまま終了
         st.warning(f"指定された予測対象日（{predict_target_date.strftime('%Y-%m-%d')}）以前の分析可能な過去データがありません。")
         return
 
