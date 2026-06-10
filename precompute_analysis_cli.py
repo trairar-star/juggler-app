@@ -15,9 +15,14 @@ def main():
     df_island = backend.load_island_master()
     shop_hyperparams = backend.load_shop_ai_settings()
     
-    # ターゲット日付（当日）
-    target_date = pd.Timestamp.now(tz='Asia/Tokyo').date()
-    print(f"📅 ターゲット日付: {target_date} でAI分析を実行します...")
+    # データにある最新日の翌日（明日）の予測をターゲットに設定
+    if '対象日付' in df_raw.columns:
+        latest_date = pd.to_datetime(df_raw['対象日付']).max().date()
+        target_date = latest_date + pd.Timedelta(days=1)
+    else:
+        target_date = (pd.Timestamp.now(tz='Asia/Tokyo') + pd.Timedelta(days=1)).date()
+        
+    print(f"📅 ターゲット日付: {target_date} (明日の予測) でAI分析を実行します...")
     print("⏳ 特徴量の生成と予測を実行しています。少々お待ちください...")
     
     # 実行してキャッシュを生成

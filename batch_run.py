@@ -37,10 +37,13 @@ def main():
         print("❌ データが空です。読み込みエラーが発生している可能性があります。処理を終了します。", flush=True)
         sys.exit(1)
 
-    # JSTで現在時刻を取得し、実行日（今日）をターゲットに設定
-    jst = datetime.timezone(datetime.timedelta(hours=9))
-    now = datetime.datetime.now(jst)
-    target_date = now.date()
+    # データに存在する最新日付の翌日（明日）の予測をターゲットに設定
+    if '対象日付' in df_raw.columns:
+        latest_date = pd.to_datetime(df_raw['対象日付']).max().date()
+        target_date = latest_date + datetime.timedelta(days=1)
+    else:
+        jst = datetime.timezone(datetime.timedelta(hours=9))
+        target_date = (datetime.datetime.now(jst) + datetime.timedelta(days=1)).date()
     
     print("🔧 バッチ実行環境用のパラメータ調整（LSTMの過負荷・フリーズ防止）を適用します...")
     for shop in shop_hyperparams.keys():

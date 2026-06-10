@@ -192,8 +192,6 @@ def main():
                 correct_password = "1234"
             if password == correct_password:
                 st.session_state["logged_in"] = True
-                # ログイン成功時に自動保存フラグを立てる
-                st.session_state['login_save_requested'] = True
                 st.rerun()
             else:
                 st.error("パスワードが違います。")
@@ -325,14 +323,6 @@ def main():
             
     # カラム名判定
     shop_col = '店名' if '店名' in df.columns else '店舗名'
-
-    # --- ログイン時の自動保存処理 ---
-    if st.session_state.get('login_save_requested'):
-        with st.spinner("本日の予測結果を自動保存中..."):
-            save_success = backend.save_prediction_log(df)
-        st.session_state['login_save_requested'] = False # 再実行時に保存が走らないようにフラグを消す
-        if save_success:
-            st.toast("✅ 本日の予測結果を自動保存しました！")
 
     with st.spinner(f"⏳ 「{page}」の画面を構築しています... しばらくお待ちください。"):
         if page == "🤖 AIチャット相談":
